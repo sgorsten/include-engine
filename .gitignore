@@ -1,6 +1,5 @@
-Debug
-Release
-x64
-
+bin
+lib
+obj
 /.vs
 
