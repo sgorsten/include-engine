@@ -1,0 +1,6 @@
+helmet-mesh.fbx, helmet-albedo.jpg, helmet-normal.jpg, helmet-metallic.jpg, helmet-roughness.jpg
+  Simple Steel Helmet (Game Model) by Michael Makivic is licensed under CC Attribution
+  https://sketchfab.com/models/1603f60804c941cba0ffeacea20a7f32
+
+Note: These textures have been reduced in size and converted to *.jpg to save space.
+

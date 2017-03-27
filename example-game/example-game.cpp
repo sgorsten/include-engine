@@ -5,12 +5,17 @@ using namespace linalg::aliases;
 #include <fstream>
 #include <chrono>
 
+#define GLEW_STATIC
+#include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #pragma comment(lib, "opengl32.lib")
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
 int main() try
 {
-    std::ifstream in("test.fbx", std::ifstream::binary);
+    std::ifstream in("assets/helmet-mesh.fbx", std::ifstream::binary);
     const auto doc = fbx::load(in);
     std::cout << "FBX Version " << doc.version << std::endl;
     for(auto & node : doc.nodes) std::cout << node << std::endl;
@@ -19,6 +24,20 @@ int main() try
 
     glfwInit();
     auto win = glfwCreateWindow(640, 480, "Example Game", nullptr, nullptr);
+    glfwMakeContextCurrent(win);
+    glewInit();
+
+    int x, y;
+    auto image = stbi_load("assets/helmet-albedo.jpg", &x, &y, nullptr, 3);
+    if(!image) throw std::runtime_error("failed to load helmet-albedo.jpg");
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, x, y, 0, GL_RGB, GL_UNSIGNED_BYTE, image);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    stbi_image_free(image);
 
     float3 camera_position {0,0,50};
     float camera_yaw {0}, camera_pitch {0};
@@ -54,30 +73,41 @@ int main() try
         // Determine matrices
         int width, height;
         glfwGetFramebufferSize(win, &width, &height);
-        const auto proj_matrix = linalg::perspective_matrix(1.0f, (float)width/height, 10.0f, 1000.0f);
+        const auto proj_matrix = linalg::perspective_matrix(1.0f, (float)width/height, 1.0f, 1000.0f);
         const auto view_matrix = inverse(pose_matrix(camera_orientation, camera_position));
-        const auto view_proj_matrix = mul(proj_matrix, view_matrix);
 
         // Clear the viewport
-        glfwMakeContextCurrent(win);
         glViewport(0, 0, width, height);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        glMatrixMode(GL_PROJECTION);
+        glLoadMatrixf(&proj_matrix.x.x);
+
+        glMatrixMode(GL_MODELVIEW);
+        glLoadMatrixf(&view_matrix.x.x);
+
+        auto light_dir = normalize(float4{1,5,2,0});
+        glEnable(GL_LIGHT0);
+        glLightfv(GL_LIGHT0, GL_POSITION, &light_dir.x);
+        glEnable(GL_LIGHTING);
+        glEnable(GL_DEPTH_TEST);
 
         for(auto & m : models)
         {
             const auto model_matrix = m.get_model_matrix();
-            const auto model_view_proj_matrix = mul(view_proj_matrix, model_matrix);
-            glLoadMatrixf(&model_view_proj_matrix.x.x);
+            const auto model_view_matrix = mul(view_matrix, model_matrix);
+            glLoadMatrixf(&model_view_matrix.x.x);
 
             for(auto & g : m.geoms)
             {
-                glEnable(GL_DEPTH_TEST);
+                glEnable(GL_TEXTURE_2D);
                 glBegin(GL_TRIANGLES);
                 for(auto & triangle : g.triangles)
                 {
                     for(auto index : triangle) 
                     {
-                        glColor3f(g.vertices[index].texcoord.x, g.vertices[index].texcoord.y, 0);
+                        glTexCoord2fv(&g.vertices[index].texcoord.x);
+                        glNormal3fv(&g.vertices[index].normal.x);
                         glVertex3fv(&g.vertices[index].position.x);
                     }
                 }

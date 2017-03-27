@@ -327,6 +327,14 @@ namespace fbx
             }
         }
 
+        for(auto & g : geoms)
+        {
+            for(auto & v : g.vertices)
+            {
+                v.texcoord.y = 1 - v.texcoord.y;
+            }
+        }
+
         // Connect objects
         for(auto & n : find(doc.nodes, "Connections").children)
         {
