@@ -9,6 +9,10 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "example-game", "example-gam
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "examples", "examples", "{60828331-3E34-43FE-A92E-C08CB02B8BF8}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "3rdparty", "3rdparty", "{6A12B7EB-F821-4B72-B76E-4FC1AFBBF3C8}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "zlib", "3rdparty\zlib\zlib.vcxproj", "{9802A059-433F-4DA4-BC72-B7F9580E03C0}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -33,11 +37,20 @@ Global
 		{F38EDEDD-D101-470C-8A9F-90E8587781F9}.Release|x64.Build.0 = Release|x64
 		{F38EDEDD-D101-470C-8A9F-90E8587781F9}.Release|x86.ActiveCfg = Release|Win32
 		{F38EDEDD-D101-470C-8A9F-90E8587781F9}.Release|x86.Build.0 = Release|Win32
+		{9802A059-433F-4DA4-BC72-B7F9580E03C0}.Debug|x64.ActiveCfg = Debug|x64
+		{9802A059-433F-4DA4-BC72-B7F9580E03C0}.Debug|x64.Build.0 = Debug|x64
+		{9802A059-433F-4DA4-BC72-B7F9580E03C0}.Debug|x86.ActiveCfg = Debug|Win32
+		{9802A059-433F-4DA4-BC72-B7F9580E03C0}.Debug|x86.Build.0 = Debug|Win32
+		{9802A059-433F-4DA4-BC72-B7F9580E03C0}.Release|x64.ActiveCfg = Release|x64
+		{9802A059-433F-4DA4-BC72-B7F9580E03C0}.Release|x64.Build.0 = Release|x64
+		{9802A059-433F-4DA4-BC72-B7F9580E03C0}.Release|x86.ActiveCfg = Release|Win32
+		{9802A059-433F-4DA4-BC72-B7F9580E03C0}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{F38EDEDD-D101-470C-8A9F-90E8587781F9} = {60828331-3E34-43FE-A92E-C08CB02B8BF8}
+		{9802A059-433F-4DA4-BC72-B7F9580E03C0} = {6A12B7EB-F821-4B72-B76E-4FC1AFBBF3C8}
 	EndGlobalSection
 EndGlobal

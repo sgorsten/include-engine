@@ -1,6 +1,6 @@
 #include "fbx.h"
 #include <sstream>
-#include <iostream>
+#include <zlib.h>
 
 namespace fbx
 {
@@ -25,20 +25,29 @@ namespace fbx
         const auto compressed_length = read<uint32_t>(f, "compressed_length");
 
         std::vector<T> elements(array_length);
-        switch(encoding)
+        if(encoding == 0)
         {
-        case 0: 
-            fread(elements.data(), sizeof(T), elements.size(), f); 
-            break;
-        case 1:
-            // TODO: Handle compressed arrays
-            std::cout << "Warning: Compressed array of " << typeid(T).name() << std::endl;
-            fseek(f, compressed_length, SEEK_CUR); 
-            break;
-        default: 
-            throw std::runtime_error("unknown encoding");
-        }    
-        return elements;
+            if(fread(elements.data(), sizeof(T), elements.size(), f) != elements.size()) throw std::runtime_error("failed to read array data");
+            return elements;
+        }
+
+        if(encoding == 1)
+        {
+            std::vector<byte> compressed(compressed_length);
+            if(fread(compressed.data(), 1, compressed.size(), f) != compressed.size()) throw std::runtime_error("failed to read compressed array data");
+            
+            z_stream strm {};
+            strm.next_in = reinterpret_cast<Bytef *>(compressed.data());
+            strm.avail_in = compressed.size();
+            strm.next_out = reinterpret_cast<Bytef *>(elements.data());
+            strm.avail_out = elements.size() * sizeof(T);
+            if(inflateInit(&strm) != Z_OK) throw std::runtime_error("inflateInit(...) failed");
+            if(inflate(&strm, Z_NO_FLUSH) == Z_STREAM_ERROR) throw std::runtime_error("inflate(...) failed");
+            if(inflateEnd(&strm) != Z_OK) throw std::runtime_error("inflateEnd(...) failed");
+            return elements;
+        }
+
+        throw std::runtime_error("unknown array encoding");
     }
 
     property read_property(FILE * f)
