@@ -15,10 +15,16 @@ const fbx::node & find(const std::vector<fbx::node> & nodes, std::string_view na
     throw std::runtime_error("missing node " + std::string(name));
 }
 
+struct vertex
+{
+    float3 position;
+    float3 normal;
+};
+
 struct fbx_geometry
 {
-    std::vector<float3> vertices;
-    std::vector<int3> triangles;
+    std::vector<vertex> vertices; // Corresponds to polygon vertices
+    std::vector<uint3> triangles;
 
     fbx_geometry(const fbx::node & node)
     {
@@ -26,27 +32,47 @@ struct fbx_geometry
         auto & vertices_node = find(node.children, "Vertices");
         if(vertices_node.properties.size() != 1) throw std::runtime_error("malformed Vertices");
         auto & vertices_array = std::get<std::vector<double>>(vertices_node.properties[0]);
-        for(size_t i=0; i<vertices_array.size(); i+=3)
-        {
-            vertices.push_back(float3{double3{vertices_array[i], vertices_array[i+1], vertices_array[i+2]}});
-        }
+        std::vector<float3> vertex_positions;
+        for(size_t i=0; i<vertices_array.size(); i+=3) vertex_positions.push_back(float3{double3{vertices_array[i], vertices_array[i+1], vertices_array[i+2]}});
 
-        // Obtain polygon faces
+        // Obtain polygons
         auto & indices_node = find(node.children, "PolygonVertexIndex");
         if(indices_node.properties.size() != 1) throw std::runtime_error("malformed PolygonVertexIndex");
-        std::vector<int> face_indices;
+
+        size_t polygon_start = 0;
         for(auto i : std::get<std::vector<int32_t>>(indices_node.properties[0]))
         {
-            if(i < 0)
+            // Detect end-of-polygon, indicated by a negative index
+            const bool end_of_polygon = i < 0;
+            if(end_of_polygon) i = ~i;
+
+            // Store a polygon vertex
+            vertices.push_back({vertex_positions[i]});
+
+            // Generate triangles if necessary
+            if(end_of_polygon)
             {
-                face_indices.push_back(~i);
-                for(size_t j=2; j<face_indices.size(); ++j)
+                for(size_t j=polygon_start+2; j<vertices.size(); ++j)
                 {
-                    triangles.push_back({face_indices[0], face_indices[j-1], face_indices[j]});
+                    triangles.push_back(uint3{linalg::vec<size_t,3>{polygon_start, j-1, j}});
                 }
-                face_indices.clear();
+                polygon_start = vertices.size();
             }
-            else face_indices.push_back(i);
+        }
+
+        // Obtain normals
+        auto & normal_layer_node = find(node.children, "LayerElementNormal");
+        auto & normal_layer_mapping_node = find(normal_layer_node.children, "MappingInformationType");
+        auto mapping_information_type = std::get<std::string>(normal_layer_mapping_node.properties[0]);
+        auto & normal_layer_reference_node = find(normal_layer_node.children, "ReferenceInformationType");
+        auto reference_information_type = std::get<std::string>(normal_layer_reference_node.properties[0]);
+        if(mapping_information_type != "ByPolygonVertex") throw std::runtime_error("unsupported MappingInformationType");
+        if(reference_information_type != "Direct") throw std::runtime_error("unsupported ReferenceInformationType");
+        auto & normals_array = find(normal_layer_node.children, "Normals");
+        auto & normals = std::get<std::vector<double>>(normals_array.properties[0]);
+        for(size_t i=0; i<vertices.size(); ++i)
+        {
+            vertices[i].normal = float3{double3{normals[i*3+0], normals[i*3+1], normals[i*3+2]}};
         }
     }
 };
@@ -117,10 +143,15 @@ int main() try
         glLoadMatrixf(&view_proj_matrix.x.x);
         for(auto & g : geoms)
         {
+            glEnable(GL_DEPTH_TEST);
             glBegin(GL_TRIANGLES);
             for(auto & triangle : g.triangles)
             {
-                for(auto index : triangle) glVertex3fv(&g.vertices[index].x);
+                for(auto index : triangle) 
+                {
+                    glColor3fv(&g.vertices[index].normal.x);
+                    glVertex3fv(&g.vertices[index].position.x);
+                }
             }
             glEnd();
         }
