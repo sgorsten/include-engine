@@ -7,23 +7,28 @@
 
 namespace fbx
 {
-    enum byte : uint8_t {};
+    struct boolean 
+    { 
+        uint8_t byte; 
+        explicit operator bool() const { return static_cast<bool>(byte & 1); } 
+    };
 
-    using property = std::variant<
-        uint8_t,               // type C: 1 byte boolean value (0 or 1)
-        int16_t,               // type Y: 2 byte signed integer
-        int32_t,               // type I: 4 byte signed integer
-        int64_t,               // type L: 8 byte signed integer
-        float,                 // type F: 4 byte floating point
-        double,                // type D: 8 byte floating point
-        std::vector<uint8_t>,  // type b: array of 1 byte boolean values (0 or 1)
-        std::vector<int16_t>,  // type y: array of 2 byte signed integers
-        std::vector<int32_t>,  // type i: array of 4 byte signed integers
-        std::vector<int64_t>,  // type l: array of 8 byte signed integers
-        std::vector<float>,    // type f: array of 4 byte floating points
-        std::vector<double>,   // type d: array of 8 byte floating points
-        std::string,           // type S: string
-        std::vector<byte>      // type R: raw binary data
+    using property = std::variant
+    <
+        boolean,               // type 'C'
+        int16_t,               // type 'Y'
+        int32_t,               // type 'I'
+        int64_t,               // type 'L'
+        float,                 // type 'F'
+        double,                // type 'D'
+        std::vector<boolean>,  // type 'b'
+        std::vector<int16_t>,  // type 'y'
+        std::vector<int32_t>,  // type 'i'
+        std::vector<int64_t>,  // type 'l'
+        std::vector<float>,    // type 'f'
+        std::vector<double>,   // type 'd'
+        std::string,           // type 'S'
+        std::vector<uint8_t>   // type 'R'
     >;
 
     struct node
@@ -39,7 +44,11 @@ namespace fbx
         std::vector<node> nodes;
     };
 
-    document load(const char * path);
+    document load(std::istream & in);
 }
+
+std::ostream & operator << (std::ostream & out, const fbx::boolean & b);
+std::ostream & operator << (std::ostream & out, const fbx::property & p);
+std::ostream & operator << (std::ostream & out, const fbx::node & n);
 
 #endif

@@ -1,43 +1,44 @@
 #include "fbx.h"
+#include <optional>
 #include <sstream>
 #include <zlib.h>
 
 namespace fbx
 {
-    template<class T> T read(FILE * f, const char * desc)
+    template<class T> T read(std::istream & in, const char * desc)
     {
         T value;
-        if(fread(&value, sizeof(value), 1, f) == 1) return value;
+        if(in.read(reinterpret_cast<char *>(&value), sizeof(T))) return value;
         std::ostringstream ss;
         ss << "failed to read " << desc;
         throw std::runtime_error(ss.str());
     }
 
-    template<class T> T read_scalar(FILE * f)
+    template<class T> T read_scalar(std::istream & in)
     {
-        return read<T>(f, typeid(T).name());
+        return read<T>(in, typeid(T).name());
     }
 
-    template<class T> std::vector<T> read_array(FILE * f)
+    template<class T> std::vector<T> read_array(std::istream & in)
     {
-        const auto array_length = read<uint32_t>(f, "array_length");
-        const auto encoding = read<uint32_t>(f, "encoding");
-        const auto compressed_length = read<uint32_t>(f, "compressed_length");
+        const auto array_length = read<uint32_t>(in, "array_length");
+        const auto encoding = read<uint32_t>(in, "encoding");
+        const auto compressed_length = read<uint32_t>(in, "compressed_length");
 
         std::vector<T> elements(array_length);
         if(encoding == 0)
         {
-            if(fread(elements.data(), sizeof(T), elements.size(), f) != elements.size()) throw std::runtime_error("failed to read array data");
+            if(!in.read(reinterpret_cast<char *>(elements.data()), sizeof(T)*elements.size())) throw std::runtime_error("failed to read array data");
             return elements;
         }
 
         if(encoding == 1)
         {
-            std::vector<byte> compressed(compressed_length);
-            if(fread(compressed.data(), 1, compressed.size(), f) != compressed.size()) throw std::runtime_error("failed to read compressed array data");
+            std::vector<Byte> compressed(compressed_length);
+            if(!in.read(reinterpret_cast<char *>(compressed.data()), compressed.size())) throw std::runtime_error("failed to read compressed array data");
             
             z_stream strm {};
-            strm.next_in = reinterpret_cast<Bytef *>(compressed.data());
+            strm.next_in = compressed.data();
             strm.avail_in = compressed.size();
             strm.next_out = reinterpret_cast<Bytef *>(elements.data());
             strm.avail_out = elements.size() * sizeof(T);
@@ -50,102 +51,132 @@ namespace fbx
         throw std::runtime_error("unknown array encoding");
     }
 
-    property read_property(FILE * f)
+    property read_property(std::istream & in)
     {
-        const auto type = read<uint8_t>(f, "type");
-        if(type == 'C') return read_scalar<uint8_t>(f);
-        else if(type == 'Y') return read_scalar<int16_t>(f);
-        else if(type == 'I') return read_scalar<int32_t>(f);
-        else if(type == 'L') return read_scalar<int64_t>(f);
-        else if(type == 'F') return read_scalar<float>(f);
-        else if(type == 'D') return read_scalar<double>(f);
-        else if(type == 'b') return read_array<uint8_t>(f);
-        else if(type == 'y') return read_array<int16_t>(f);
-        else if(type == 'i') return read_array<int32_t>(f);
-        else if(type == 'l') return read_array<int64_t>(f);
-        else if(type == 'f') return read_array<float>(f);
-        else if(type == 'd') return read_array<double>(f);
-        else if(type == 'S')
+        const auto type = read<uint8_t>(in, "type");
+        if(type == 'S')
         {
-            const auto length = read<uint32_t>(f, "length");
+            const auto length = read<uint32_t>(in, "length");
             std::string string(length, ' ');
-            fread(&string[0], 1, length, f);
+            if(!in.read(&string[0], length)) throw std::runtime_error("failed to read string");
             return string;
         }
         else if(type == 'R')
         {
-            const auto length = read<uint32_t>(f, "length");
-            std::vector<byte> raw(length);
-            fread(raw.data(), 1, length, f);
+            const auto length = read<uint32_t>(in, "length");
+            std::vector<uint8_t> raw(length);
+            if(!in.read(reinterpret_cast<char *>(raw.data()), length)) throw std::runtime_error("failed to read raw data");
             return raw;
         }
+        else if(type == 'C') return read_scalar<boolean>(in);
+        else if(type == 'Y') return read_scalar<int16_t>(in);
+        else if(type == 'I') return read_scalar<int32_t>(in);
+        else if(type == 'L') return read_scalar<int64_t>(in);
+        else if(type == 'F') return read_scalar<float>(in);
+        else if(type == 'D') return read_scalar<double>(in);
+        else if(type == 'b') return read_array<boolean>(in);
+        else if(type == 'y') return read_array<int16_t>(in);
+        else if(type == 'i') return read_array<int32_t>(in);
+        else if(type == 'l') return read_array<int64_t>(in);
+        else if(type == 'f') return read_array<float>(in);
+        else if(type == 'd') return read_array<double>(in);
         else 
         {
             std::ostringstream ss;
-            ss << "unknown property type " << type;
+            ss << "unknown property type '" << type << '\'';
             throw std::runtime_error(ss.str());
         }
     }
 
-    node read_node(FILE * f)
+    std::vector<node> read_node_list(std::istream & in);
+
+    std::optional<node> read_node(std::istream & in)
     {
         // Read node header
-        const auto end_offset           = read<uint32_t>(f, "end_offset");
-        const auto num_properties       = read<uint32_t>(f, "num_properties");
-        const auto property_list_len    = read<uint32_t>(f, "property_list_len");
-        const auto name_len             = read<uint8_t>(f, "name_len");
+        const auto end_offset           = read<uint32_t>(in, "end_offset");
+        const auto num_properties       = read<uint32_t>(in, "num_properties");
+        const auto property_list_len    = read<uint32_t>(in, "property_list_len");
+        const auto name_len             = read<uint8_t>(in, "name_len");
+
+        // If all header entries are zero, this is a null node (used to terminate lists of child nodes)
+        if(end_offset == 0 && num_properties == 0 && property_list_len == 0 && name_len == 0) return std::nullopt;
 
         // Read name
         node node;
         node.name.resize(name_len);
-        if(fread(&node.name[0], 1, name_len, f) != name_len) throw std::runtime_error("failed to read name");
+        
+        if(!in.read(&node.name[0], name_len)) throw std::runtime_error("failed to read name");
        
         // Read property list
-        auto property_list_start = ftell(f);
+        const uint32_t property_list_start = in.tellg();
         for(uint32_t i=0; i<num_properties; ++i)
         {
-            node.properties.push_back(read_property(f));
+            node.properties.push_back(read_property(in));
         }
-        if(ftell(f) != property_list_start + property_list_len) throw std::runtime_error("malformed property list");   
+        if(static_cast<uint32_t>(in.tellg()) != property_list_start + property_list_len) throw std::runtime_error("malformed property list");   
 
         // Read child nodes
-        while(ftell(f) < end_offset)
+        if(static_cast<uint32_t>(in.tellg()) != end_offset)
         {
-            node.children.push_back(read_node(f));
-            if(node.children.back().name.empty() && node.children.back().properties.empty() && node.children.back().children.empty())
-            {
-                node.children.pop_back();
-                break;
-            }
+            node.children = read_node_list(in);
+            if(static_cast<uint32_t>(in.tellg()) != end_offset) throw std::runtime_error("malformed children list");           
         }
-        //if(ftell(f) != end_offset) throw std::runtime_error("malformed children list");   
 
         return node;
     }
 
-    document load(const char * path)
+    std::vector<node> read_node_list(std::istream & in)
     {
-        FILE * f = fopen(path, "rb");
-        fseek(f, 0, SEEK_END);
-        const long file_len = ftell(f);
-        fseek(f, 0, SEEK_SET);
-        char header[27] {};
-        fread(header, 1, sizeof(header), f);
+        std::vector<node> nodes;
+        while(true)
+        {
+            auto n = read_node(in);
+            if(n) nodes.push_back(*std::move(n));
+            else return nodes;
+        }
+    }
+
+    document load(std::istream & in)
+    {
+        in.seekg(0, std::istream::end);
+        uint32_t file_len = in.tellg();
+        in.seekg(0, std::istream::beg);
+
+        char header[23] {};
+        if(!in.read(header, sizeof(header))) throw std::runtime_error("failed to read header");
         if(strcmp("Kaydara FBX Binary  ", header)) throw std::runtime_error("not an FBX Binary file");
 
-        document doc;
-        doc.version = reinterpret_cast<const uint32_t &>(header[23]);
-        while(ftell(f) < file_len)
-        {
-            doc.nodes.push_back(read_node(f));
-            if(doc.nodes.back().name.empty() && doc.nodes.back().properties.empty() && doc.nodes.back().children.empty())
-            {
-                doc.nodes.pop_back();
-                break;
-            }
-        }
-        fclose(f);
+        return {read<uint32_t>(in, "version"), read_node_list(in)};
+    }
 
-        return doc;
+    struct property_printer
+    {
+        std::ostream & out;
+
+        void operator() (const std::string & string) { out << '"' << string << '"'; }
+        template<class T> void operator() (const T & scalar) { out << scalar; }    
+        template<class T> void operator() (const std::vector<T> & array) 
+        { 
+            out << '[';
+            for(size_t i=0; i<array.size(); ++i) out << (i?",":"") << array[i];
+            out << ']';
+        }    
+    };
+
+    void print(std::ostream & out, int indent, const fbx::node & node)
+    {
+        if(indent) out << '\n';
+        for(int i=0; i<indent; ++i) out << "  ";
+        out << node.name;
+        for(auto & prop : node.properties) out << ' ' << prop;
+        if(!node.children.empty())
+        {
+            out << ':';
+            for(auto & child : node.children) print(out, indent + 1, child);
+        }
     }
 }
+
+std::ostream & operator << (std::ostream & out, const fbx::boolean & b) { return out << (b ? "true" : "false"); }
+std::ostream & operator << (std::ostream & out, const fbx::property & p) { std::visit(fbx::property_printer{out}, p); return out; }
+std::ostream & operator << (std::ostream & out, const fbx::node & n) { fbx::print(out, 0, n); return out; }
