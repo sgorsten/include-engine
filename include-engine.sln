@@ -1,0 +1,43 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.26228.4
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "include-engine", "include-engine\include-engine.vcxproj", "{A1D32BC3-739E-4370-9598-E8BB33BFCB27}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "example-game", "example-game\example-game.vcxproj", "{F38EDEDD-D101-470C-8A9F-90E8587781F9}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "examples", "examples", "{60828331-3E34-43FE-A92E-C08CB02B8BF8}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A1D32BC3-739E-4370-9598-E8BB33BFCB27}.Debug|x64.ActiveCfg = Debug|x64
+		{A1D32BC3-739E-4370-9598-E8BB33BFCB27}.Debug|x64.Build.0 = Debug|x64
+		{A1D32BC3-739E-4370-9598-E8BB33BFCB27}.Debug|x86.ActiveCfg = Debug|Win32
+		{A1D32BC3-739E-4370-9598-E8BB33BFCB27}.Debug|x86.Build.0 = Debug|Win32
+		{A1D32BC3-739E-4370-9598-E8BB33BFCB27}.Release|x64.ActiveCfg = Release|x64
+		{A1D32BC3-739E-4370-9598-E8BB33BFCB27}.Release|x64.Build.0 = Release|x64
+		{A1D32BC3-739E-4370-9598-E8BB33BFCB27}.Release|x86.ActiveCfg = Release|Win32
+		{A1D32BC3-739E-4370-9598-E8BB33BFCB27}.Release|x86.Build.0 = Release|Win32
+		{F38EDEDD-D101-470C-8A9F-90E8587781F9}.Debug|x64.ActiveCfg = Debug|x64
+		{F38EDEDD-D101-470C-8A9F-90E8587781F9}.Debug|x64.Build.0 = Debug|x64
+		{F38EDEDD-D101-470C-8A9F-90E8587781F9}.Debug|x86.ActiveCfg = Debug|Win32
+		{F38EDEDD-D101-470C-8A9F-90E8587781F9}.Debug|x86.Build.0 = Debug|Win32
+		{F38EDEDD-D101-470C-8A9F-90E8587781F9}.Release|x64.ActiveCfg = Release|x64
+		{F38EDEDD-D101-470C-8A9F-90E8587781F9}.Release|x64.Build.0 = Release|x64
+		{F38EDEDD-D101-470C-8A9F-90E8587781F9}.Release|x86.ActiveCfg = Release|Win32
+		{F38EDEDD-D101-470C-8A9F-90E8587781F9}.Release|x86.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{F38EDEDD-D101-470C-8A9F-90E8587781F9} = {60828331-3E34-43FE-A92E-C08CB02B8BF8}
+	EndGlobalSection
+EndGlobal
