@@ -1,12 +1,18 @@
 #ifndef FBX_H
 #define FBX_H
 
+#include "linalg.h"
+
 #include <string>
 #include <vector>
 #include <variant>
 
 namespace fbx
 {
+    ////////////////////////////
+    // FBX document structure //
+    ////////////////////////////
+
     struct boolean 
     { 
         uint8_t byte; 
@@ -45,6 +51,47 @@ namespace fbx
     };
 
     document load(std::istream & in);
+
+    /////////////////////
+    // FBX Scene Graph //
+    /////////////////////
+
+    using namespace linalg::aliases;
+
+    enum class rotation_order { xyz, xzy, yzx, yxz, zxy, zyx, spheric_xyz };
+
+    struct geometry
+    {
+        struct vertex
+        {
+            float3 position;
+            float3 normal;
+            float2 texcoord;
+        };
+
+        int64_t id;
+        std::vector<vertex> vertices; // Corresponds to polygon vertices
+        std::vector<uint3> triangles;
+
+        geometry(const node & node);
+    };
+
+    struct model
+    {
+        int64_t id;
+        rotation_order rotation_order {rotation_order::xyz};
+        float3 translation, rotation_offset, rotation_pivot; // Translation vectors
+        float3 pre_rotation, rotation, post_rotation; // Euler angles in radians
+        float3 scaling_offset, scaling_pivot; // Translation vectors
+        float3 scaling; // Scaling factors
+
+        std::vector<geometry> geoms;
+
+        model(const node & node);
+        float4x4 get_model_matrix() const;
+    };
+
+    std::vector<model> load_models(const fbx::document & doc);
 }
 
 std::ostream & operator << (std::ostream & out, const fbx::boolean & b);

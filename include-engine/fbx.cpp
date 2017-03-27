@@ -170,6 +170,186 @@ namespace fbx
             for(auto & child : node.children) print(out, indent + 1, child);
         }
     }
+
+    template<class T, int M> void decode_attribute(linalg::vec<T,M> & attribute, const std::vector<double> & array, size_t index) 
+    {
+        for(int j=0; j<M; ++j) attribute[j] = static_cast<T>(array[index*M+j]);
+    }
+
+    template<class T> constexpr T rad_to_deg = static_cast<T>(57.295779513082320876798154814105);
+    template<class T> constexpr T deg_to_rad = static_cast<T>(0.0174532925199432957692369076848);
+
+    const fbx::node & find(const std::vector<fbx::node> & nodes, std::string_view name)
+    {
+        for(auto & n : nodes) if(n.name == name) return n;
+        throw std::runtime_error("missing node " + std::string(name));
+    }
+
+    template<class V, class T, int M> void decode_layer(std::vector<V> & vertices, linalg::vec<T,M> V::*attribute, const fbx::node & node, std::string_view array_name) 
+    {
+        auto & array = std::get<std::vector<double>>(find(node.children, array_name).properties[0]);
+        auto mapping_information_type = std::get<std::string>(find(node.children, "MappingInformationType").properties[0]);
+        auto reference_information_type = std::get<std::string>(find(node.children, "ReferenceInformationType").properties[0]);
+        if(mapping_information_type == "ByPolygonVertex") 
+        {
+            if(reference_information_type == "Direct")
+            {
+                for(size_t i=0; i<vertices.size(); ++i) decode_attribute(vertices[i].*attribute, array, i);
+            }
+            else if(reference_information_type == "IndexToDirect")
+            {
+                auto & index_array = std::get<std::vector<int>>(find(node.children, std::string(array_name) + "Index").properties[0]);
+                for(size_t i=0; i<vertices.size(); ++i) decode_attribute(vertices[i].*attribute, array, static_cast<size_t>(index_array[i]));
+            }
+            else throw std::runtime_error("unsupported ReferenceInformationType: " + reference_information_type);    
+        }
+        else throw std::runtime_error("unsupported MappingInformationType: " + mapping_information_type);
+        
+    }
+
+    geometry::geometry(const fbx::node & node)
+    {
+        id = std::get<int64_t>(node.properties[0]);
+
+        // Obtain vertices
+        auto & vertices_node = find(node.children, "Vertices");
+        if(vertices_node.properties.size() != 1) throw std::runtime_error("malformed Vertices");
+        auto & vertices_array = std::get<std::vector<double>>(vertices_node.properties[0]);
+        std::vector<float3> vertex_positions;
+        for(size_t i=0; i<vertices_array.size(); i+=3) vertex_positions.push_back(float3{double3{vertices_array[i], vertices_array[i+1], vertices_array[i+2]}});
+
+        // Obtain polygons
+        auto & indices_node = find(node.children, "PolygonVertexIndex");
+        if(indices_node.properties.size() != 1) throw std::runtime_error("malformed PolygonVertexIndex");
+
+        size_t polygon_start = 0;
+        for(auto i : std::get<std::vector<int32_t>>(indices_node.properties[0]))
+        {
+            // Detect end-of-polygon, indicated by a negative index
+            const bool end_of_polygon = i < 0;
+            if(end_of_polygon) i = ~i;
+
+            // Store a polygon vertex
+            vertices.push_back({vertex_positions[i]});
+
+            // Generate triangles if necessary
+            if(end_of_polygon)
+            {
+                for(size_t j=polygon_start+2; j<vertices.size(); ++j)
+                {
+                    triangles.push_back(uint3{linalg::vec<size_t,3>{polygon_start, j-1, j}});
+                }
+                polygon_start = vertices.size();
+            }
+        }
+
+        // Obtain normals
+        decode_layer(vertices, &vertex::normal, find(node.children, "LayerElementNormal"), "Normals");
+        decode_layer(vertices, &vertex::texcoord, find(node.children, "LayerElementUV"), "UV");
+    }
+
+    float3 read_vector3d_property(const fbx::node & prop)
+    {
+        return float3{double3{std::get<double>(prop.properties[4]), std::get<double>(prop.properties[5]), std::get<double>(prop.properties[6])}};
+    }
+
+    model::model(const fbx::node & node)
+    {
+        id = std::get<int64_t>(node.properties[0]);
+
+        auto & prop70 = find(node.children, "Properties70"); // TODO: Is this version dependant?
+        for(auto & p : prop70.children)
+        {
+            if(p.name != "P") continue;
+            auto & prop_name = std::get<std::string>(p.properties[0]);
+            if(prop_name == "RotationOffset") rotation_offset = read_vector3d_property(p);
+            if(prop_name == "RotationPivot") rotation_pivot = read_vector3d_property(p);
+            if(prop_name == "ScalingOffset") scaling_offset = read_vector3d_property(p);
+            if(prop_name == "ScalingPivot") scaling_pivot = read_vector3d_property(p);
+            if(prop_name == "RotationOrder") rotation_order = static_cast<fbx::rotation_order>(std::get<int32_t>(p.properties[4])); // Note: Just a guess, need to see one of these in the wild
+            if(prop_name == "PreRotation") pre_rotation = read_vector3d_property(p) * deg_to_rad<float>;
+            if(prop_name == "PostRotation") post_rotation = read_vector3d_property(p) * deg_to_rad<float>;
+            if(prop_name == "Lcl Translation") translation = read_vector3d_property(p);
+            if(prop_name == "Lcl Rotation") rotation = read_vector3d_property(p) * deg_to_rad<float>;
+            if(prop_name == "Lcl Scaling") scaling = read_vector3d_property(p);
+        }
+    }
+
+    float4 quat_from_euler(rotation_order order, const float3 & angles)
+    {
+        const float4 x = rotation_quat(float3{1,0,0}, angles.x), y = rotation_quat(float3{0,1,0}, angles.y), z = rotation_quat(float3{0,0,1}, angles.z);
+        switch(order)
+        {
+        case rotation_order::xyz: return qmul(z, y, x);
+        case rotation_order::xzy: return qmul(y, z, x);
+        case rotation_order::yzx: return qmul(x, z, y);
+        case rotation_order::yxz: return qmul(z, x, y);
+        case rotation_order::zxy: return qmul(y, x, z);
+        case rotation_order::zyx: return qmul(x, y, z);
+        case rotation_order::spheric_xyz: throw std::runtime_error("spheric_xyz rotation order not yet supported");
+        default: throw std::runtime_error("bad rotation_order");
+        }
+    }
+
+    float4x4 model::get_model_matrix() const
+    {
+        // Derived from http://help.autodesk.com/view/FBX/2017/ENU/?guid=__files_GUID_10CDD63C_79C1_4F2D_BB28_AD2BE65A02ED_htm
+        // LocalToParentTransform = T * Roff * Rp * Rpre * R * Rpost^-1 * Rp^-1 * Soff * Sp * S * Sp -1 
+        return mul
+        (
+            translation_matrix(translation + rotation_offset + rotation_pivot),
+            rotation_matrix(qmul
+            (
+                quat_from_euler(rotation_order, pre_rotation), 
+                quat_from_euler(rotation_order, rotation), 
+                qconj(quat_from_euler(rotation_order, post_rotation))
+            )), 
+            translation_matrix(-rotation_pivot + scaling_offset + scaling_pivot),
+            scaling_matrix(scaling), 
+            translation_matrix(-scaling_pivot)
+        );        
+    }
+
+    std::vector<model> load_models(const fbx::document & doc)
+    {
+        // Load all objects
+        std::vector<model> models;
+        std::vector<geometry> geoms;
+        for(auto & n : find(doc.nodes, "Objects").children)
+        {
+            if(n.name == "Model")
+            {
+                models.push_back(fbx::model{n});
+            }
+            if(n.name == "Geometry")
+            {
+                geoms.push_back(fbx::geometry{n});
+            }
+        }
+
+        // Connect objects
+        for(auto & n : find(doc.nodes, "Connections").children)
+        {
+            if(n.name != "C") continue;
+            if(std::get<std::string>(n.properties[0]) != "OO") continue; // Object-to-object connection
+            auto a = std::get<int64_t>(n.properties[1]), b = std::get<int64_t>(n.properties[2]);
+            for(auto & m : models)
+            {
+                if(m.id == b)
+                {
+                    for(auto & g : geoms)
+                    {
+                        if(g.id == a)
+                        {
+                            m.geoms.push_back(g);
+                        }
+                    }
+                }
+            }
+        }
+
+        return models;
+    }
 }
 
 std::ostream & operator << (std::ostream & out, const fbx::boolean & b) { return out << (b ? "true" : "false"); }
