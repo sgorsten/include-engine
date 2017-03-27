@@ -155,7 +155,7 @@ namespace fbx
 
         void operator() (const std::string & string) { out << '"' << string << '"'; }
         template<class T> void operator() (const T & scalar) { out << scalar; }    
-        template<class T> void operator() (const std::vector<T> & array) { out << '[' << typeid(T).name() << ']'; }
+        template<class T> void operator() (const std::vector<T> & array) { out << typeid(T).name() << '[' << array.size() << ']'; }
     };
 
     void print(std::ostream & out, int indent, const fbx::node & node)
