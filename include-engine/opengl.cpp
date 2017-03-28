@@ -26,3 +26,47 @@ GLuint load_texture(const char * filename)
     stbi_image_free(image);
     return tex;
 }
+
+GLuint compile_shader(GLenum type, const char * source)
+{
+    GLuint shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+
+    GLint status;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
+    if(status != GL_TRUE)
+    {
+        GLint length;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &length);
+
+        std::string log(length, ' ');
+        glGetShaderInfoLog(shader, length, nullptr, &log[0]);
+        glDeleteShader(shader);
+        throw std::runtime_error("compile error " + log);
+    }
+
+    return shader;
+}
+
+GLuint link_program(std::initializer_list<GLuint> shaders)
+{
+    GLuint program = glCreateProgram();
+    for(auto shader : shaders) glAttachShader(program, shader);
+    glLinkProgram(program);
+
+    GLint status;
+    glGetProgramiv(program, GL_LINK_STATUS, &status);
+    if(status != GL_TRUE)
+    {
+        GLint length;
+        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &length);
+
+        std::string log(length, ' ');
+        glGetProgramInfoLog(program, length, nullptr, &log[0]);
+        glDeleteProgram(program);
+        throw std::runtime_error("link error " + log);
+    }
+
+    return program;
+}
