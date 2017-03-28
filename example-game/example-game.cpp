@@ -55,12 +55,10 @@ int main() try
     load_cube_face(cube_tex, GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, "assets/negy.jpg");
     load_cube_face(cube_tex, GL_TEXTURE_CUBE_MAP_POSITIVE_Z, "assets/posz.jpg");
     load_cube_face(cube_tex, GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, "assets/negz.jpg");
-    glGenerateTextureMipmap(cube_tex);   
+    glGenerateTextureMipmap(cube_tex);
     glTextureParameteri(cube_tex, GL_TEXTURE_MAG_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTextureParameteri(cube_tex, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTextureParameteri(cube_tex, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    glTextureParameteri(cube_tex, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTextureParameteri(cube_tex, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
 
     auto program = link_program({
         compile_shader(GL_VERTEX_SHADER, R"(#version 450
