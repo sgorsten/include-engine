@@ -7,7 +7,8 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
-GLuint load_texture(const char * filename);
+GLuint load_texture(const char * filename, GLenum internal_format);
+void load_cube_face(GLuint tex, GLint face, const char * filename);
 GLuint compile_shader(GLenum type, const char * source);
 GLuint link_program(std::initializer_list<GLuint> shaders);
 

@@ -39,10 +39,28 @@ int main() try
     }
 
     glfwInit();
+    glfwWindowHint(GLFW_SAMPLES, 4);
+    glfwWindowHint(GLFW_SRGB_CAPABLE, 1);
     auto win = glfwCreateWindow(640, 480, "Example Game", nullptr, nullptr);
     glfwMakeContextCurrent(win);
     glfwSwapInterval(1);
     glewInit();
+
+    GLuint cube_tex;
+    glCreateTextures(GL_TEXTURE_CUBE_MAP, 1, &cube_tex);
+    glTextureStorage2D(cube_tex, 12, GL_SRGB8, 2048, 2048);
+    load_cube_face(cube_tex, GL_TEXTURE_CUBE_MAP_POSITIVE_X, "assets/posx.jpg");
+    load_cube_face(cube_tex, GL_TEXTURE_CUBE_MAP_NEGATIVE_X, "assets/negx.jpg");
+    load_cube_face(cube_tex, GL_TEXTURE_CUBE_MAP_POSITIVE_Y, "assets/posy.jpg");
+    load_cube_face(cube_tex, GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, "assets/negy.jpg");
+    load_cube_face(cube_tex, GL_TEXTURE_CUBE_MAP_POSITIVE_Z, "assets/posz.jpg");
+    load_cube_face(cube_tex, GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, "assets/negz.jpg");
+    glGenerateTextureMipmap(cube_tex);   
+    glTextureParameteri(cube_tex, GL_TEXTURE_MAG_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTextureParameteri(cube_tex, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTextureParameteri(cube_tex, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glTextureParameteri(cube_tex, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTextureParameteri(cube_tex, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     auto program = link_program({
         compile_shader(GL_VERTEX_SHADER, R"(#version 450
@@ -75,6 +93,8 @@ int main() try
             uniform vec3 u_light_color;
             layout(binding = 0) uniform sampler2D u_albedo;
             layout(binding = 1) uniform sampler2D u_normal;
+            layout(binding = 2) uniform sampler2D u_metallic;
+            layout(binding = 4) uniform samplerCube u_env;
             in vec3 position;
             in vec3 normal;
             in vec2 texcoord;
@@ -87,6 +107,9 @@ int main() try
                 vec3 albedo = texture(u_albedo, texcoord).rgb;
                 vec3 tan_normal = normalize(texture(u_normal, texcoord).xyz*2-1);
                 vec3 normal_vec = normalize(normalize(tangent)*tan_normal.x + normalize(bitangent)*tan_normal.y + normalize(normal)*tan_normal.z);
+                vec3 refl_vec = normal_vec*(dot(eye_vec, normal_vec)*2) - eye_vec;
+
+                vec3 refl_light = albedo * texture(u_env, refl_vec).rgb*2;
 
                 vec3 light = u_ambient_light;
 
@@ -95,13 +118,16 @@ int main() try
                 vec3 half_vec = normalize(light_vec + eye_vec);                
                 light += u_light_color * pow(max(dot(normal_vec, half_vec), 0), 128);
 
-                f_color = vec4(light,1);
+                float metallic = texture(u_metallic, texcoord).r;
+
+                f_color = vec4(light*(1-metallic) + refl_light*metallic, 1);
             }
         )")
     });
 
-    auto tex_albedo = load_texture("assets/helmet-albedo.jpg");
-    auto tex_normal = load_texture("assets/helmet-normal.jpg");
+    auto tex_albedo = load_texture("assets/helmet-albedo.jpg", GL_SRGB8);
+    auto tex_normal = load_texture("assets/helmet-normal.jpg", GL_RGB8);
+    auto tex_metallic = load_texture("assets/helmet-metallic.jpg", GL_R8);
 
     float3 camera_position {0,0,20};
     float camera_yaw {0}, camera_pitch {0};
@@ -142,6 +168,7 @@ int main() try
         const auto view_proj_matrix = mul(proj_matrix, view_matrix);
 
         // Clear the viewport
+        glEnable(GL_FRAMEBUFFER_SRGB);
         glViewport(0, 0, width, height);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
                 
@@ -150,7 +177,7 @@ int main() try
         glUniformMatrix4fv(glGetUniformLocation(program, "u_view_proj_matrix"), 1, GL_FALSE, &view_proj_matrix.x.x);
         glUniform3fv(glGetUniformLocation(program, "u_eye_position"), 1, &camera_position.x);
 
-        const float3  ambient_light {0.1f,0.1f,0.1f}, light_direction {normalize(float3{1,5,2})}, light_color {0.8f,0.7f,0.5f};
+        const float3  ambient_light {0.01f,0.01f,0.01f}, light_direction {normalize(float3{1,5,2})}, light_color {0.8f,0.7f,0.5f};
         glUniform3fv(glGetUniformLocation(program, "u_ambient_light"), 1, &ambient_light.x);
         glUniform3fv(glGetUniformLocation(program, "u_light_direction"), 1, &light_direction.x);
         glUniform3fv(glGetUniformLocation(program, "u_light_color"), 1, &light_color.x);
@@ -161,6 +188,8 @@ int main() try
             glUniformMatrix4fv(glGetUniformLocation(program, "u_model_matrix"), 1, GL_FALSE, &model_matrix.x.x);
             glBindTextureUnit(0, tex_albedo);
             glBindTextureUnit(1, tex_normal);
+            glBindTextureUnit(2, tex_metallic);
+            glBindTextureUnit(4, cube_tex);
 
             for(auto & g : m.geoms)
             {
