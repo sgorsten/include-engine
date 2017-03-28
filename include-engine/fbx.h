@@ -67,6 +67,7 @@ namespace fbx
             float3 position;
             float3 normal;
             float2 texcoord;
+            float3 tangent, bitangent;
         };
 
         int64_t id;
