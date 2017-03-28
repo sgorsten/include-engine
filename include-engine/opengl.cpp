@@ -28,25 +28,23 @@ GLuint load_texture(const char * filename, GLenum internal_format)
     return tex;
 }
 
-void load_cube_face(GLuint tex, GLint face, const char * filename)
+void load_cube_face(GLuint tex, GLint face, const char * filename, GLenum internal_format)
 {
     int width, height, comp;
     auto image = stbi_load(filename, &width, &height, &comp, 3);
     if(!image) throw std::runtime_error(std::string("failed to load ")+filename);
-
-    glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+    GLuint view;
+    glGenTextures(1, &view);
+    glTextureView(view, GL_TEXTURE_2D, tex, internal_format, 0, 1, face, 1);
     switch(comp)
     {
-    case 1: glTexSubImage2D(face, 0, 0, 0, width, height, GL_LUMINANCE, GL_UNSIGNED_BYTE, image); break;
-    case 2: glTexSubImage2D(face, 0, 0, 0, width, height, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, image); break;
-    case 3: glTexSubImage2D(face, 0, 0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, image); break;
-    case 4: glTexSubImage2D(face, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, image); break;
-    //case 1: glTextureSubImage3D(tex, 0, 0, 0, face, width, height, 1, GL_LUMINANCE, GL_UNSIGNED_BYTE, image); break;
-    //case 2: glTextureSubImage3D(tex, 0, 0, 0, face, width, height, 1, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, image); break;
-    //case 3: glTextureSubImage3D(tex, 0, 0, 0, face, width, height, 1, GL_RGB, GL_UNSIGNED_BYTE, image); break;
-    //case 4: glTextureSubImage3D(tex, 0, 0, 0, face, width, height, 1, GL_RGBA, GL_UNSIGNED_BYTE, image); break;
+    case 1: glTextureSubImage2D(view, 0, 0, 0, width, height, GL_LUMINANCE, GL_UNSIGNED_BYTE, image); break;
+    case 2: glTextureSubImage2D(view, 0, 0, 0, width, height, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, image); break;
+    case 3: glTextureSubImage2D(view, 0, 0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, image); break;
+    case 4: glTextureSubImage2D(view, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, image); break;
     }
     stbi_image_free(image);
+    glDeleteTextures(1, &view);
 }
 
 GLuint compile_shader(GLenum type, const char * source)

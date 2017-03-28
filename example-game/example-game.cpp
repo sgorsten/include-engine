@@ -49,12 +49,12 @@ int main() try
     GLuint cube_tex;
     glCreateTextures(GL_TEXTURE_CUBE_MAP, 1, &cube_tex);
     glTextureStorage2D(cube_tex, 12, GL_SRGB8, 2048, 2048);
-    load_cube_face(cube_tex, GL_TEXTURE_CUBE_MAP_POSITIVE_X, "assets/posx.jpg");
-    load_cube_face(cube_tex, GL_TEXTURE_CUBE_MAP_NEGATIVE_X, "assets/negx.jpg");
-    load_cube_face(cube_tex, GL_TEXTURE_CUBE_MAP_POSITIVE_Y, "assets/posy.jpg");
-    load_cube_face(cube_tex, GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, "assets/negy.jpg");
-    load_cube_face(cube_tex, GL_TEXTURE_CUBE_MAP_POSITIVE_Z, "assets/posz.jpg");
-    load_cube_face(cube_tex, GL_TEXTURE_CUBE_MAP_NEGATIVE_Z, "assets/negz.jpg");
+    load_cube_face(cube_tex, 0, "assets/posx.jpg", GL_SRGB8);
+    load_cube_face(cube_tex, 1, "assets/negx.jpg", GL_SRGB8);
+    load_cube_face(cube_tex, 2, "assets/posy.jpg", GL_SRGB8);
+    load_cube_face(cube_tex, 3, "assets/negy.jpg", GL_SRGB8);
+    load_cube_face(cube_tex, 4, "assets/posz.jpg", GL_SRGB8);
+    load_cube_face(cube_tex, 5, "assets/negz.jpg", GL_SRGB8);
     glGenerateTextureMipmap(cube_tex);
     glTextureParameteri(cube_tex, GL_TEXTURE_MAG_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTextureParameteri(cube_tex, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
