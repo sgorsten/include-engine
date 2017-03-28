@@ -20,6 +20,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="fbx.h" />
+    <ClInclude Include="linalg.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="fbx.cpp" />
