@@ -6,10 +6,12 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-GLuint compile_shader(GLenum type, const char * source)
+GLuint compile_shader(GLenum type, std::string_view source)
 {
     GLuint shader = glCreateShader(type);
-    glShaderSource(shader, 1, &source, nullptr);
+    auto data = source.data();
+    auto size = GLint(source.size());
+    glShaderSource(shader, 1, &data, &size);
     glCompileShader(shader);
 
     GLint status;

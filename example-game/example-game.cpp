@@ -9,6 +9,17 @@ using namespace linalg::aliases;
 
 #include <stb_image.h>
 
+std::string load_text_file(const char * file)
+{
+    std::ifstream in(file);
+    in.seekg(0, std::ifstream::end);
+    std::string buffer(in.tellg(), 0);
+    in.seekg(0, std::ifstream::beg);
+    in.read(&buffer[0], buffer.size());
+    while(!buffer.empty() && buffer.back() == '0') buffer.pop_back();
+    return buffer;
+}
+
 int main() try
 {
     std::ifstream in("assets/helmet-mesh.fbx", std::ifstream::binary);
@@ -50,72 +61,50 @@ int main() try
     glewInit();
     glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
 
+    struct mesh
+    {
+        float4x4 model_matrix;
+        GLuint vertex_buffer;
+        GLuint index_buffer;
+        size_t index_count;
+    };
+    std::vector<mesh> meshes;
+    for(auto & m : models)
+    {
+        for(auto & g : m.geoms)
+        {
+            mesh mesh;
+            mesh.model_matrix = m.get_model_matrix();
+            glCreateBuffers(1, &mesh.vertex_buffer);
+            glNamedBufferStorage(mesh.vertex_buffer, g.vertices.size() * sizeof(fbx::geometry::vertex), g.vertices.data(), 0);
+            glCreateBuffers(1, &mesh.index_buffer);
+            glNamedBufferStorage(mesh.index_buffer, g.triangles.size() * sizeof(uint3), g.triangles.data(), 0);
+            mesh.index_count = g.triangles.size() * 3;
+            meshes.push_back(mesh);
+        }
+    }
+
+    GLuint vaobj;
+    glCreateVertexArrays(1, &vaobj);
+    glVertexArrayAttribFormat(vaobj, 0, 3, GL_FLOAT, GL_FALSE, offsetof(fbx::geometry::vertex, position));
+    glVertexArrayAttribFormat(vaobj, 1, 3, GL_FLOAT, GL_FALSE, offsetof(fbx::geometry::vertex, normal));
+    glVertexArrayAttribFormat(vaobj, 2, 2, GL_FLOAT, GL_FALSE, offsetof(fbx::geometry::vertex, texcoord));
+    glVertexArrayAttribFormat(vaobj, 3, 3, GL_FLOAT, GL_FALSE, offsetof(fbx::geometry::vertex, tangent));
+    glVertexArrayAttribFormat(vaobj, 4, 3, GL_FLOAT, GL_FALSE, offsetof(fbx::geometry::vertex, bitangent));
+    for(int i=0; i<5; ++i)
+    {
+        glEnableVertexArrayAttrib(vaobj, i);
+        glVertexArrayAttribBinding(vaobj, i, 0);
+    }
+
     auto tex_albedo = load_texture_2d(GL_SRGB8, "assets/helmet-albedo.jpg");
     auto tex_normal = load_texture_2d(GL_RGB8, "assets/helmet-normal.jpg");
     auto tex_metallic = load_texture_2d(GL_R8, "assets/helmet-metallic.jpg");
     auto tex_env = load_texture_cube(GL_SRGB8, "assets/posx.jpg", "assets/negx.jpg", "assets/posy.jpg", "assets/negy.jpg", "assets/posz.jpg", "assets/negz.jpg");
 
     auto program = link_program({
-        compile_shader(GL_VERTEX_SHADER, R"(#version 450
-            uniform mat4 u_model_matrix;
-            uniform mat4 u_view_proj_matrix;
-            layout(location = 0) in vec3 v_position;
-            layout(location = 1) in vec3 v_normal;
-            layout(location = 2) in vec2 v_texcoord;
-            layout(location = 3) in vec3 v_tangent;
-            layout(location = 4) in vec3 v_bitangent;
-            out vec3 position;
-            out vec3 normal;
-            out vec2 texcoord;
-            out vec3 tangent;
-            out vec3 bitangent;
-            void main() 
-            { 
-                position = (u_model_matrix * vec4(v_position, 1)).xyz;
-                normal = normalize((u_model_matrix * vec4(v_normal, 0)).xyz);
-                texcoord = v_texcoord;
-                tangent = normalize((u_model_matrix * vec4(v_tangent, 0)).xyz);
-                bitangent = normalize((u_model_matrix * vec4(v_bitangent, 0)).xyz);
-                gl_Position = u_view_proj_matrix * vec4(position, 1); 
-            }
-        )"),
-        compile_shader(GL_FRAGMENT_SHADER, R"(#version 450
-            uniform vec3 u_eye_position;
-            uniform vec3 u_ambient_light;
-            uniform vec3 u_light_direction;
-            uniform vec3 u_light_color;
-            layout(binding = 0) uniform sampler2D u_albedo;
-            layout(binding = 1) uniform sampler2D u_normal;
-            layout(binding = 2) uniform sampler2D u_metallic;
-            layout(binding = 4) uniform samplerCube u_env;
-            in vec3 position;
-            in vec3 normal;
-            in vec2 texcoord;
-            in vec3 tangent;
-            in vec3 bitangent;
-            layout(location = 0) out vec4 f_color;
-            void main()
-            {
-                vec3 eye_vec = normalize(u_eye_position - position);
-                vec3 albedo = texture(u_albedo, texcoord).rgb;
-                vec3 tan_normal = normalize(texture(u_normal, texcoord).xyz*2-1);
-                vec3 normal_vec = normalize(normalize(tangent)*tan_normal.x + normalize(bitangent)*tan_normal.y + normalize(normal)*tan_normal.z);
-                vec3 refl_vec = normal_vec*(dot(eye_vec, normal_vec)*2) - eye_vec;
-
-                vec3 refl_light = albedo * texture(u_env, refl_vec).rgb*2;
-
-                vec3 light = u_ambient_light;
-
-                vec3 light_vec = u_light_direction;
-                light += albedo * u_light_color * max(dot(normal_vec, light_vec), 0);
-                vec3 half_vec = normalize(light_vec + eye_vec);                
-                light += u_light_color * pow(max(dot(normal_vec, half_vec), 0), 128);
-
-                float metallic = texture(u_metallic, texcoord).r;
-
-                f_color = vec4(light*(1-metallic) + refl_light*metallic, 1);
-            }
-        )")
+        compile_shader(GL_VERTEX_SHADER, load_text_file("assets/shader.vert")),
+        compile_shader(GL_FRAGMENT_SHADER, load_text_file("assets/shader.frag"))
     });
 
     float3 camera_position {0,0,20};
@@ -171,25 +160,18 @@ int main() try
         glUniform3fv(glGetUniformLocation(program, "u_light_direction"), 1, &light_direction.x);
         glUniform3fv(glGetUniformLocation(program, "u_light_color"), 1, &light_color.x);
 
-        for(auto & m : models)
+        for(auto & m : meshes)
         {
-            const auto model_matrix = m.get_model_matrix();
-            glUniformMatrix4fv(glGetUniformLocation(program, "u_model_matrix"), 1, GL_FALSE, &model_matrix.x.x);
+            glUniformMatrix4fv(glGetUniformLocation(program, "u_model_matrix"), 1, GL_FALSE, &m.model_matrix.x.x);
             glBindTextureUnit(0, tex_albedo->get_texture_name());
             glBindTextureUnit(1, tex_normal->get_texture_name());
             glBindTextureUnit(2, tex_metallic->get_texture_name());
             glBindTextureUnit(4, tex_env->get_texture_name());
 
-            for(auto & g : m.geoms)
-            {
-                glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(fbx::geometry::vertex), &g.vertices.data()->position);
-                glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(fbx::geometry::vertex), &g.vertices.data()->normal);
-                glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(fbx::geometry::vertex), &g.vertices.data()->texcoord);
-                glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(fbx::geometry::vertex), &g.vertices.data()->tangent);
-                glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(fbx::geometry::vertex), &g.vertices.data()->bitangent);
-                for(GLuint i : {0,1,2,3,4}) glEnableVertexAttribArray(i);
-                glDrawElements(GL_TRIANGLES, g.triangles.size()*3, GL_UNSIGNED_INT, g.triangles.data());
-            }
+            glBindVertexArray(vaobj);
+            glVertexArrayVertexBuffer(vaobj, 0, m.vertex_buffer, 0, sizeof(fbx::geometry::vertex));
+            glVertexArrayElementBuffer(vaobj, m.index_buffer);
+            glDrawElements(GL_TRIANGLES, m.index_count, GL_UNSIGNED_INT, 0);
         }
 
         // Present

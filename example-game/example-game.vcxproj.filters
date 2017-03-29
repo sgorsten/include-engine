@@ -3,4 +3,8 @@
   <ItemGroup>
     <ClCompile Include="example-game.cpp" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="assets\shader.vert" />
+    <None Include="assets\shader.frag" />
+  </ItemGroup>
 </Project>

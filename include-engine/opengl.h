@@ -3,13 +3,13 @@
 
 #include "data-types.h"
 #include <memory>
-#include <initializer_list>
+#include <string>
 
 #define GLEW_STATIC
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
-GLuint compile_shader(GLenum type, const char * source);
+GLuint compile_shader(GLenum type, std::string_view source);
 GLuint link_program(std::initializer_list<GLuint> shaders);
 
 class texture_2d
