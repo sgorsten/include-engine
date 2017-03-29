@@ -1,10 +1,13 @@
 #include <fbx.h>
 #include <opengl.h>
+#include <data-types.h>
 using namespace linalg::aliases;
 
 #include <iostream>
 #include <fstream>
 #include <chrono>
+
+#include <stb_image.h>
 
 int main() try
 {
@@ -45,20 +48,12 @@ int main() try
     glfwMakeContextCurrent(win);
     glfwSwapInterval(1);
     glewInit();
-
-    GLuint cube_tex;
-    glCreateTextures(GL_TEXTURE_CUBE_MAP, 1, &cube_tex);
-    glTextureStorage2D(cube_tex, 12, GL_SRGB8, 2048, 2048);
-    load_cube_face(cube_tex, 0, "assets/posx.jpg", GL_SRGB8);
-    load_cube_face(cube_tex, 1, "assets/negx.jpg", GL_SRGB8);
-    load_cube_face(cube_tex, 2, "assets/posy.jpg", GL_SRGB8);
-    load_cube_face(cube_tex, 3, "assets/negy.jpg", GL_SRGB8);
-    load_cube_face(cube_tex, 4, "assets/posz.jpg", GL_SRGB8);
-    load_cube_face(cube_tex, 5, "assets/negz.jpg", GL_SRGB8);
-    glGenerateTextureMipmap(cube_tex);
-    glTextureParameteri(cube_tex, GL_TEXTURE_MAG_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTextureParameteri(cube_tex, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+
+    auto tex_albedo = load_texture_2d(GL_SRGB8, "assets/helmet-albedo.jpg");
+    auto tex_normal = load_texture_2d(GL_RGB8, "assets/helmet-normal.jpg");
+    auto tex_metallic = load_texture_2d(GL_R8, "assets/helmet-metallic.jpg");
+    auto tex_env = load_texture_cube(GL_SRGB8, "assets/posx.jpg", "assets/negx.jpg", "assets/posy.jpg", "assets/negy.jpg", "assets/posz.jpg", "assets/negz.jpg");
 
     auto program = link_program({
         compile_shader(GL_VERTEX_SHADER, R"(#version 450
@@ -123,10 +118,6 @@ int main() try
         )")
     });
 
-    auto tex_albedo = load_texture("assets/helmet-albedo.jpg", GL_SRGB8);
-    auto tex_normal = load_texture("assets/helmet-normal.jpg", GL_RGB8);
-    auto tex_metallic = load_texture("assets/helmet-metallic.jpg", GL_R8);
-
     float3 camera_position {0,0,20};
     float camera_yaw {0}, camera_pitch {0};
     double2 last_cursor;
@@ -184,10 +175,10 @@ int main() try
         {
             const auto model_matrix = m.get_model_matrix();
             glUniformMatrix4fv(glGetUniformLocation(program, "u_model_matrix"), 1, GL_FALSE, &model_matrix.x.x);
-            glBindTextureUnit(0, tex_albedo);
-            glBindTextureUnit(1, tex_normal);
-            glBindTextureUnit(2, tex_metallic);
-            glBindTextureUnit(4, cube_tex);
+            glBindTextureUnit(0, tex_albedo->get_texture_name());
+            glBindTextureUnit(1, tex_normal->get_texture_name());
+            glBindTextureUnit(2, tex_metallic->get_texture_name());
+            glBindTextureUnit(4, tex_env->get_texture_name());
 
             for(auto & g : m.geoms)
             {
