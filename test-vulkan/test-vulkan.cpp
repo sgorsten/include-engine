@@ -1,8 +1,10 @@
 #include "render.h"
+#include "fbx.h"
 #include <array>
 #include <string>
 #include <vector>
 #include <optional>
+#include <fstream>
 #include <iostream>
 #include <chrono>
 
@@ -31,9 +33,7 @@ VkShaderModule load_spirv_module(VkDevice device, const char * path)
     return module;
 }
 
-struct vertex { float position[2], color[3]; };
-
-template<class Vertex, int N> VkVertexInputAttributeDescription make_attribute(uint32_t location, uint32_t binding, float (Vertex::*attribute)[N])
+template<class Vertex, int N> VkVertexInputAttributeDescription make_attribute(uint32_t location, uint32_t binding, linalg::vec<float,N> (Vertex::*attribute))
 {
     const Vertex vertex {};
     switch(N)
@@ -54,8 +54,12 @@ VkPipeline make_pipeline(VkDevice device, VkPipelineLayout layout, VkShaderModul
         {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, frag_shader, "main"}
     };
 
-    const VkVertexInputBindingDescription bindings[] {{0, sizeof(vertex), VK_VERTEX_INPUT_RATE_VERTEX}};
-    const VkVertexInputAttributeDescription attributes[] {make_attribute(0, 0, &vertex::position), make_attribute(1, 0, &vertex::color)};
+    const VkVertexInputBindingDescription bindings[] {{0, sizeof(fbx::geometry::vertex), VK_VERTEX_INPUT_RATE_VERTEX}};
+    const VkVertexInputAttributeDescription attributes[] 
+    {
+        make_attribute(0, 0, &fbx::geometry::vertex::position), 
+        make_attribute(1, 0, &fbx::geometry::vertex::normal)
+    };
     VkPipelineVertexInputStateCreateInfo vertexInputInfo {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
     vertexInputInfo.vertexBindingDescriptionCount = countof(bindings);
     vertexInputInfo.pVertexBindingDescriptions = bindings;
@@ -141,24 +145,47 @@ VkPipeline make_pipeline(VkDevice device, VkPipelineLayout layout, VkShaderModul
     return pipeline;
 }
 
+#include <memory>
+
 int main() try
 {
+    std::ifstream in("../example-game/assets/helmet-mesh.fbx", std::ifstream::binary);
+    const auto doc = fbx::load(in);
+    std::cout << "FBX Version " << doc.version << std::endl;
+    for(auto & node : doc.nodes) std::cout << node << std::endl;
+    auto models = load_models(doc);
+    for(auto & m : models) for(auto & g : m.geoms) for(auto & v : g.vertices)
+    {
+        v.position *= float3{1,-1,-1};
+        v.normal *= float3{1,-1,-1};
+    }
+
     context ctx;
 
-    const vertex vertices[]
+    struct mesh
     {
-        {{-0.5f, -0.5f}, {1,0,0}},
-        {{+0.5f, -0.5f}, {1,1,0}},
-        {{+0.5f, +0.5f}, {0,1,0}},
-        {{-0.5f, +0.5f}, {0,0,1}},
+        float4x4 model_matrix;
+        std::unique_ptr<dynamic_buffer> vertex_buffer;
+        std::unique_ptr<dynamic_buffer> index_buffer;
+        VkDescriptorBufferInfo vertices;
+        VkDescriptorBufferInfo indices;
+        size_t index_count;
     };
-    const uint32_t indices[] {0,1,2,0,2,3};
-
-    dynamic_buffer vertex_buffer(ctx, sizeof(vertices), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    auto verts = vertex_buffer.write(sizeof(vertices), vertices);
-
-    dynamic_buffer index_buffer(ctx, sizeof(indices), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    auto tris = index_buffer.write(sizeof(indices), indices);
+    std::vector<mesh> meshes;
+    for(auto & m : models)
+    {
+        for(auto & g : m.geoms)
+        {
+            mesh mesh;
+            mesh.model_matrix = m.get_model_matrix();
+            mesh.vertex_buffer = std::make_unique<dynamic_buffer>(ctx, g.vertices.size() * sizeof(fbx::geometry::vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            mesh.index_buffer = std::make_unique<dynamic_buffer>(ctx, g.triangles.size() * sizeof(uint3), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            mesh.index_count = g.triangles.size() * 3;
+            mesh.vertices = mesh.vertex_buffer->write(g.vertices.size() * sizeof(fbx::geometry::vertex), g.vertices.data());
+            mesh.indices = mesh.index_buffer->write(g.triangles.size() * sizeof(uint3), g.triangles.data());
+            meshes.push_back(std::move(mesh));
+        }
+    }
 
     // Set up our layouts
     auto per_view_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT}});
@@ -227,7 +254,7 @@ int main() try
     };
     int frame_index = 0;
 
-    float3 camera_position {0,0,-5};
+    float3 camera_position {0,0,-20};
     float camera_yaw {0}, camera_pitch {0};
     float2 last_cursor;
     auto t0 = std::chrono::high_resolution_clock::now();
@@ -252,10 +279,10 @@ int main() try
 
         // Handle WASD
         const float4 camera_orientation = qmul(rotation_quat(float3{0,1,0}, camera_yaw), rotation_quat(float3{1,0,0}, camera_pitch));
-        if(win.get_key(GLFW_KEY_W)) camera_position += qzdir(camera_orientation) * (timestep * 5);
-        if(win.get_key(GLFW_KEY_A)) camera_position -= qxdir(camera_orientation) * (timestep * 5);
-        if(win.get_key(GLFW_KEY_S)) camera_position -= qzdir(camera_orientation) * (timestep * 5);
-        if(win.get_key(GLFW_KEY_D)) camera_position += qxdir(camera_orientation) * (timestep * 5);
+        if(win.get_key(GLFW_KEY_W)) camera_position += qzdir(camera_orientation) * (timestep * 50);
+        if(win.get_key(GLFW_KEY_A)) camera_position -= qxdir(camera_orientation) * (timestep * 50);
+        if(win.get_key(GLFW_KEY_S)) camera_position -= qzdir(camera_orientation) * (timestep * 50);
+        if(win.get_key(GLFW_KEY_D)) camera_position += qxdir(camera_orientation) * (timestep * 50);
 
         // Determine matrices
         int width=win.get_width(), height=win.get_height();
@@ -297,17 +324,15 @@ int main() try
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        for(int i=0; i<3; ++i)
+        for(auto & m : meshes)
         {
-            const float4x4 model_matrix = linalg::translation_matrix(float3{i-1.0f,0,0});
-        
             auto per_object = pool.allocate_descriptor_set(per_view_layout);
-            per_object.write_uniform_buffer(0, 0, sizeof(model_matrix), &model_matrix);      
+            per_object.write_uniform_buffer(0, 0, sizeof(m.model_matrix), &m.model_matrix);      
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, 1, &per_object, 0, nullptr);
 
-            vkCmdBindVertexBuffers(cmd, 0, 1, &verts.buffer, &verts.offset);
-            vkCmdBindIndexBuffer(cmd, tris.buffer, tris.offset, VkIndexType::VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &m.vertices.offset);
+            vkCmdBindIndexBuffer(cmd, m.indices.buffer, m.indices.offset, VkIndexType::VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, m.index_count, 1, 0, 0, 0);
         }
 
         vkCmdEndRenderPass(cmd);
