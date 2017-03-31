@@ -83,7 +83,7 @@ public:
     bool get_key(int key) const { return glfwGetKey(glfw_window, key) == GLFW_PRESS; }
 
     uint32_t begin();
-    void end(std::initializer_list<VkCommandBuffer> commands, uint32_t index);
+    void end(uint32_t index, std::initializer_list<VkCommandBuffer> commands, VkFence fence);
 };
 
 class dynamic_buffer
@@ -114,17 +114,23 @@ public:
     void write_uniform_buffer(uint32_t binding, uint32_t array_element, size_t size, const void * data);
 };
 
-class command_buffer_helper
+// Manages the allocation of short-lived resources which can be recycled in a single call, protected by a fence
+class transient_resource_pool
 {
     context & ctx;
     dynamic_buffer uniform_buffer;
-    VkDescriptorPool desc_pool;
+    VkCommandPool command_pool;
+    std::vector<VkCommandBuffer> command_buffers;
+    VkDescriptorPool descriptor_pool;
+    VkFence fence;
 public:
-    command_buffer_helper(context & ctx, array_view<VkDescriptorPoolSize> pool_sizes, uint32_t max_sets);
-    ~command_buffer_helper();
+    transient_resource_pool(context & ctx, array_view<VkDescriptorPoolSize> descriptor_pool_sizes, uint32_t max_descriptor_sets);
+    ~transient_resource_pool();
 
-    descriptor_set allocate_descriptor_set(VkDescriptorSetLayout layout);
     void reset();
+    VkCommandBuffer allocate_command_buffer();
+    descriptor_set allocate_descriptor_set(VkDescriptorSetLayout layout);
+    VkFence get_fence() { return fence; }
 };
 
 #endif

@@ -199,17 +199,6 @@ int main() try
     VkShaderModule frag_shader = load_spirv_module(ctx.device, "assets/shader.frag.spv");
     VkPipeline pipeline = make_pipeline(ctx.device, pipeline_layout, vert_shader, frag_shader, render_pass);
 
-    // Set up a command pool
-    VkCommandPoolCreateInfo command_pool_info {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-    command_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    command_pool_info.queueFamilyIndex = ctx.selection.queue_family;
-    command_pool_info.flags = 0; // Optional
-    VkCommandPool command_pool;
-    check(vkCreateCommandPool(ctx.device, &command_pool_info, nullptr, &command_pool));
-
-    // Set up a descriptor pool
-    command_buffer_helper helper(ctx, {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1024}}, 1024);
-
     // Set up a window with swapchain framebuffers
     window win {ctx, 640, 480};
     std::vector<VkFramebuffer> swapchain_framebuffers(win.get_swapchain_image_views().size());
@@ -228,6 +217,15 @@ int main() try
 
         check(vkCreateFramebuffer(ctx.device, &framebuffer_info, nullptr, &swapchain_framebuffers[i]));
     }
+
+    // Set up a descriptor pool
+    transient_resource_pool pools[3]
+    {
+        {ctx, {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1024}}, 1024},
+        {ctx, {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1024}}, 1024},
+        {ctx, {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1024}}, 1024},
+    };
+    int frame_index = 0;
 
     float3 camera_position {0,0,-5};
     float camera_yaw {0}, camera_pitch {0};
@@ -266,25 +264,22 @@ int main() try
         const auto view_proj_matrix = mul(proj_matrix, view_matrix);
 
         // Render a frame
-        uint32_t index = win.begin();
+        auto & pool = pools[frame_index];
+        frame_index = (frame_index+1)%3;
+        pool.reset();
 
-        VkCommandBufferAllocateInfo alloc_info {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        alloc_info.commandPool = command_pool;
-        alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        alloc_info.commandBufferCount = 1;
-
-        VkCommandBuffer cmd;
-        check(vkAllocateCommandBuffers(ctx.device, &alloc_info, &cmd));
+        VkCommandBuffer cmd = pool.allocate_command_buffer();
 
         VkCommandBufferBeginInfo begin_info {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         vkBeginCommandBuffer(cmd, &begin_info);
 
         // Bind per-view uniforms
-        auto per_view = helper.allocate_descriptor_set(per_view_layout);
+        auto per_view = pool.allocate_descriptor_set(per_view_layout);
         per_view.write_uniform_buffer(0, 0, sizeof(view_proj_matrix), &view_proj_matrix);      
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &per_view, 0, nullptr);
 
+        const uint32_t index = win.begin();
         VkRenderPassBeginInfo pass_begin_info {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
         pass_begin_info.renderPass = render_pass;
         pass_begin_info.framebuffer = swapchain_framebuffers[index];
@@ -306,7 +301,7 @@ int main() try
         {
             const float4x4 model_matrix = linalg::translation_matrix(float3{i-1.0f,0,0});
         
-            auto per_object = helper.allocate_descriptor_set(per_view_layout);
+            auto per_object = pool.allocate_descriptor_set(per_view_layout);
             per_object.write_uniform_buffer(0, 0, sizeof(model_matrix), &model_matrix);      
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, 1, &per_object, 0, nullptr);
 
@@ -318,14 +313,8 @@ int main() try
         vkCmdEndRenderPass(cmd);
         check(vkEndCommandBuffer(cmd));
 
-        win.end({cmd}, index);
-
-        // TODO: Don't do this
-        vkDeviceWaitIdle(ctx.device);
-        vkFreeCommandBuffers(ctx.device, command_pool, 1, &cmd);
-
-        helper.reset();
-
+        win.end(index, {cmd}, pool.get_fence());
+        
         glfwPollEvents();
     }
 
@@ -336,7 +325,6 @@ int main() try
     vkDestroyDescriptorSetLayout(ctx.device, per_view_layout, nullptr);
     vkDestroyShaderModule(ctx.device, vert_shader, nullptr);
     vkDestroyShaderModule(ctx.device, frag_shader, nullptr);
-    vkDestroyCommandPool(ctx.device, command_pool, nullptr);
     for(auto framebuffer : swapchain_framebuffers) vkDestroyFramebuffer(ctx.device, framebuffer, nullptr);
     vkDestroyRenderPass(ctx.device, render_pass, nullptr);    
     return EXIT_SUCCESS;

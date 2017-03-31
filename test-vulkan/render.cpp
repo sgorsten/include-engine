@@ -284,7 +284,7 @@ uint32_t window::begin()
     return index;
 }
 
-void window::end(std::initializer_list<VkCommandBuffer> commands, uint32_t index)
+void window::end(uint32_t index, std::initializer_list<VkCommandBuffer> commands, VkFence fence)
 {
     VkPipelineStageFlags wait_stages[] {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     VkSubmitInfo submit_info {VK_STRUCTURE_TYPE_SUBMIT_INFO};
@@ -295,7 +295,7 @@ void window::end(std::initializer_list<VkCommandBuffer> commands, uint32_t index
     submit_info.pCommandBuffers = commands.begin();
     submit_info.signalSemaphoreCount = 1;
     submit_info.pSignalSemaphores = &render_finished;
-    check(vkQueueSubmit(ctx.queue, 1, &submit_info, VK_NULL_HANDLE));
+    check(vkQueueSubmit(ctx.queue, 1, &submit_info, fence));
 
     VkPresentInfoKHR present_info {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     present_info.waitSemaphoreCount = 1;
@@ -366,39 +366,74 @@ void descriptor_set::write_uniform_buffer(uint32_t binding, uint32_t array_eleme
 }
 
 ///////////////////////////
-// command_buffer_helper //
+// transient_resource_pool //
 ///////////////////////////
 
-command_buffer_helper::command_buffer_helper(context & ctx, array_view<VkDescriptorPoolSize> pool_sizes, uint32_t max_sets) : ctx{ctx}, uniform_buffer{ctx, 1024*1024, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT}
+
+transient_resource_pool::transient_resource_pool(context & ctx, array_view<VkDescriptorPoolSize> descriptor_pool_sizes, uint32_t max_descriptor_sets)
+    : ctx{ctx}, uniform_buffer{ctx, 1024*1024, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT}
 {
-    VkDescriptorPoolCreateInfo desc_pool_info {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    desc_pool_info.poolSizeCount = pool_sizes.size;
-    desc_pool_info.pPoolSizes = pool_sizes.data;
-    desc_pool_info.maxSets = max_sets;
-    check(vkCreateDescriptorPool(ctx.device, &desc_pool_info, nullptr, &desc_pool));   
+    VkCommandPoolCreateInfo command_pool_info {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    command_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    command_pool_info.queueFamilyIndex = ctx.selection.queue_family;
+    command_pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    check(vkCreateCommandPool(ctx.device, &command_pool_info, nullptr, &command_pool));
+
+    VkDescriptorPoolCreateInfo descriptor_pool_info {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    descriptor_pool_info.poolSizeCount = descriptor_pool_sizes.size;
+    descriptor_pool_info.pPoolSizes = descriptor_pool_sizes.data;
+    descriptor_pool_info.maxSets = max_descriptor_sets;
+    check(vkCreateDescriptorPool(ctx.device, &descriptor_pool_info, nullptr, &descriptor_pool));
+
+    VkFenceCreateInfo fence_info {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    check(vkCreateFence(ctx.device, &fence_info, nullptr, &fence));
 }
 
-command_buffer_helper::~command_buffer_helper()
+transient_resource_pool::~transient_resource_pool()
 {
-    vkDestroyDescriptorPool(ctx.device, desc_pool, nullptr);
+    vkDestroyFence(ctx.device, fence, nullptr);
+    vkDestroyDescriptorPool(ctx.device, descriptor_pool, nullptr);
+    vkDestroyCommandPool(ctx.device, command_pool, nullptr);
 }
 
-descriptor_set command_buffer_helper::allocate_descriptor_set(VkDescriptorSetLayout layout)
+void transient_resource_pool::reset()
+{
+    check(vkWaitForFences(ctx.device, 1, &fence, VK_TRUE, UINT64_MAX));
+    check(vkResetFences(ctx.device, 1, &fence));
+    if(!command_buffers.empty())
+    {
+        vkFreeCommandBuffers(ctx.device, command_pool, command_buffers.size(), command_buffers.data());
+        command_buffers.clear();
+    }
+    check(vkResetCommandPool(ctx.device, command_pool, 0));
+    check(vkResetDescriptorPool(ctx.device, descriptor_pool, 0));
+    uniform_buffer.reset();
+}
+
+VkCommandBuffer transient_resource_pool::allocate_command_buffer()
+{
+    VkCommandBufferAllocateInfo alloc_info {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    alloc_info.commandPool = command_pool;
+    alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    alloc_info.commandBufferCount = 1;
+
+    VkCommandBuffer command_buffer;
+    check(vkAllocateCommandBuffers(ctx.device, &alloc_info, &command_buffer));
+    command_buffers.push_back(command_buffer);
+    return command_buffer;
+}
+
+descriptor_set transient_resource_pool::allocate_descriptor_set(VkDescriptorSetLayout layout)
 {
     VkDescriptorSetAllocateInfo alloc_info {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-    alloc_info.descriptorPool = desc_pool;
+    alloc_info.descriptorPool = descriptor_pool;
     alloc_info.descriptorSetCount = 1;
     alloc_info.pSetLayouts = &layout;
 
     VkDescriptorSet descriptor_set;
     check(vkAllocateDescriptorSets(ctx.device, &alloc_info, &descriptor_set));
     return {ctx, uniform_buffer, descriptor_set};
-}
-
-void command_buffer_helper::reset()
-{
-    check(vkResetDescriptorPool(ctx.device, desc_pool, 0));
-    uniform_buffer.reset();
 }
 
 /////////////////
