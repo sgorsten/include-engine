@@ -150,6 +150,7 @@ context::context()
     const VkDeviceCreateInfo device_info {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, nullptr, {}, countof(queue_infos), queue_infos, countof(layers), layers, countof(device_extensions), device_extensions.data()};
     check(vkCreateDevice(selection.physical_device, &device_info, nullptr, &device));
     vkGetDeviceQueue(device, selection.queue_family, 0, &queue);
+    vkGetPhysicalDeviceMemoryProperties(selection.physical_device, &mem_props);
 }
 
 context::~context()
@@ -157,6 +158,30 @@ context::~context()
     vkDestroyDevice(device, nullptr);
     vkDestroyDebugReportCallbackEXT(instance, callback, nullptr);
     vkDestroyInstance(instance, nullptr);
+}
+
+uint32_t context::select_memory_type(const VkMemoryRequirements & reqs, VkMemoryPropertyFlags props) const
+{
+    for(uint32_t i=0; i<mem_props.memoryTypeCount; ++i)
+    {
+        if(reqs.memoryTypeBits & (1 << i) && (mem_props.memoryTypes[i].propertyFlags & props) == props)
+        {
+            return i;
+        }
+    }
+    throw std::runtime_error("no suitable memory type");
+};
+
+VkDeviceMemory context::allocate(const VkMemoryRequirements & reqs, VkMemoryPropertyFlags props)
+{
+    VkMemoryAllocateInfo alloc_info {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc_info.allocationSize = reqs.size;
+    alloc_info.memoryTypeIndex = select_memory_type(reqs, props);
+
+    VkDeviceMemory memory;
+    check(vkAllocateMemory(device, &alloc_info, nullptr, &memory));
+    return memory;
 }
 
 window::window(context & ctx, uint32_t width, uint32_t height) : ctx{ctx}, width{width}, height{height}

@@ -1,5 +1,9 @@
 #ifndef RENDER_H
 #define RENDER_H
+
+#include "linalg.h"
+using namespace linalg::aliases;
+
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 #include <array>
@@ -32,9 +36,13 @@ struct context
     physical_device_selection selection {};
     VkDevice device {};
     VkQueue queue {};
+    VkPhysicalDeviceMemoryProperties mem_props;
 
     context();
     ~context();
+
+    uint32_t select_memory_type(const VkMemoryRequirements & reqs, VkMemoryPropertyFlags props) const;
+    VkDeviceMemory allocate(const VkMemoryRequirements & reqs, VkMemoryPropertyFlags props);
 };
 
 class window
@@ -55,6 +63,10 @@ public:
     uint32_t get_width() const { return width; }
     uint32_t get_height() const { return height; }
     bool should_close() const { return !!glfwWindowShouldClose(glfw_window); }
+
+    float2 get_cursor_pos() const { double2 c; glfwGetCursorPos(glfw_window, &c.x, &c.y); return float2{c}; }
+    bool get_mouse_button(int button) const { return glfwGetMouseButton(glfw_window, button) == GLFW_PRESS; }
+    bool get_key(int key) const { return glfwGetKey(glfw_window, key) == GLFW_PRESS; }
 
     uint32_t begin();
     void end(std::initializer_list<VkCommandBuffer> commands, uint32_t index);

@@ -4,6 +4,7 @@
 #include <vector>
 #include <optional>
 #include <iostream>
+#include <chrono>
 
 std::vector<uint32_t> load_spirv_binary(const char * path)
 {
@@ -45,7 +46,7 @@ template<class Vertex, int N> VkVertexInputAttributeDescription make_attribute(u
     }
 }
 
-VkPipeline make_pipeline(VkDevice device, VkPipelineLayout layout, VkShaderModule vert_shader, VkShaderModule frag_shader, VkRenderPass render_pass, uint32_t width, uint32_t height)
+VkPipeline make_pipeline(VkDevice device, VkPipelineLayout layout, VkShaderModule vert_shader, VkShaderModule frag_shader, VkRenderPass render_pass)
 {
     const VkPipelineShaderStageCreateInfo shader_stages[]
     {
@@ -140,6 +141,38 @@ VkPipeline make_pipeline(VkDevice device, VkPipelineLayout layout, VkShaderModul
     return pipeline;
 }
 
+struct dynamic_buffer
+{
+    context & ctx;
+    VkBuffer buffer;
+    VkDeviceMemory device_memory;
+    void * mapped_memory;
+
+    dynamic_buffer(context & ctx, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memory_properties) : ctx{ctx}
+    {
+        VkBufferCreateInfo buffer_info {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        buffer_info.size = size;
+        buffer_info.usage = usage;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        check(vkCreateBuffer(ctx.device, &buffer_info, nullptr, &buffer));
+
+        VkMemoryRequirements mem_reqs;
+        vkGetBufferMemoryRequirements(ctx.device, buffer, &mem_reqs);
+        device_memory = ctx.allocate(mem_reqs, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        vkBindBufferMemory(ctx.device, buffer, device_memory, 0);
+
+        check(vkMapMemory(ctx.device, device_memory, 0, size, 0, &mapped_memory));
+    }
+
+    ~dynamic_buffer()
+    {
+        vkDestroyBuffer(ctx.device, buffer, nullptr);
+        vkUnmapMemory(ctx.device, device_memory);        
+        vkFreeMemory(ctx.device, device_memory, nullptr);
+    }
+};
+
 int main() try
 {
     context ctx;
@@ -151,47 +184,29 @@ int main() try
         {{-0.5f, +0.5f}, {0,0,1}},
     };
 
-    VkBufferCreateInfo buffer_info {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-    buffer_info.size = sizeof(vertices);
-    buffer_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    dynamic_buffer vertex_buffer(ctx, sizeof(vertices), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    memcpy(vertex_buffer.mapped_memory, vertices, sizeof(vertices));
 
-    VkBuffer vertex_buffer;
-    check(vkCreateBuffer(ctx.device, &buffer_info, nullptr, &vertex_buffer));
+    // Set up a descriptor set layout
+    VkDescriptorSetLayoutBinding set_layout_bindings[1] {};
+    set_layout_bindings[0].binding = 0;
+    set_layout_bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    set_layout_bindings[0].descriptorCount = 1;
+    set_layout_bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    VkDescriptorSetLayoutCreateInfo set_layout_info {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    set_layout_info.bindingCount = countof(set_layout_bindings);
+    set_layout_info.pBindings = set_layout_bindings;
+    VkDescriptorSetLayout set_layout;
+    check(vkCreateDescriptorSetLayout(ctx.device, &set_layout_info, nullptr, &set_layout));
 
-    VkMemoryRequirements mem_reqs;
-    vkGetBufferMemoryRequirements(ctx.device, vertex_buffer, &mem_reqs);
+    // Set up a pipeline layout
+    VkPipelineLayoutCreateInfo pipeline_layout_info {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    pipeline_layout_info.setLayoutCount = 1;
+    pipeline_layout_info.pSetLayouts = &set_layout;
+    VkPipelineLayout pipeline_layout;
+    check(vkCreatePipelineLayout(ctx.device, &pipeline_layout_info, nullptr, &pipeline_layout));
 
-    VkPhysicalDeviceMemoryProperties mem_props;
-    vkGetPhysicalDeviceMemoryProperties(ctx.selection.physical_device, &mem_props);
-    auto select_memory_type = [mem_props](const VkMemoryRequirements & reqs, VkMemoryPropertyFlags props)
-    {
-        for(uint32_t i=0; i<mem_props.memoryTypeCount; ++i)
-        {
-            if(reqs.memoryTypeBits & (1 << i) && (mem_props.memoryTypes[i].propertyFlags & props) == props)
-            {
-                return i;
-            }
-        }
-        throw std::runtime_error("no suitable memory type");
-    };
-
-    VkMemoryAllocateInfo alloc_info {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    alloc_info.allocationSize = mem_reqs.size;
-    alloc_info.memoryTypeIndex = select_memory_type(mem_reqs, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    VkDeviceMemory memory;
-    check(vkAllocateMemory(ctx.device, &alloc_info, nullptr, &memory));
-    vkBindBufferMemory(ctx.device, vertex_buffer, memory, 0);
-
-    void * mapped_memory;
-    check(vkMapMemory(ctx.device, memory, 0, sizeof(vertices), 0, &mapped_memory));
-    memcpy(mapped_memory, vertices, sizeof(vertices));
-    vkUnmapMemory(ctx.device, memory);
-
-    window win {ctx, 640, 480};
-
+    // Set up a render pass
     VkAttachmentDescription color_attachment_desc {};
     color_attachment_desc.format = ctx.selection.surface_format.format;
     color_attachment_desc.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -220,6 +235,32 @@ int main() try
     VkRenderPass render_pass;
     check(vkCreateRenderPass(ctx.device, &render_pass_info, nullptr, &render_pass));
 
+    // Set up our shader pipeline
+    VkShaderModule vert_shader = load_spirv_module(ctx.device, "assets/shader.vert.spv");
+    VkShaderModule frag_shader = load_spirv_module(ctx.device, "assets/shader.frag.spv");
+    VkPipeline pipeline = make_pipeline(ctx.device, pipeline_layout, vert_shader, frag_shader, render_pass);
+
+    // Set up a command pool
+    VkCommandPoolCreateInfo command_pool_info {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    command_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    command_pool_info.queueFamilyIndex = ctx.selection.queue_family;
+    command_pool_info.flags = 0; // Optional
+    VkCommandPool command_pool;
+    check(vkCreateCommandPool(ctx.device, &command_pool_info, nullptr, &command_pool));
+
+    // Set up a descriptor pool
+    VkDescriptorPoolSize desc_pool_sizes[1] {};
+    desc_pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    desc_pool_sizes[0].descriptorCount = 1;
+    VkDescriptorPoolCreateInfo desc_pool_info {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    desc_pool_info.poolSizeCount = countof(desc_pool_sizes);
+    desc_pool_info.pPoolSizes = desc_pool_sizes;
+    desc_pool_info.maxSets = 1;
+    VkDescriptorPool desc_pool;
+    check(vkCreateDescriptorPool(ctx.device, &desc_pool_info, nullptr, &desc_pool));
+
+    // Set up a window with swapchain framebuffers
+    window win {ctx, 640, 480};
     std::vector<VkFramebuffer> swapchain_framebuffers(win.get_swapchain_image_views().size());
     for(uint32_t i=0; i<swapchain_framebuffers.size(); ++i)
     {
@@ -236,31 +277,74 @@ int main() try
 
         check(vkCreateFramebuffer(ctx.device, &framebuffer_info, nullptr, &swapchain_framebuffers[i]));
     }
-
-    VkPipelineLayoutCreateInfo pipeline_layout_info {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    pipeline_layout_info.setLayoutCount = 0; // Optional
-    pipeline_layout_info.pSetLayouts = nullptr; // Optional
-    pipeline_layout_info.pushConstantRangeCount = 0; // Optional
-    pipeline_layout_info.pPushConstantRanges = 0; // Optional
-
-    VkPipelineLayout pipeline_layout;
-    check(vkCreatePipelineLayout(ctx.device, &pipeline_layout_info, nullptr, &pipeline_layout));
     
-    VkShaderModule vert_shader = load_spirv_module(ctx.device, "assets/shader.vert.spv");
-    VkShaderModule frag_shader = load_spirv_module(ctx.device, "assets/shader.frag.spv");
+    // Allocate a descriptor set
+    VkDescriptorSetAllocateInfo desc_set_alloc_info {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    desc_set_alloc_info.descriptorPool = desc_pool;
+    desc_set_alloc_info.descriptorSetCount = 1;
+    desc_set_alloc_info.pSetLayouts = &set_layout;
+    VkDescriptorSet desc_set;
+    check(vkAllocateDescriptorSets(ctx.device, &desc_set_alloc_info, &desc_set));
 
-    VkPipeline pipeline = make_pipeline(ctx.device, pipeline_layout, vert_shader, frag_shader, render_pass, win.get_width(), win.get_height());
+    // Allocate a uniform buffer
+    dynamic_buffer uniform_buffer(ctx, 1024, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    float4x4 id{{1,0,0,0},{0,1,0,0},{0,0,1,0},{0,0,0,1}};
+    memcpy(uniform_buffer.mapped_memory, &id, sizeof(id));
 
-    VkCommandPoolCreateInfo command_pool_info {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-    command_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    command_pool_info.queueFamilyIndex = ctx.selection.queue_family;
-    command_pool_info.flags = 0; // Optional
+    // Write to our descriptor set
+    VkDescriptorBufferInfo desc_buffer_infos[1] {};
+    desc_buffer_infos[0].buffer = uniform_buffer.buffer;
+    desc_buffer_infos[0].offset = 0;
+    desc_buffer_infos[0].range = sizeof(id);
+    VkWriteDescriptorSet desc_writes[1] {};
+    desc_writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    desc_writes[0].dstSet = desc_set;
+    desc_writes[0].dstBinding = 0;
+    desc_writes[0].dstArrayElement = 0;
+    desc_writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    desc_writes[0].descriptorCount = countof(desc_buffer_infos);
+    desc_writes[0].pBufferInfo = desc_buffer_infos;
+    vkUpdateDescriptorSets(ctx.device, countof(desc_writes), desc_writes, 0, nullptr);
 
-    VkCommandPool command_pool;
-    check(vkCreateCommandPool(ctx.device, &command_pool_info, nullptr, &command_pool));
-
+    float3 camera_position {0,0,-5};
+    float camera_yaw {0}, camera_pitch {0};
+    float2 last_cursor;
+    auto t0 = std::chrono::high_resolution_clock::now();
     while(!win.should_close())
     {
+        glfwPollEvents();
+
+        // Compute timestep
+        const auto t1 = std::chrono::high_resolution_clock::now();
+        const auto timestep = std::chrono::duration<float>(t1 - t0).count();
+        t0 = t1;
+
+        // Handle mouselook
+        auto cursor = win.get_cursor_pos();
+        if(win.get_mouse_button(GLFW_MOUSE_BUTTON_LEFT))
+        {
+            const auto move = float2(cursor - last_cursor);
+            camera_yaw += move.x * 0.01f;
+            camera_pitch = std::max(-1.5f, std::min(1.5f, camera_pitch - move.y * 0.01f));
+        }
+        last_cursor = cursor;
+
+        // Handle WASD
+        const float4 camera_orientation = qmul(rotation_quat(float3{0,1,0}, camera_yaw), rotation_quat(float3{1,0,0}, camera_pitch));
+        if(win.get_key(GLFW_KEY_W)) camera_position += qzdir(camera_orientation) * (timestep * 5);
+        if(win.get_key(GLFW_KEY_A)) camera_position -= qxdir(camera_orientation) * (timestep * 5);
+        if(win.get_key(GLFW_KEY_S)) camera_position -= qzdir(camera_orientation) * (timestep * 5);
+        if(win.get_key(GLFW_KEY_D)) camera_position += qxdir(camera_orientation) * (timestep * 5);
+
+        // Determine matrices
+        int width=win.get_width(), height=win.get_height();
+        const auto proj_matrix = linalg::perspective_matrix(1.0f, (float)width/height, 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one);
+        const auto view_matrix = inverse(pose_matrix(camera_orientation, camera_position));
+        const auto view_proj_matrix = mul(proj_matrix, view_matrix);
+
+        memcpy(uniform_buffer.mapped_memory, &view_proj_matrix, sizeof(view_proj_matrix));
+
+        // Render a frame
         uint32_t index = win.begin();
 
         VkCommandBufferAllocateInfo alloc_info {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
@@ -292,8 +376,10 @@ int main() try
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &desc_set, 0, nullptr);
+
         VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buffer, &offset);
+        vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buffer.buffer, &offset);
         vkCmdDraw(cmd, 3, 1, 0, 0);
 
         vkCmdEndRenderPass(cmd);
@@ -308,13 +394,14 @@ int main() try
         glfwPollEvents();
     }
 
-    vkDestroyBuffer(ctx.device, vertex_buffer, nullptr);
-    vkFreeMemory(ctx.device, memory, nullptr);
+    vkDeviceWaitIdle(ctx.device);
     vkDestroyPipeline(ctx.device, pipeline, nullptr);
     vkDestroyPipelineLayout(ctx.device, pipeline_layout, nullptr);
+    vkDestroyDescriptorSetLayout(ctx.device, set_layout, nullptr);
     vkDestroyShaderModule(ctx.device, vert_shader, nullptr);
     vkDestroyShaderModule(ctx.device, frag_shader, nullptr);
     vkDestroyCommandPool(ctx.device, command_pool, nullptr);
+    vkDestroyDescriptorPool(ctx.device, desc_pool, nullptr);
     for(auto framebuffer : swapchain_framebuffers) vkDestroyFramebuffer(ctx.device, framebuffer, nullptr);
     vkDestroyRenderPass(ctx.device, render_pass, nullptr);    
     return EXIT_SUCCESS;
