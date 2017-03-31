@@ -170,6 +170,9 @@
     <ClInclude Include="render.h" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\3rdparty\glew\glew.vcxproj">
+      <Project>{f008f767-21ac-4ae8-8dc1-8246ed0c17b1}</Project>
+    </ProjectReference>
     <ProjectReference Include="..\3rdparty\glfw\glfw.vcxproj">
       <Project>{7952ff0b-0e21-4315-80bb-c408014c1f09}</Project>
     </ProjectReference>

@@ -12,13 +12,18 @@ layout(set=1, binding=0) uniform PerObject
 };
 
 layout(location = 0) in vec3 v_position;
-layout(location = 1) in vec3 v_color;
+layout(location = 1) in vec3 v_normal;
+layout(location = 2) in vec2 v_texcoord;
 
-layout(location = 0) out vec3 color;
+layout(location = 0) out vec3 position;
+layout(location = 1) out vec3 normal;
+layout(location = 2) out vec2 texcoord;
 out gl_PerVertex { vec4 gl_Position; };
 
 void main()
 {
-    color = v_color;
-    gl_Position = u_view_proj_matrix * u_model_matrix * vec4(v_position, 1);	
+	position = (u_model_matrix * vec4(v_position, 1)).xyz;
+	normal = normalize((u_model_matrix * vec4(v_normal, 0)).xyz);
+    texcoord = v_texcoord;
+    gl_Position = u_view_proj_matrix * vec4(position, 1);	
 }

@@ -1,5 +1,6 @@
 #include "render.h"
 #include "fbx.h"
+#include "data-types.h"
 #include <fstream>
 #include <iostream>
 #include <chrono>
@@ -59,8 +60,32 @@ int main() try
         v.normal *= float3{1,-1,-1};
     }
 
+    image albedo("../example-game/assets/helmet-normal.jpg");
+    std::cout << albedo.get_channels() << std::endl;
+
     context ctx;
 
+    // Create our texture
+    texture_2d albedo_tex(ctx, albedo.get_width(), albedo.get_height(), VK_FORMAT_R8G8B8A8_UNORM, albedo.get_pixels());
+
+    // Create our sampler
+    VkSamplerCreateInfo sampler_info = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampler_info.magFilter = VK_FILTER_LINEAR;
+    sampler_info.minFilter = VK_FILTER_LINEAR;
+    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    //sampler_info.anisotropyEnable = VK_TRUE;
+    //sampler_info.maxAnisotropy = 16;
+    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST; //VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler_info.mipLodBias = 0.0f;
+    sampler_info.minLod = 0.0f;
+    sampler_info.maxLod = 0.0f;
+    VkSampler sampler;
+    check(vkCreateSampler(ctx.device, &sampler_info, nullptr, &sampler));
+
+    // Create our meshes
     struct mesh
     {
         float4x4 model_matrix;
@@ -88,7 +113,10 @@ int main() try
 
     // Set up our layouts
     auto per_view_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT}});
-    auto per_object_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT}});
+    auto per_object_layout = ctx.create_descriptor_set_layout({
+        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
+    });
     auto pipeline_layout = ctx.create_pipeline_layout({per_view_layout, per_object_layout});
 
     // Set up a render pass
@@ -137,7 +165,8 @@ int main() try
     const VkVertexInputAttributeDescription attributes[] 
     {
         make_attribute(0, 0, &fbx::geometry::vertex::position), 
-        make_attribute(1, 0, &fbx::geometry::vertex::normal)
+        make_attribute(1, 0, &fbx::geometry::vertex::normal),
+        make_attribute(2, 0, &fbx::geometry::vertex::texcoord)
     };
     VkPipeline pipeline = make_pipeline(ctx.device, bindings, attributes, pipeline_layout, vert_shader, frag_shader, render_pass);
 
@@ -162,12 +191,17 @@ int main() try
         check(vkCreateFramebuffer(ctx.device, &framebuffer_info, nullptr, &swapchain_framebuffers[i]));
     }
 
-    // Set up a descriptor pool
+    // Set up our transient resource pools
+    const VkDescriptorPoolSize pool_sizes[]
+    {
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1024},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1024},
+    };
     transient_resource_pool pools[3]
     {
-        {ctx, {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1024}}, 1024},
-        {ctx, {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1024}}, 1024},
-        {ctx, {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1024}}, 1024},
+        {ctx, pool_sizes, 1024},
+        {ctx, pool_sizes, 1024},
+        {ctx, pool_sizes, 1024},
     };
     int frame_index = 0;
 
@@ -245,8 +279,9 @@ int main() try
 
         for(auto & m : meshes)
         {
-            auto per_object = pool.allocate_descriptor_set(per_view_layout);
-            per_object.write_uniform_buffer(0, 0, sizeof(m.model_matrix), &m.model_matrix);      
+            auto per_object = pool.allocate_descriptor_set(per_object_layout);
+            per_object.write_uniform_buffer(0, 0, sizeof(m.model_matrix), &m.model_matrix);
+            per_object.write_combined_image_sampler(1, 0, sampler, albedo_tex);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, 1, &per_object, 0, nullptr);
 
             vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &m.vertices.offset);
@@ -263,6 +298,7 @@ int main() try
     }
 
     vkDeviceWaitIdle(ctx.device);
+    vkDestroySampler(ctx.device, sampler, nullptr);
     vkDestroyPipeline(ctx.device, pipeline, nullptr);
     vkDestroyPipelineLayout(ctx.device, pipeline_layout, nullptr);
     vkDestroyDescriptorSetLayout(ctx.device, per_object_layout, nullptr);
@@ -311,7 +347,7 @@ VkPipeline make_pipeline(VkDevice device, array_view<VkVertexInputBindingDescrip
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.cullMode = VK_CULL_MODE_NONE; //VK_CULL_MODE_BACK_BIT;
     rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
     rasterizer.depthBiasConstantFactor = 0.0f; // Optional

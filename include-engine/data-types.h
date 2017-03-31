@@ -3,7 +3,7 @@
 
 class image
 {
-    int width, height, channels;
+    int width, height;
     void * pixels;
 public:
     image(const char * filename);
@@ -15,7 +15,7 @@ public:
 
     int get_width() const { return width; }
     int get_height() const { return height; }
-    int get_channels() const { return channels; }
+    int get_channels() const { return 4; }
     const void * get_pixels() const { return pixels; }
 };
 

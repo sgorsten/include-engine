@@ -155,10 +155,35 @@ context::context()
     check(vkCreateDevice(selection.physical_device, &device_info, nullptr, &device));
     vkGetDeviceQueue(device, selection.queue_family, 0, &queue);
     vkGetPhysicalDeviceMemoryProperties(selection.physical_device, &mem_props);
+
+    // Set up staging buffer
+    VkBufferCreateInfo buffer_info {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    buffer_info.size = 16*1024*1024;
+    buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    check(vkCreateBuffer(device, &buffer_info, nullptr, &staging_buffer));
+
+    VkMemoryRequirements mem_reqs;
+    vkGetBufferMemoryRequirements(device, staging_buffer, &mem_reqs);
+    staging_memory = allocate(mem_reqs, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    vkBindBufferMemory(device, staging_buffer, staging_memory, 0);
+
+    check(vkMapMemory(device, staging_memory, 0, buffer_info.size, 0, &mapped_staging_memory));
+        
+    VkCommandPoolCreateInfo command_pool_info {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    command_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    command_pool_info.queueFamilyIndex = selection.queue_family; // TODO: Could use an explicit transfer queue
+    command_pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    check(vkCreateCommandPool(device, &command_pool_info, nullptr, &staging_pool));
 }
 
 context::~context()
 {
+    vkDestroyCommandPool(device, staging_pool, nullptr);
+    vkDestroyBuffer(device, staging_buffer, nullptr);
+    vkUnmapMemory(device, staging_memory);
+    vkFreeMemory(device, staging_memory, nullptr);
+
     vkDestroyDevice(device, nullptr);
     vkDestroyDebugReportCallbackEXT(instance, callback, nullptr);
     vkDestroyInstance(instance, nullptr);
@@ -208,6 +233,35 @@ VkPipelineLayout context::create_pipeline_layout(array_view<VkDescriptorSetLayou
     VkPipelineLayout pipeline_layout;
     check(vkCreatePipelineLayout(device, &create_info, nullptr, &pipeline_layout));
     return pipeline_layout;
+}
+
+VkCommandBuffer context::begin_transient() 
+{
+    VkCommandBufferAllocateInfo alloc_info {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    alloc_info.commandPool = staging_pool;
+    alloc_info.commandBufferCount = 1;
+    VkCommandBuffer command_buffer;
+    check(vkAllocateCommandBuffers(device, &alloc_info, &command_buffer));
+
+    VkCommandBufferBeginInfo begin_info {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    check(vkBeginCommandBuffer(command_buffer, &begin_info));
+
+    return command_buffer;
+}
+
+void context::end_transient(VkCommandBuffer command_buffer) 
+{
+    check(vkEndCommandBuffer(command_buffer));
+    VkSubmitInfo submitInfo {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &command_buffer;
+    check(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+    check(vkQueueWaitIdle(queue)); // TODO: Do something with fences instead
+    vkFreeCommandBuffers(device, staging_pool, 1, &command_buffer);
 }
 
 ////////////
@@ -357,6 +411,63 @@ depth_buffer::~depth_buffer()
     vkFreeMemory(ctx.device, device_memory, nullptr);
 }
 
+////////////////
+// texture_2d //
+////////////////
+
+void transition_layout(VkCommandBuffer command_buffer, VkImage image, uint32_t mip_level, VkImageLayout old_layout, VkImageLayout new_layout);
+
+texture_2d::texture_2d(context & ctx, uint32_t width, uint32_t height, VkFormat format, const void * initial_data) : ctx{ctx}
+{
+    VkImageCreateInfo image_info {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.format = format;
+    image_info.extent = {width, height, 1};
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    check(vkCreateImage(ctx.device, &image_info, nullptr, &image));
+
+    VkMemoryRequirements mem_reqs;
+    vkGetImageMemoryRequirements(ctx.device, image, &mem_reqs);
+    device_memory = ctx.allocate(mem_reqs, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    vkBindImageMemory(ctx.device, image, device_memory, 0);
+    
+    VkImageViewCreateInfo image_view_info {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    image_view_info.image = image;
+    image_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    image_view_info.format = format;
+    image_view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    image_view_info.subresourceRange.baseMipLevel = 0;
+    image_view_info.subresourceRange.levelCount = 1;
+    image_view_info.subresourceRange.baseArrayLayer = 0;
+    image_view_info.subresourceRange.layerCount = 1;
+    check(vkCreateImageView(ctx.device, &image_view_info, nullptr, &image_view));
+
+    memcpy(ctx.mapped_staging_memory, initial_data, mem_reqs.size);
+
+    auto cmd = ctx.begin_transient();
+    transition_layout(cmd, image, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    VkBufferImageCopy copy_region {};
+    copy_region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copy_region.imageSubresource.layerCount = 1;
+    copy_region.imageExtent = image_info.extent;
+    vkCmdCopyBufferToImage(cmd, ctx.staging_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
+    transition_layout(cmd, image, 0, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    ctx.end_transient(cmd);
+}
+
+texture_2d::~texture_2d()
+{
+    vkDestroyImageView(ctx.device, image_view, nullptr);
+    vkDestroyImage(ctx.device, image, nullptr);
+    vkFreeMemory(ctx.device, device_memory, nullptr);
+}
+
 ////////////////////
 // dynamic_buffer //
 ////////////////////
@@ -367,7 +478,6 @@ dynamic_buffer::dynamic_buffer(context & ctx, VkDeviceSize size, VkBufferUsageFl
     buffer_info.size = size;
     buffer_info.usage = usage;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
     check(vkCreateBuffer(ctx.device, &buffer_info, nullptr, &buffer));
 
     VkMemoryRequirements mem_reqs;
@@ -413,6 +523,13 @@ void descriptor_set::write_uniform_buffer(uint32_t binding, uint32_t array_eleme
 {
     const auto info = uniform_buffer.write(size, data);
     VkWriteDescriptorSet write {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, binding, array_element, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &info, nullptr};
+    vkUpdateDescriptorSets(ctx.device, 1, &write, 0, nullptr);
+}
+
+void descriptor_set::write_combined_image_sampler(uint32_t binding, uint32_t array_element, VkSampler sampler, VkImageView image_view, VkImageLayout image_layout)
+{
+    VkDescriptorImageInfo info {sampler, image_view, image_layout};
+    VkWriteDescriptorSet write {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, binding, array_element, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &info, nullptr, nullptr};
     vkUpdateDescriptorSets(ctx.device, 1, &write, 0, nullptr);
 }
 
@@ -485,6 +602,46 @@ descriptor_set transient_resource_pool::allocate_descriptor_set(VkDescriptorSetL
     VkDescriptorSet descriptor_set;
     check(vkAllocateDescriptorSets(ctx.device, &alloc_info, &descriptor_set));
     return {ctx, uniform_buffer, descriptor_set};
+}
+
+////////////////////////////
+// transition_layout(...) //
+////////////////////////////
+
+void transition_layout(VkCommandBuffer command_buffer, VkImage image, uint32_t mip_level, VkImageLayout old_layout, VkImageLayout new_layout)
+{
+    VkPipelineStageFlags src_stage_mask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    VkPipelineStageFlags dst_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    VkImageMemoryBarrier barrier {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.oldLayout = old_layout;
+    barrier.newLayout = new_layout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = mip_level;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+    switch(old_layout)
+    {
+    case VK_IMAGE_LAYOUT_UNDEFINED: break; // No need to wait for anything, contents can be discarded
+    case VK_IMAGE_LAYOUT_PREINITIALIZED: barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT; break; // Wait for host writes to complete before changing layout    
+    case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL: barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT; break; // Wait for transfer reads to complete before changing layout
+    case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL: barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; break; // Wait for transfer writes to complete before changing layout
+    case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL: barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT; break; // Wait for color attachment writes to complete before changing layout
+    case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL: barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT; break; // Wait for shader reads to complete before changing layout
+    default: throw std::logic_error("unsupported layout transition");
+    }
+    switch(new_layout)
+    {
+    case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL: barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT; break; // Transfer reads should wait for layout change to complete
+    case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL: barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; break; // Transfer writes should wait for layout change to complete
+    case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL: barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT; break; // Writes to color attachments should wait for layout change to complete
+    case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL: barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT; break; // Shader reads should wait for layout change to complete
+    default: throw std::logic_error("unsupported layout transition");
+    }
+    vkCmdPipelineBarrier(command_buffer, src_stage_mask, dst_stage_mask, 0, 0, nullptr, 0, nullptr, 1, &barrier);
 }
 
 /////////////////

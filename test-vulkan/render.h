@@ -47,7 +47,12 @@ struct context
     physical_device_selection selection {};
     VkDevice device {};
     VkQueue queue {};
-    VkPhysicalDeviceMemoryProperties mem_props;
+    VkPhysicalDeviceMemoryProperties mem_props {};
+
+    VkBuffer staging_buffer {};
+    VkDeviceMemory staging_memory {};
+    void * mapped_staging_memory {};
+    VkCommandPool staging_pool {};
 
     context();
     ~context();
@@ -57,6 +62,9 @@ struct context
 
     VkDescriptorSetLayout create_descriptor_set_layout(array_view<VkDescriptorSetLayoutBinding> bindings);
     VkPipelineLayout create_pipeline_layout(array_view<VkDescriptorSetLayout> descriptor_sets);
+
+    VkCommandBuffer begin_transient();
+    void end_transient(VkCommandBuffer commandBuffer);
 };
 
 class window
@@ -99,6 +107,20 @@ public:
     operator VkImageView () const { return image_view; }
 };
 
+class texture_2d
+{
+    context & ctx;
+    VkImage image;
+    VkImageView image_view;
+    VkDeviceMemory device_memory;
+public:
+    texture_2d(context & ctx, uint32_t width, uint32_t height, VkFormat format, const void * initial_data);
+    ~texture_2d();
+
+    VkImage get_image() { return image; }
+    operator VkImageView () const { return image_view; }
+};
+
 class dynamic_buffer
 {
     context & ctx;
@@ -125,6 +147,7 @@ public:
     const VkDescriptorSet * operator & () const { return &set; }
 
     void write_uniform_buffer(uint32_t binding, uint32_t array_element, size_t size, const void * data);
+    void write_combined_image_sampler(uint32_t binding, uint32_t array_element, VkSampler sampler, VkImageView image_view, VkImageLayout image_layout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 };
 
 // Manages the allocation of short-lived resources which can be recycled in a single call, protected by a fence

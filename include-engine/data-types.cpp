@@ -4,7 +4,7 @@
 
 image::image(const char * filename) 
 { 
-    pixels = stbi_load(filename, &width, &height, &channels, 0);
+    pixels = stbi_load(filename, &width, &height, nullptr, 4);
     if(!pixels) throw std::runtime_error(std::string("failed to load ") + filename);
 }
 
