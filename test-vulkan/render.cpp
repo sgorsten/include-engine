@@ -423,11 +423,11 @@ texture_2d::texture_2d(context & ctx, uint32_t width, uint32_t height, VkFormat 
     image_info.imageType = VK_IMAGE_TYPE_2D;
     image_info.format = format;
     image_info.extent = {width, height, 1};
-    image_info.mipLevels = 1;
+    image_info.mipLevels = 1+std::ceil(std::log2(std::max(width,height)));
     image_info.arrayLayers = 1;
     image_info.samples = VK_SAMPLE_COUNT_1_BIT;
     image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    image_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    image_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     check(vkCreateImage(ctx.device, &image_info, nullptr, &image));
@@ -443,12 +443,12 @@ texture_2d::texture_2d(context & ctx, uint32_t width, uint32_t height, VkFormat 
     image_view_info.format = format;
     image_view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     image_view_info.subresourceRange.baseMipLevel = 0;
-    image_view_info.subresourceRange.levelCount = 1;
+    image_view_info.subresourceRange.levelCount = image_info.mipLevels;
     image_view_info.subresourceRange.baseArrayLayer = 0;
     image_view_info.subresourceRange.layerCount = 1;
     check(vkCreateImageView(ctx.device, &image_view_info, nullptr, &image_view));
 
-    memcpy(ctx.mapped_staging_memory, initial_data, mem_reqs.size);
+    memcpy(ctx.mapped_staging_memory, initial_data, width*height*4);
 
     auto cmd = ctx.begin_transient();
     transition_layout(cmd, image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -457,7 +457,28 @@ texture_2d::texture_2d(context & ctx, uint32_t width, uint32_t height, VkFormat 
     copy_region.imageSubresource.layerCount = 1;
     copy_region.imageExtent = image_info.extent;
     vkCmdCopyBufferToImage(cmd, ctx.staging_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
-    transition_layout(cmd, image, 0, 0, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    // Generate mip levels using blits
+    for(uint32_t i=1; i<image_info.mipLevels; ++i)
+    {
+        VkImageBlit blit {};
+        blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i-1, 0, 1};
+        blit.srcOffsets[0] = {0, 0, 0};
+        blit.srcOffsets[1] = {(int)width, (int)height, 1};
+
+        width = std::max(width/2,1U);
+        height = std::max(height/2,1U);
+        blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1};
+        blit.dstOffsets[0] = {0, 0, 0};
+        blit.dstOffsets[1] = {(int)width, (int)height, 1};
+
+        transition_layout(cmd, image, i-1, 0, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transition_layout(cmd, image, i, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        vkCmdBlitImage(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+        transition_layout(cmd, image, i-1, 0, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+    transition_layout(cmd, image, image_info.mipLevels-1, 0, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
     ctx.end_transient(cmd);
 }
 
@@ -479,11 +500,11 @@ texture_cube::texture_cube(context & ctx, VkFormat format, const image & posx, c
     image_info.imageType = VK_IMAGE_TYPE_2D;
     image_info.format = format;
     image_info.extent = {side_length, side_length, 1};
-    image_info.mipLevels = 1;
+    image_info.mipLevels = 1; //1+std::ceil(std::log2(side_length));
     image_info.arrayLayers = 6;
     image_info.samples = VK_SAMPLE_COUNT_1_BIT;
     image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    image_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    image_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     check(vkCreateImage(ctx.device, &image_info, nullptr, &im));
@@ -499,25 +520,45 @@ texture_cube::texture_cube(context & ctx, VkFormat format, const image & posx, c
     image_view_info.format = format;
     image_view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     image_view_info.subresourceRange.baseMipLevel = 0;
-    image_view_info.subresourceRange.levelCount = 1;
+    image_view_info.subresourceRange.levelCount = image_info.mipLevels;
     image_view_info.subresourceRange.baseArrayLayer = 0;
     image_view_info.subresourceRange.layerCount = 6;
     check(vkCreateImageView(ctx.device, &image_view_info, nullptr, &image_view));    
 
     const image * ims[] {&posx,&negx,&posy,&negy,&posz,&negz};
-    for(uint32_t i=0; i<6; ++i)
+    for(uint32_t j=0; j<6; ++j)
     {
-        memcpy(ctx.mapped_staging_memory, ims[i]->get_pixels(), mem_reqs.size/6);
+        memcpy(ctx.mapped_staging_memory, ims[j]->get_pixels(), side_length*side_length*4);
 
         auto cmd = ctx.begin_transient();
-        transition_layout(cmd, im, 0, i, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        transition_layout(cmd, im, 0, j, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         VkBufferImageCopy copy_region {};
         copy_region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        copy_region.imageSubresource.baseArrayLayer = i;
+        copy_region.imageSubresource.baseArrayLayer = j;
         copy_region.imageSubresource.layerCount = 1;
         copy_region.imageExtent = image_info.extent;
         vkCmdCopyBufferToImage(cmd, ctx.staging_buffer, im, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
-        transition_layout(cmd, im, 0, i, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+        // Generate mip levels using blits
+        for(uint32_t i=1; i<image_info.mipLevels; ++i)
+        {
+            VkImageBlit blit {};
+            blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i-1, j, 1};
+            blit.srcOffsets[0] = {0, 0, 0};
+            blit.srcOffsets[1] = {(int)side_length, (int)side_length, 1};
+
+            side_length = std::max(side_length/2,1U);
+            blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, j, 1};
+            blit.dstOffsets[0] = {0, 0, 0};
+            blit.dstOffsets[1] = {(int)side_length, (int)side_length, 1};
+
+            transition_layout(cmd, im, i-1, j, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            transition_layout(cmd, im, i, j, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            vkCmdBlitImage(cmd, im, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, im, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+            transition_layout(cmd, im, i-1, j, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+        transition_layout(cmd, im, image_info.mipLevels-1, j, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
         ctx.end_transient(cmd);
     }
 }

@@ -111,6 +111,9 @@ int main() try
     VkSamplerCreateInfo sampler_info = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sampler_info.magFilter = VK_FILTER_LINEAR;
     sampler_info.minFilter = VK_FILTER_LINEAR;
+    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler_info.maxLod = 1000;
+    sampler_info.minLod = -1000;
     VkSampler sampler;
     check(vkCreateSampler(ctx.device, &sampler_info, nullptr, &sampler));
 
@@ -351,6 +354,7 @@ int main() try
     vkDestroyPipelineLayout(ctx.device, pipeline_layout, nullptr);
     vkDestroyDescriptorSetLayout(ctx.device, per_object_layout, nullptr);
     vkDestroyDescriptorSetLayout(ctx.device, per_view_layout, nullptr);
+    vkDestroyDescriptorSetLayout(ctx.device, per_scene_layout, nullptr);
     vkDestroyShaderModule(ctx.device, vert_shader, nullptr);
     vkDestroyShaderModule(ctx.device, frag_shader, nullptr);
     for(auto framebuffer : swapchain_framebuffers) vkDestroyFramebuffer(ctx.device, framebuffer, nullptr);
