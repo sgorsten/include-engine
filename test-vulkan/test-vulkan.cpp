@@ -123,6 +123,11 @@ VkPipeline make_pipeline(VkDevice device, VkPipelineLayout layout, VkShaderModul
     dynamicState.dynamicStateCount = countof(dynamic_states);
     dynamicState.pDynamicStates = dynamic_states;
 
+    VkPipelineDepthStencilStateCreateInfo depth_stencil_state {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    depth_stencil_state.depthWriteEnable = VK_TRUE;
+    depth_stencil_state.depthTestEnable = VK_TRUE;
+    depth_stencil_state.depthCompareOp = VK_COMPARE_OP_LESS;
+
     VkGraphicsPipelineCreateInfo pipelineInfo {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
     pipelineInfo.stageCount = countof(shader_stages);
     pipelineInfo.pStages = shader_stages;
@@ -131,9 +136,9 @@ VkPipeline make_pipeline(VkDevice device, VkPipelineLayout layout, VkShaderModul
     pipelineInfo.pViewportState = &viewportState;
     pipelineInfo.pRasterizationState = &rasterizer;
     pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = nullptr; // Optional
+    pipelineInfo.pDepthStencilState = &depth_stencil_state;
     pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.pDynamicState = nullptr; // Optional
+    pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = layout;
     pipelineInfo.renderPass = render_pass;
     pipelineInfo.subpass = 0;
@@ -193,28 +198,37 @@ int main() try
     auto pipeline_layout = ctx.create_pipeline_layout({per_view_layout, per_object_layout});
 
     // Set up a render pass
-    VkAttachmentDescription color_attachment_desc {};
-    color_attachment_desc.format = ctx.selection.surface_format.format;
-    color_attachment_desc.samples = VK_SAMPLE_COUNT_1_BIT;
-    color_attachment_desc.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    color_attachment_desc.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    color_attachment_desc.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    color_attachment_desc.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    color_attachment_desc.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    color_attachment_desc.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-    VkAttachmentReference color_attachment_ref {};
-    color_attachment_ref.attachment = 0;
-    color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
+    VkAttachmentDescription attachments[2] {};
+    attachments[0].format = ctx.selection.surface_format.format;
+    attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    attachments[1].format = VK_FORMAT_D32_SFLOAT;
+    attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachments[1].finalLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkAttachmentReference attachment_refs[] 
+    {
+        {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+        {1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL}
+    };
     VkSubpassDescription subpass_desc {};
     subpass_desc.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass_desc.colorAttachmentCount = 1;
-    subpass_desc.pColorAttachments = &color_attachment_ref;
+    subpass_desc.pColorAttachments = &attachment_refs[0];
+    subpass_desc.pDepthStencilAttachment = &attachment_refs[1];
     
     VkRenderPassCreateInfo render_pass_info {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
-    render_pass_info.attachmentCount = 1;
-    render_pass_info.pAttachments = &color_attachment_desc;
+    render_pass_info.attachmentCount = countof(attachments);
+    render_pass_info.pAttachments = attachments;
     render_pass_info.subpassCount = 1;
     render_pass_info.pSubpasses = &subpass_desc;
 
@@ -228,15 +242,48 @@ int main() try
 
     // Set up a window with swapchain framebuffers
     window win {ctx, 640, 480};
+
+    // Create a depth buffer
+    VkImageCreateInfo image_info {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.format = VK_FORMAT_D32_SFLOAT;
+    image_info.extent = {win.get_width(), win.get_height(), 1};
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkImage depth_image;
+    check(vkCreateImage(ctx.device, &image_info, nullptr, &depth_image));
+
+    VkMemoryRequirements mem_reqs;
+    vkGetImageMemoryRequirements(ctx.device, depth_image, &mem_reqs);
+    VkDeviceMemory depth_memory = ctx.allocate(mem_reqs, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    vkBindImageMemory(ctx.device, depth_image, depth_memory, 0);
+    
+    VkImageViewCreateInfo image_view_info {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    image_view_info.image = depth_image;
+    image_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    image_view_info.format = VK_FORMAT_D32_SFLOAT;
+    image_view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    image_view_info.subresourceRange.baseMipLevel = 0;
+    image_view_info.subresourceRange.levelCount = 1;
+    image_view_info.subresourceRange.baseArrayLayer = 0;
+    image_view_info.subresourceRange.layerCount = 1;
+    VkImageView depth_image_view;
+    check(vkCreateImageView(ctx.device, &image_view_info, nullptr, &depth_image_view));
+
+    // Create framebuffers
     std::vector<VkFramebuffer> swapchain_framebuffers(win.get_swapchain_image_views().size());
     for(uint32_t i=0; i<swapchain_framebuffers.size(); ++i)
     {
-        VkImageView attachments[] {win.get_swapchain_image_views()[i]};
-
+        VkImageView attachments[] {win.get_swapchain_image_views()[i], depth_image_view};
         VkFramebufferCreateInfo framebuffer_info {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
         framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebuffer_info.renderPass = render_pass;
-        framebuffer_info.attachmentCount = 1;
+        framebuffer_info.attachmentCount = countof(attachments);
         framebuffer_info.pAttachments = attachments;
         framebuffer_info.width = win.get_width();
         framebuffer_info.height = win.get_height();
@@ -312,9 +359,11 @@ int main() try
         pass_begin_info.framebuffer = swapchain_framebuffers[index];
         pass_begin_info.renderArea.offset = {0, 0};
         pass_begin_info.renderArea.extent = {win.get_width(), win.get_height()};
-        VkClearValue clearColor {0, 0, 0, 1};
-        pass_begin_info.clearValueCount = 1;
-        pass_begin_info.pClearValues = &clearColor;
+        VkClearValue clear_values[2];
+        clear_values[0].color = {0, 0, 0, 1};
+        clear_values[1].depthStencil = {1.0f, 0};
+        pass_begin_info.clearValueCount = countof(clear_values);
+        pass_begin_info.pClearValues = clear_values;
         vkCmdBeginRenderPass(cmd, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
