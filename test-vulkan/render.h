@@ -1,6 +1,7 @@
 #ifndef RENDER_H
 #define RENDER_H
 
+#include "data-types.h"
 #include "linalg.h"
 using namespace linalg::aliases;
 
@@ -118,6 +119,20 @@ public:
     ~texture_2d();
 
     VkImage get_image() { return image; }
+    operator VkImageView () const { return image_view; }
+};
+
+class texture_cube
+{
+    context & ctx;
+    VkImage im;
+    VkImageView image_view;
+    VkDeviceMemory device_memory;
+public:
+    texture_cube(context & ctx, VkFormat format, const image & posx, const image & negx, const image & posy, const image & negy, const image & posz, const image & negz);
+    ~texture_cube();
+
+    VkImage get_image() { return im; }
     operator VkImageView () const { return image_view; }
 };
 

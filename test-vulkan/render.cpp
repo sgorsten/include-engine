@@ -415,7 +415,7 @@ depth_buffer::~depth_buffer()
 // texture_2d //
 ////////////////
 
-void transition_layout(VkCommandBuffer command_buffer, VkImage image, uint32_t mip_level, VkImageLayout old_layout, VkImageLayout new_layout);
+void transition_layout(VkCommandBuffer command_buffer, VkImage image, uint32_t mip_level, uint32_t array_layer, VkImageLayout old_layout, VkImageLayout new_layout);
 
 texture_2d::texture_2d(context & ctx, uint32_t width, uint32_t height, VkFormat format, const void * initial_data) : ctx{ctx}
 {
@@ -451,13 +451,13 @@ texture_2d::texture_2d(context & ctx, uint32_t width, uint32_t height, VkFormat 
     memcpy(ctx.mapped_staging_memory, initial_data, mem_reqs.size);
 
     auto cmd = ctx.begin_transient();
-    transition_layout(cmd, image, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    transition_layout(cmd, image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     VkBufferImageCopy copy_region {};
     copy_region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     copy_region.imageSubresource.layerCount = 1;
     copy_region.imageExtent = image_info.extent;
     vkCmdCopyBufferToImage(cmd, ctx.staging_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
-    transition_layout(cmd, image, 0, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    transition_layout(cmd, image, 0, 0, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     ctx.end_transient(cmd);
 }
 
@@ -465,6 +465,67 @@ texture_2d::~texture_2d()
 {
     vkDestroyImageView(ctx.device, image_view, nullptr);
     vkDestroyImage(ctx.device, image, nullptr);
+    vkFreeMemory(ctx.device, device_memory, nullptr);
+}
+
+//////////////////
+// texture_cube //
+//////////////////
+
+texture_cube::texture_cube(context & ctx, VkFormat format, const image & posx, const image & negx, const image & posy, const image & negy, const image & posz, const image & negz) : ctx{ctx}
+{
+    uint32_t side_length = posx.get_width();
+    VkImageCreateInfo image_info {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.format = format;
+    image_info.extent = {side_length, side_length, 1};
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 6;
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    check(vkCreateImage(ctx.device, &image_info, nullptr, &im));
+
+    VkMemoryRequirements mem_reqs;
+    vkGetImageMemoryRequirements(ctx.device, im, &mem_reqs);
+    device_memory = ctx.allocate(mem_reqs, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    vkBindImageMemory(ctx.device, im, device_memory, 0);
+    
+    VkImageViewCreateInfo image_view_info {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    image_view_info.image = im;
+    image_view_info.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+    image_view_info.format = format;
+    image_view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    image_view_info.subresourceRange.baseMipLevel = 0;
+    image_view_info.subresourceRange.levelCount = 1;
+    image_view_info.subresourceRange.baseArrayLayer = 0;
+    image_view_info.subresourceRange.layerCount = 6;
+    check(vkCreateImageView(ctx.device, &image_view_info, nullptr, &image_view));    
+
+    const image * ims[] {&posx,&negx,&posy,&negy,&posz,&negz};
+    for(uint32_t i=0; i<6; ++i)
+    {
+        memcpy(ctx.mapped_staging_memory, ims[i]->get_pixels(), mem_reqs.size/6);
+
+        auto cmd = ctx.begin_transient();
+        transition_layout(cmd, im, 0, i, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        VkBufferImageCopy copy_region {};
+        copy_region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copy_region.imageSubresource.baseArrayLayer = i;
+        copy_region.imageSubresource.layerCount = 1;
+        copy_region.imageExtent = image_info.extent;
+        vkCmdCopyBufferToImage(cmd, ctx.staging_buffer, im, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
+        transition_layout(cmd, im, 0, i, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        ctx.end_transient(cmd);
+    }
+}
+
+texture_cube::~texture_cube()
+{
+    vkDestroyImageView(ctx.device, image_view, nullptr);
+    vkDestroyImage(ctx.device, im, nullptr);
     vkFreeMemory(ctx.device, device_memory, nullptr);
 }
 
@@ -608,7 +669,7 @@ descriptor_set transient_resource_pool::allocate_descriptor_set(VkDescriptorSetL
 // transition_layout(...) //
 ////////////////////////////
 
-void transition_layout(VkCommandBuffer command_buffer, VkImage image, uint32_t mip_level, VkImageLayout old_layout, VkImageLayout new_layout)
+void transition_layout(VkCommandBuffer command_buffer, VkImage image, uint32_t mip_level, uint32_t array_layer, VkImageLayout old_layout, VkImageLayout new_layout)
 {
     VkPipelineStageFlags src_stage_mask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
     VkPipelineStageFlags dst_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
@@ -621,7 +682,7 @@ void transition_layout(VkCommandBuffer command_buffer, VkImage image, uint32_t m
     barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     barrier.subresourceRange.baseMipLevel = mip_level;
     barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.baseArrayLayer = array_layer;
     barrier.subresourceRange.layerCount = 1;
     switch(old_layout)
     {
