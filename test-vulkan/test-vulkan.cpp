@@ -147,13 +147,18 @@ int main() try
 
     const vertex vertices[]
     {
-        {{ 0.0f, -0.5f}, {1,0,0}},
+        {{-0.5f, -0.5f}, {1,0,0}},
+        {{+0.5f, -0.5f}, {1,1,0}},
         {{+0.5f, +0.5f}, {0,1,0}},
         {{-0.5f, +0.5f}, {0,0,1}},
     };
+    const uint32_t indices[] {0,1,2,0,2,3};
 
     dynamic_buffer vertex_buffer(ctx, sizeof(vertices), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     auto verts = vertex_buffer.write(sizeof(vertices), vertices);
+
+    dynamic_buffer index_buffer(ctx, sizeof(indices), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    auto tris = index_buffer.write(sizeof(indices), indices);
 
     // Set up our layouts
     auto per_view_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT}});
@@ -306,7 +311,8 @@ int main() try
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, 1, &per_object, 0, nullptr);
 
             vkCmdBindVertexBuffers(cmd, 0, 1, &verts.buffer, &verts.offset);
-            vkCmdDraw(cmd, 3, 1, 0, 0);
+            vkCmdBindIndexBuffer(cmd, tris.buffer, tris.offset, VkIndexType::VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
         }
 
         vkCmdEndRenderPass(cmd);
