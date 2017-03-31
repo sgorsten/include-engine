@@ -47,6 +47,15 @@ template<class Vertex, int N> VkVertexInputAttributeDescription make_attribute(u
 VkPipeline make_pipeline(VkDevice device, array_view<VkVertexInputBindingDescription> vertex_bindings, array_view<VkVertexInputAttributeDescription> vertex_attributes,    
     VkPipelineLayout layout, VkShaderModule vert_shader, VkShaderModule frag_shader, VkRenderPass render_pass);
 
+struct per_view_uniforms
+{
+	alignas(16) float4x4 view_proj_matrix;
+	alignas(16) float3 eye_position;
+	alignas(16) float3 ambient_light;
+	alignas(16) float3 light_direction;
+	alignas(16) float3 light_color;
+};
+
 int main() try
 {
     std::ifstream in("../example-game/assets/helmet-mesh.fbx", std::ifstream::binary);
@@ -54,10 +63,30 @@ int main() try
     std::cout << "FBX Version " << doc.version << std::endl;
     for(auto & node : doc.nodes) std::cout << node << std::endl;
     auto models = load_models(doc);
-    for(auto & m : models) for(auto & g : m.geoms) for(auto & v : g.vertices)
+
+    // Adjust coordinates and compute tangent space basis
+    for(auto & m : models) for(auto & g : m.geoms)
     {
-        v.position *= float3{1,-1,-1};
-        v.normal *= float3{1,-1,-1};
+        for(auto & v : g.vertices)
+        {
+            v.position *= float3{1,-1,-1};
+            v.normal *= float3{1,-1,-1};
+        }
+        for(auto t : g.triangles)
+        {
+            auto & v0 = g.vertices[t.x], & v1 = g.vertices[t.y], & v2 = g.vertices[t.z];
+            const float3 e1 = v1.position - v0.position, e2 = v2.position - v0.position;
+            const float2 d1 = v1.texcoord - v0.texcoord, d2 = v2.texcoord - v0.texcoord;
+            const float3 dpds = float3(d2.y * e1.x - d1.y * e2.x, d2.y * e1.y - d1.y * e2.y, d2.y * e1.z - d1.y * e2.z) / cross(d1, d2);
+            const float3 dpdt = float3(d1.x * e2.x - d2.x * e1.x, d1.x * e2.y - d2.x * e1.y, d1.x * e2.z - d2.x * e1.z) / cross(d1, d2);
+            v0.tangent += dpds; v1.tangent += dpds; v2.tangent += dpds;
+            v0.bitangent += dpdt; v1.bitangent += dpdt; v2.bitangent += dpdt;
+        }
+        for(auto & v : g.vertices)
+        {
+            v.tangent = normalize(v.tangent);
+            v.bitangent = normalize(v.bitangent);
+        }
     }
 
     image albedo("../example-game/assets/helmet-normal.jpg");
@@ -70,18 +99,8 @@ int main() try
 
     // Create our sampler
     VkSamplerCreateInfo sampler_info = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     sampler_info.magFilter = VK_FILTER_LINEAR;
     sampler_info.minFilter = VK_FILTER_LINEAR;
-    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    //sampler_info.anisotropyEnable = VK_TRUE;
-    //sampler_info.maxAnisotropy = 16;
-    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST; //VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    sampler_info.mipLodBias = 0.0f;
-    sampler_info.minLod = 0.0f;
-    sampler_info.maxLod = 0.0f;
     VkSampler sampler;
     check(vkCreateSampler(ctx.device, &sampler_info, nullptr, &sampler));
 
@@ -112,7 +131,7 @@ int main() try
     }
 
     // Set up our layouts
-    auto per_view_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT}});
+    auto per_view_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}});
     auto per_object_layout = ctx.create_descriptor_set_layout({
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
@@ -166,7 +185,9 @@ int main() try
     {
         make_attribute(0, 0, &fbx::geometry::vertex::position), 
         make_attribute(1, 0, &fbx::geometry::vertex::normal),
-        make_attribute(2, 0, &fbx::geometry::vertex::texcoord)
+        make_attribute(2, 0, &fbx::geometry::vertex::texcoord),
+        make_attribute(3, 0, &fbx::geometry::vertex::tangent),
+        make_attribute(4, 0, &fbx::geometry::vertex::bitangent)
     };
     VkPipeline pipeline = make_pipeline(ctx.device, bindings, attributes, pipeline_layout, vert_shader, frag_shader, render_pass);
 
@@ -239,7 +260,6 @@ int main() try
         int width=win.get_width(), height=win.get_height();
         const auto proj_matrix = linalg::perspective_matrix(1.0f, (float)width/height, 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one);
         const auto view_matrix = inverse(pose_matrix(camera_orientation, camera_position));
-        const auto view_proj_matrix = mul(proj_matrix, view_matrix);
 
         // Render a frame
         auto & pool = pools[frame_index];
@@ -254,7 +274,13 @@ int main() try
 
         // Bind per-view uniforms
         auto per_view = pool.allocate_descriptor_set(per_view_layout);
-        per_view.write_uniform_buffer(0, 0, sizeof(view_proj_matrix), &view_proj_matrix);      
+        per_view_uniforms pv;
+        pv.view_proj_matrix = mul(proj_matrix, view_matrix);
+        pv.eye_position = camera_position;
+        pv.ambient_light = {0.01f,0.01f,0.01f};
+        pv.light_direction = normalize(float3{1,-5,-2});
+        pv.light_color = {0.8f,0.7f,0.5f};
+        per_view.write_uniform_buffer(0, 0, sizeof(pv), &pv);      
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &per_view, 0, nullptr);
 
         const uint32_t index = win.begin();
