@@ -1,18 +1,23 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
-layout(set=0, binding=0) uniform PerView
+layout(set=0, binding=0) uniform PerScene
 {
-	mat4 u_view_proj_matrix;
-	vec3 u_eye_position;
 	vec3 u_ambient_light;
 	vec3 u_light_direction;
 	vec3 u_light_color;
 };
-layout(set=1, binding=1) uniform sampler2D u_albedo;
-layout(set=1, binding=2) uniform sampler2D u_normal;
-layout(set=1, binding=3) uniform sampler2D u_metallic;
-layout(set=1, binding=4) uniform samplerCube u_env;
+
+layout(set=1, binding=0) uniform PerView
+{
+	mat4 u_view_proj_matrix;
+	vec3 u_eye_position;
+};
+
+layout(set=2, binding=1) uniform sampler2D u_albedo;
+layout(set=2, binding=2) uniform sampler2D u_normal;
+layout(set=2, binding=3) uniform sampler2D u_metallic;
+layout(set=2, binding=4) uniform samplerCube u_env;
 
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec3 normal;

@@ -1,16 +1,13 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
-layout(set=0, binding=0) uniform PerView
+layout(set=1, binding=0) uniform PerView
 {
 	mat4 u_view_proj_matrix;
 	vec3 u_eye_position;
-	vec3 u_ambient_light;
-	vec3 u_light_direction;
-	vec3 u_light_color;
 };
 
-layout(set=1, binding=0) uniform PerObject
+layout(set=2, binding=0) uniform PerObject
 {
 	mat4 u_model_matrix;
 };

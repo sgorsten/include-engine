@@ -47,13 +47,17 @@ template<class Vertex, int N> VkVertexInputAttributeDescription make_attribute(u
 VkPipeline make_pipeline(VkDevice device, array_view<VkVertexInputBindingDescription> vertex_bindings, array_view<VkVertexInputAttributeDescription> vertex_attributes,    
     VkPipelineLayout layout, VkShaderModule vert_shader, VkShaderModule frag_shader, VkRenderPass render_pass);
 
+struct per_scene_uniforms
+{
+	alignas(16) float3 ambient_light;
+	alignas(16) float3 light_direction;
+	alignas(16) float3 light_color;
+};
+
 struct per_view_uniforms
 {
 	alignas(16) float4x4 view_proj_matrix;
 	alignas(16) float3 eye_position;
-	alignas(16) float3 ambient_light;
-	alignas(16) float3 light_direction;
-	alignas(16) float3 light_color;
 };
 
 int main() try
@@ -137,6 +141,7 @@ int main() try
     }
 
     // Set up our layouts
+    auto per_scene_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}});
     auto per_view_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}});
     auto per_object_layout = ctx.create_descriptor_set_layout({
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
@@ -145,7 +150,7 @@ int main() try
         {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
     });
-    auto pipeline_layout = ctx.create_pipeline_layout({per_view_layout, per_object_layout});
+    auto pipeline_layout = ctx.create_pipeline_layout({per_scene_layout, per_view_layout, per_object_layout});
 
     // Set up a render pass
     VkAttachmentDescription attachments[2] {};
@@ -282,15 +287,20 @@ int main() try
         vkBeginCommandBuffer(cmd, &begin_info);
 
         // Bind per-view uniforms
+        auto per_scene = pool.allocate_descriptor_set(per_scene_layout);
+        per_scene_uniforms ps;
+        ps.ambient_light = {0.01f,0.01f,0.01f};
+        ps.light_direction = normalize(float3{1,-5,-2});
+        ps.light_color = {0.8f,0.7f,0.5f};
+        per_scene.write_uniform_buffer(0, 0, sizeof(ps), &ps);      
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &per_scene, 0, nullptr);
+
         auto per_view = pool.allocate_descriptor_set(per_view_layout);
         per_view_uniforms pv;
         pv.view_proj_matrix = mul(proj_matrix, view_matrix);
         pv.eye_position = camera_position;
-        pv.ambient_light = {0.01f,0.01f,0.01f};
-        pv.light_direction = normalize(float3{1,-5,-2});
-        pv.light_color = {0.8f,0.7f,0.5f};
         per_view.write_uniform_buffer(0, 0, sizeof(pv), &pv);      
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &per_view, 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, 1, &per_view, 0, nullptr);
 
         const uint32_t index = win.begin();
         VkRenderPassBeginInfo pass_begin_info {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -320,7 +330,7 @@ int main() try
             per_object.write_combined_image_sampler(2, 0, sampler, normal_tex);
             per_object.write_combined_image_sampler(3, 0, sampler, metallic_tex);
             per_object.write_combined_image_sampler(4, 0, sampler, env_tex);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, 1, &per_object, 0, nullptr);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, 1, &per_object, 0, nullptr);
 
             vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &m.vertices.offset);
             vkCmdBindIndexBuffer(cmd, m.indices.buffer, m.indices.offset, VkIndexType::VK_INDEX_TYPE_UINT32);
