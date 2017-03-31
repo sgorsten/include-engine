@@ -125,6 +125,10 @@ physical_device_selection select_physical_device(VkInstance instance, const std:
     throw std::runtime_error("no suitable Vulkan device present");
 }
 
+/////////////
+// context //
+/////////////
+
 context::context()
 {
     if(glfwInit() == GLFW_FALSE) throw std::runtime_error("glfwInit() failed");
@@ -205,6 +209,10 @@ VkPipelineLayout context::create_pipeline_layout(array_view<VkDescriptorSetLayou
     check(vkCreatePipelineLayout(device, &create_info, nullptr, &pipeline_layout));
     return pipeline_layout;
 }
+
+////////////
+// window //
+////////////
 
 window::window(context & ctx, uint32_t width, uint32_t height) : ctx{ctx}, width{width}, height{height}
 {
@@ -304,6 +312,49 @@ void window::end(uint32_t index, std::initializer_list<VkCommandBuffer> commands
     present_info.pSwapchains = &swapchain;
     present_info.pImageIndices = &index;
     check(vkQueuePresentKHR(ctx.queue, &present_info));
+}
+
+//////////////////
+// depth_buffer //
+//////////////////
+
+depth_buffer::depth_buffer(context & ctx, uint32_t width, uint32_t height) : ctx{ctx}
+{
+    VkImageCreateInfo image_info {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.format = VK_FORMAT_D32_SFLOAT;
+    image_info.extent = {width, height, 1};
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    check(vkCreateImage(ctx.device, &image_info, nullptr, &image));
+
+    VkMemoryRequirements mem_reqs;
+    vkGetImageMemoryRequirements(ctx.device, image, &mem_reqs);
+    device_memory = ctx.allocate(mem_reqs, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    vkBindImageMemory(ctx.device, image, device_memory, 0);
+    
+    VkImageViewCreateInfo image_view_info {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    image_view_info.image = image;
+    image_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    image_view_info.format = VK_FORMAT_D32_SFLOAT;
+    image_view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    image_view_info.subresourceRange.baseMipLevel = 0;
+    image_view_info.subresourceRange.levelCount = 1;
+    image_view_info.subresourceRange.baseArrayLayer = 0;
+    image_view_info.subresourceRange.layerCount = 1;
+    check(vkCreateImageView(ctx.device, &image_view_info, nullptr, &image_view));
+}
+
+depth_buffer::~depth_buffer()
+{
+    vkDestroyImageView(ctx.device, image_view, nullptr);
+    vkDestroyImage(ctx.device, image, nullptr);
+    vkFreeMemory(ctx.device, device_memory, nullptr);
 }
 
 ////////////////////

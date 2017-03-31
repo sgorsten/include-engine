@@ -86,6 +86,19 @@ public:
     void end(uint32_t index, std::initializer_list<VkCommandBuffer> commands, VkFence fence);
 };
 
+class depth_buffer
+{
+    context & ctx;
+    VkImage image;
+    VkImageView image_view;
+    VkDeviceMemory device_memory;
+public:
+    depth_buffer(context & ctx, uint32_t width, uint32_t height);
+    ~depth_buffer();
+
+    operator VkImageView () const { return image_view; }
+};
+
 class dynamic_buffer
 {
     context & ctx;
