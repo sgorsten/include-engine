@@ -146,7 +146,8 @@ struct dynamic_buffer
     context & ctx;
     VkBuffer buffer;
     VkDeviceMemory device_memory;
-    void * mapped_memory;
+    char * mapped_memory;
+    VkDeviceSize used {};
 
     dynamic_buffer(context & ctx, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memory_properties) : ctx{ctx}
     {
@@ -162,7 +163,9 @@ struct dynamic_buffer
         device_memory = ctx.allocate(mem_reqs, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         vkBindBufferMemory(ctx.device, buffer, device_memory, 0);
 
-        check(vkMapMemory(ctx.device, device_memory, 0, size, 0, &mapped_memory));
+        void * mapped;
+        check(vkMapMemory(ctx.device, device_memory, 0, size, 0, &mapped));
+        mapped_memory = reinterpret_cast<char *>(mapped);
     }
 
     ~dynamic_buffer()
@@ -170,6 +173,75 @@ struct dynamic_buffer
         vkDestroyBuffer(ctx.device, buffer, nullptr);
         vkUnmapMemory(ctx.device, device_memory);        
         vkFreeMemory(ctx.device, device_memory, nullptr);
+    }
+
+    void reset() { used = 0; }
+    VkDeviceSize write(size_t size, const void * data)
+    {
+        auto offset = used;
+        memcpy(mapped_memory+offset, data, size);
+        used = (used + size + 1023)/1024*1024; // TODO: Determine actual alignment
+        return offset;
+    }
+};
+
+struct descriptor_set
+{
+    dynamic_buffer & uniform_buffer;
+    VkDescriptorSet set;
+
+    descriptor_set(dynamic_buffer & uniform_buffer, VkDescriptorSet set) : uniform_buffer{uniform_buffer}, set{set} {}
+
+    void write_uniform_buffer(uint32_t binding, uint32_t array_element, size_t size, const void * data)
+    {
+        VkDescriptorBufferInfo info {uniform_buffer.buffer, uniform_buffer.write(size, data), size};
+        VkWriteDescriptorSet write {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = set;
+        write.dstBinding = binding;
+        write.dstArrayElement = array_element;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        write.descriptorCount = 1;
+        write.pBufferInfo = &info;
+        vkUpdateDescriptorSets(uniform_buffer.ctx.device, 1, &write, 0, nullptr);
+    }
+};
+
+struct command_buffer_helper
+{
+    context & ctx;
+    dynamic_buffer uniform_buffer;
+    VkDescriptorPool desc_pool;
+
+    command_buffer_helper(context & ctx, array_view<VkDescriptorPoolSize> pool_sizes, uint32_t max_sets) : ctx{ctx}, uniform_buffer{ctx, 1024*1024, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT}
+    {
+        VkDescriptorPoolCreateInfo desc_pool_info {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        desc_pool_info.poolSizeCount = pool_sizes.size;
+        desc_pool_info.pPoolSizes = pool_sizes.data;
+        desc_pool_info.maxSets = max_sets;
+        check(vkCreateDescriptorPool(ctx.device, &desc_pool_info, nullptr, &desc_pool));   
+    }
+
+    ~command_buffer_helper()
+    {
+        vkDestroyDescriptorPool(ctx.device, desc_pool, nullptr);
+    }
+
+    void reset()
+    {
+        check(vkResetDescriptorPool(ctx.device, desc_pool, 0));
+        uniform_buffer.reset();
+    }
+
+    descriptor_set allocate_descriptor_set(VkDescriptorSetLayout layout)
+    {
+        VkDescriptorSetAllocateInfo alloc_info {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        alloc_info.descriptorPool = desc_pool;
+        alloc_info.descriptorSetCount = 1;
+        alloc_info.pSetLayouts = &layout;
+
+        VkDescriptorSet descriptor_set;
+        check(vkAllocateDescriptorSets(ctx.device, &alloc_info, &descriptor_set));
+        return {uniform_buffer, descriptor_set};
     }
 };
 
@@ -187,24 +259,10 @@ int main() try
     dynamic_buffer vertex_buffer(ctx, sizeof(vertices), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     memcpy(vertex_buffer.mapped_memory, vertices, sizeof(vertices));
 
-    // Set up a descriptor set layout
-    VkDescriptorSetLayoutBinding set_layout_bindings[1] {};
-    set_layout_bindings[0].binding = 0;
-    set_layout_bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    set_layout_bindings[0].descriptorCount = 1;
-    set_layout_bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    VkDescriptorSetLayoutCreateInfo set_layout_info {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    set_layout_info.bindingCount = countof(set_layout_bindings);
-    set_layout_info.pBindings = set_layout_bindings;
-    VkDescriptorSetLayout set_layout;
-    check(vkCreateDescriptorSetLayout(ctx.device, &set_layout_info, nullptr, &set_layout));
-
-    // Set up a pipeline layout
-    VkPipelineLayoutCreateInfo pipeline_layout_info {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    pipeline_layout_info.setLayoutCount = 1;
-    pipeline_layout_info.pSetLayouts = &set_layout;
-    VkPipelineLayout pipeline_layout;
-    check(vkCreatePipelineLayout(ctx.device, &pipeline_layout_info, nullptr, &pipeline_layout));
+    // Set up our layouts
+    auto per_view_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT}});
+    auto per_object_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT}});
+    auto pipeline_layout = ctx.create_pipeline_layout({per_view_layout, per_object_layout});
 
     // Set up a render pass
     VkAttachmentDescription color_attachment_desc {};
@@ -249,15 +307,7 @@ int main() try
     check(vkCreateCommandPool(ctx.device, &command_pool_info, nullptr, &command_pool));
 
     // Set up a descriptor pool
-    VkDescriptorPoolSize desc_pool_sizes[1] {};
-    desc_pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    desc_pool_sizes[0].descriptorCount = 1;
-    VkDescriptorPoolCreateInfo desc_pool_info {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    desc_pool_info.poolSizeCount = countof(desc_pool_sizes);
-    desc_pool_info.pPoolSizes = desc_pool_sizes;
-    desc_pool_info.maxSets = 1;
-    VkDescriptorPool desc_pool;
-    check(vkCreateDescriptorPool(ctx.device, &desc_pool_info, nullptr, &desc_pool));
+    command_buffer_helper helper(ctx, {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1024}}, 1024);
 
     // Set up a window with swapchain framebuffers
     window win {ctx, 640, 480};
@@ -277,34 +327,6 @@ int main() try
 
         check(vkCreateFramebuffer(ctx.device, &framebuffer_info, nullptr, &swapchain_framebuffers[i]));
     }
-    
-    // Allocate a descriptor set
-    VkDescriptorSetAllocateInfo desc_set_alloc_info {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-    desc_set_alloc_info.descriptorPool = desc_pool;
-    desc_set_alloc_info.descriptorSetCount = 1;
-    desc_set_alloc_info.pSetLayouts = &set_layout;
-    VkDescriptorSet desc_set;
-    check(vkAllocateDescriptorSets(ctx.device, &desc_set_alloc_info, &desc_set));
-
-    // Allocate a uniform buffer
-    dynamic_buffer uniform_buffer(ctx, 1024, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    float4x4 id{{1,0,0,0},{0,1,0,0},{0,0,1,0},{0,0,0,1}};
-    memcpy(uniform_buffer.mapped_memory, &id, sizeof(id));
-
-    // Write to our descriptor set
-    VkDescriptorBufferInfo desc_buffer_infos[1] {};
-    desc_buffer_infos[0].buffer = uniform_buffer.buffer;
-    desc_buffer_infos[0].offset = 0;
-    desc_buffer_infos[0].range = sizeof(id);
-    VkWriteDescriptorSet desc_writes[1] {};
-    desc_writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    desc_writes[0].dstSet = desc_set;
-    desc_writes[0].dstBinding = 0;
-    desc_writes[0].dstArrayElement = 0;
-    desc_writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    desc_writes[0].descriptorCount = countof(desc_buffer_infos);
-    desc_writes[0].pBufferInfo = desc_buffer_infos;
-    vkUpdateDescriptorSets(ctx.device, countof(desc_writes), desc_writes, 0, nullptr);
 
     float3 camera_position {0,0,-5};
     float camera_yaw {0}, camera_pitch {0};
@@ -342,8 +364,6 @@ int main() try
         const auto view_matrix = inverse(pose_matrix(camera_orientation, camera_position));
         const auto view_proj_matrix = mul(proj_matrix, view_matrix);
 
-        memcpy(uniform_buffer.mapped_memory, &view_proj_matrix, sizeof(view_proj_matrix));
-
         // Render a frame
         uint32_t index = win.begin();
 
@@ -358,6 +378,11 @@ int main() try
         VkCommandBufferBeginInfo begin_info {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         vkBeginCommandBuffer(cmd, &begin_info);
+
+        // Bind per-view uniforms
+        auto per_view = helper.allocate_descriptor_set(per_view_layout);
+        per_view.write_uniform_buffer(0, 0, sizeof(view_proj_matrix), &view_proj_matrix);      
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &per_view.set, 0, nullptr);
 
         VkRenderPassBeginInfo pass_begin_info {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
         pass_begin_info.renderPass = render_pass;
@@ -376,11 +401,18 @@ int main() try
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &desc_set, 0, nullptr);
+        for(int i=0; i<3; ++i)
+        {
+            const float4x4 model_matrix = linalg::translation_matrix(float3{i-1.0f,0,0});
+        
+            auto per_object = helper.allocate_descriptor_set(per_view_layout);
+            per_object.write_uniform_buffer(0, 0, sizeof(model_matrix), &model_matrix);      
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, 1, &per_object.set, 0, nullptr);
 
-        VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buffer.buffer, &offset);
-        vkCmdDraw(cmd, 3, 1, 0, 0);
+            VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buffer.buffer, &offset);
+            vkCmdDraw(cmd, 3, 1, 0, 0);
+        }
 
         vkCmdEndRenderPass(cmd);
         check(vkEndCommandBuffer(cmd));
@@ -391,17 +423,19 @@ int main() try
         vkDeviceWaitIdle(ctx.device);
         vkFreeCommandBuffers(ctx.device, command_pool, 1, &cmd);
 
+        helper.reset();
+
         glfwPollEvents();
     }
 
     vkDeviceWaitIdle(ctx.device);
     vkDestroyPipeline(ctx.device, pipeline, nullptr);
     vkDestroyPipelineLayout(ctx.device, pipeline_layout, nullptr);
-    vkDestroyDescriptorSetLayout(ctx.device, set_layout, nullptr);
+    vkDestroyDescriptorSetLayout(ctx.device, per_object_layout, nullptr);
+    vkDestroyDescriptorSetLayout(ctx.device, per_view_layout, nullptr);
     vkDestroyShaderModule(ctx.device, vert_shader, nullptr);
     vkDestroyShaderModule(ctx.device, frag_shader, nullptr);
     vkDestroyCommandPool(ctx.device, command_pool, nullptr);
-    vkDestroyDescriptorPool(ctx.device, desc_pool, nullptr);
     for(auto framebuffer : swapchain_framebuffers) vkDestroyFramebuffer(ctx.device, framebuffer, nullptr);
     vkDestroyRenderPass(ctx.device, render_pass, nullptr);    
     return EXIT_SUCCESS;

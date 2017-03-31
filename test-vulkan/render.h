@@ -18,6 +18,17 @@ template<class T, uint32_t N> uint32_t countof(const T (&)[N]) { return N; }
 template<class T, uint32_t N> uint32_t countof(const std::array<T,N> &) { return N; }
 template<class T> uint32_t countof(const std::vector<T> & v) { return static_cast<uint32_t>(v.size()); }
 
+template<class T> struct array_view
+{
+    const T * data;
+    size_t size;
+
+    template<size_t N> array_view(const T (& array)[N]) : data{array}, size{N} {}
+    template<size_t N> array_view(const std::array<T,N> & array) : data{array.data()}, size{N} {}
+    array_view(std::initializer_list<T> ilist) : data{ilist.begin()}, size{ilist.size()} {}
+    array_view(const std::vector<T> & vec) : data{vec.data()}, size{vec.size()} {}    
+};
+
 struct physical_device_selection
 {
     VkPhysicalDevice physical_device;
@@ -43,6 +54,9 @@ struct context
 
     uint32_t select_memory_type(const VkMemoryRequirements & reqs, VkMemoryPropertyFlags props) const;
     VkDeviceMemory allocate(const VkMemoryRequirements & reqs, VkMemoryPropertyFlags props);
+
+    VkDescriptorSetLayout create_descriptor_set_layout(array_view<VkDescriptorSetLayoutBinding> bindings);
+    VkPipelineLayout create_pipeline_layout(array_view<VkDescriptorSetLayout> descriptor_sets);
 };
 
 class window

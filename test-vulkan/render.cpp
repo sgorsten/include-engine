@@ -184,6 +184,28 @@ VkDeviceMemory context::allocate(const VkMemoryRequirements & reqs, VkMemoryProp
     return memory;
 }
 
+VkDescriptorSetLayout context::create_descriptor_set_layout(array_view<VkDescriptorSetLayoutBinding> bindings)
+{
+    VkDescriptorSetLayoutCreateInfo create_info {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    create_info.bindingCount = bindings.size;
+    create_info.pBindings = bindings.data;
+
+    VkDescriptorSetLayout descriptor_set_layout;
+    check(vkCreateDescriptorSetLayout(device, &create_info, nullptr, &descriptor_set_layout));
+    return descriptor_set_layout;
+}
+
+VkPipelineLayout context::create_pipeline_layout(array_view<VkDescriptorSetLayout> descriptor_sets)
+{
+    VkPipelineLayoutCreateInfo create_info {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    create_info.setLayoutCount = descriptor_sets.size;
+    create_info.pSetLayouts = descriptor_sets.data;
+
+    VkPipelineLayout pipeline_layout;
+    check(vkCreatePipelineLayout(device, &create_info, nullptr, &pipeline_layout));
+    return pipeline_layout;
+}
+
 window::window(context & ctx, uint32_t width, uint32_t height) : ctx{ctx}, width{width}, height{height}
 {
     glfwDefaultWindowHints();
