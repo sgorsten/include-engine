@@ -20,3 +20,10 @@ The rough feature set I'm aiming for would look something like this:
 - A flexible asset packaging system that can be used to author packages at runtime and optimize load times
 
 The idea is that you should be able to quickly pull in some assets and start rendering 3D scenes, and that as your game evolves, you can author your tools and editors by coding against the same framework.
+
+### Target Environment
+
+- The engine itself will be written in C++17 and aim to compile cleanly on Visual Studio 2017, GCC, and Clang.
+- The engine will consume shaders in SPIR-V and will initially target Vulkan on Windows and Linux. A Metal backend for OS X support is a possibility once the renderer API crystalizes.
+- Platform specific window creation and input handling will use GLFW windows created with the `GLFW_NO_CLIENT` hint.
+- We will link against the C++ standard library, use RTTI and throw exceptions. Deal with it.
