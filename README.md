@@ -13,10 +13,10 @@ Instead, I envision `#include <engine>` as a collection of lightweight, composab
 
 The rough feature set I'm aiming for would look something like this:
 
--Support for loading many different asset formats (textures, models, shaders, fonts, etc.)
--A library of pure functions for analyzing, manipulating, and transforming assets and other data structures
--An "immediate mode plus" renderer targeting a Vulkan backend
--An immediate mode GUI subsystem for building tools and editors
--A flexible asset packaging system that can be used to author packages at runtime and optimize load times
+- Support for loading many different asset formats (textures, models, shaders, fonts, etc.)
+- A library of pure functions for analyzing, manipulating, and transforming assets and other data structures
+- An "immediate mode plus" renderer targeting a Vulkan backend
+- An immediate mode GUI subsystem for building tools and editors
+- A flexible asset packaging system that can be used to author packages at runtime and optimize load times
 
 The idea is that you should be able to quickly pull in some assets and start rendering 3D scenes, and that as your game evolves, you can author your tools and editors by coding against the same framework.
