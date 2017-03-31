@@ -306,6 +306,105 @@ void window::end(std::initializer_list<VkCommandBuffer> commands, uint32_t index
     check(vkQueuePresentKHR(ctx.queue, &present_info));
 }
 
+////////////////////
+// dynamic_buffer //
+////////////////////
+
+dynamic_buffer::dynamic_buffer(context & ctx, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memory_properties) : ctx{ctx}
+{
+    VkBufferCreateInfo buffer_info {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    buffer_info.size = size;
+    buffer_info.usage = usage;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    check(vkCreateBuffer(ctx.device, &buffer_info, nullptr, &buffer));
+
+    VkMemoryRequirements mem_reqs;
+    vkGetBufferMemoryRequirements(ctx.device, buffer, &mem_reqs);
+    device_memory = ctx.allocate(mem_reqs, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    vkBindBufferMemory(ctx.device, buffer, device_memory, 0);
+
+    void * mapped;
+    check(vkMapMemory(ctx.device, device_memory, 0, size, 0, &mapped));
+    mapped_memory = reinterpret_cast<char *>(mapped);
+}
+
+dynamic_buffer::~dynamic_buffer()
+{
+    vkDestroyBuffer(ctx.device, buffer, nullptr);
+    vkUnmapMemory(ctx.device, device_memory);        
+    vkFreeMemory(ctx.device, device_memory, nullptr);
+}
+
+void dynamic_buffer::reset() 
+{ 
+    offset = 0; 
+}
+
+VkDescriptorBufferInfo dynamic_buffer::write(size_t size, const void * data)
+{
+    VkDescriptorBufferInfo info {buffer, offset, size};
+    memcpy(mapped_memory + offset, data, size);
+    offset = (offset + size + 1023)/1024*1024; // TODO: Determine actual alignment
+    return info;
+}
+
+////////////////////
+// descriptor_set //
+////////////////////
+
+descriptor_set::descriptor_set(context & ctx, dynamic_buffer & uniform_buffer, VkDescriptorSet set) : ctx{ctx}, uniform_buffer{uniform_buffer}, set{set} 
+{
+
+}
+
+void descriptor_set::write_uniform_buffer(uint32_t binding, uint32_t array_element, size_t size, const void * data)
+{
+    const auto info = uniform_buffer.write(size, data);
+    VkWriteDescriptorSet write {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, binding, array_element, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &info, nullptr};
+    vkUpdateDescriptorSets(ctx.device, 1, &write, 0, nullptr);
+}
+
+///////////////////////////
+// command_buffer_helper //
+///////////////////////////
+
+command_buffer_helper::command_buffer_helper(context & ctx, array_view<VkDescriptorPoolSize> pool_sizes, uint32_t max_sets) : ctx{ctx}, uniform_buffer{ctx, 1024*1024, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT}
+{
+    VkDescriptorPoolCreateInfo desc_pool_info {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    desc_pool_info.poolSizeCount = pool_sizes.size;
+    desc_pool_info.pPoolSizes = pool_sizes.data;
+    desc_pool_info.maxSets = max_sets;
+    check(vkCreateDescriptorPool(ctx.device, &desc_pool_info, nullptr, &desc_pool));   
+}
+
+command_buffer_helper::~command_buffer_helper()
+{
+    vkDestroyDescriptorPool(ctx.device, desc_pool, nullptr);
+}
+
+descriptor_set command_buffer_helper::allocate_descriptor_set(VkDescriptorSetLayout layout)
+{
+    VkDescriptorSetAllocateInfo alloc_info {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    alloc_info.descriptorPool = desc_pool;
+    alloc_info.descriptorSetCount = 1;
+    alloc_info.pSetLayouts = &layout;
+
+    VkDescriptorSet descriptor_set;
+    check(vkAllocateDescriptorSets(ctx.device, &alloc_info, &descriptor_set));
+    return {ctx, uniform_buffer, descriptor_set};
+}
+
+void command_buffer_helper::reset()
+{
+    check(vkResetDescriptorPool(ctx.device, desc_pool, 0));
+    uniform_buffer.reset();
+}
+
+/////////////////
+// fail_fast() //
+/////////////////
+
 #define NOMINMAX
 #include <Windows.h>
 

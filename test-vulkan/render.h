@@ -86,4 +86,45 @@ public:
     void end(std::initializer_list<VkCommandBuffer> commands, uint32_t index);
 };
 
+class dynamic_buffer
+{
+    context & ctx;
+    VkBuffer buffer;
+    VkDeviceMemory device_memory;
+    char * mapped_memory;
+    VkDeviceSize offset {};
+public:
+    dynamic_buffer(context & ctx, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memory_properties);
+    ~dynamic_buffer();
+
+    void reset();
+    VkDescriptorBufferInfo write(size_t size, const void * data);
+};
+
+class descriptor_set
+{
+    context & ctx;
+    dynamic_buffer & uniform_buffer;
+    VkDescriptorSet set;
+public:
+    descriptor_set(context & ctx, dynamic_buffer & uniform_buffer, VkDescriptorSet set);
+
+    const VkDescriptorSet * operator & () const { return &set; }
+
+    void write_uniform_buffer(uint32_t binding, uint32_t array_element, size_t size, const void * data);
+};
+
+class command_buffer_helper
+{
+    context & ctx;
+    dynamic_buffer uniform_buffer;
+    VkDescriptorPool desc_pool;
+public:
+    command_buffer_helper(context & ctx, array_view<VkDescriptorPoolSize> pool_sizes, uint32_t max_sets);
+    ~command_buffer_helper();
+
+    descriptor_set allocate_descriptor_set(VkDescriptorSetLayout layout);
+    void reset();
+};
+
 #endif
