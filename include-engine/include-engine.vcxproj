@@ -22,11 +22,13 @@
     <ClInclude Include="data-types.h" />
     <ClInclude Include="fbx.h" />
     <ClInclude Include="linalg.h" />
+    <ClInclude Include="load.h" />
     <ClInclude Include="vulkan.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="data-types.cpp" />
     <ClCompile Include="fbx.cpp" />
+    <ClCompile Include="load.cpp" />
     <ClCompile Include="vulkan.cpp" />
   </ItemGroup>
   <ItemGroup>

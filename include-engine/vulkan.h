@@ -2,33 +2,13 @@
 #define RENDER_H
 
 #include "data-types.h"
-#include "linalg.h"
-using namespace linalg::aliases;
 
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
-#include <array>
-#include <vector>
 
 [[noreturn]] void fail_fast();
 const char * to_string(VkResult result);
 void check(VkResult result);
-
-// Abstract over determining the number of elements in a collection
-template<class T, uint32_t N> uint32_t countof(const T (&)[N]) { return N; }
-template<class T, uint32_t N> uint32_t countof(const std::array<T,N> &) { return N; }
-template<class T> uint32_t countof(const std::vector<T> & v) { return static_cast<uint32_t>(v.size()); }
-
-template<class T> struct array_view
-{
-    const T * data;
-    size_t size;
-
-    template<size_t N> array_view(const T (& array)[N]) : data{array}, size{N} {}
-    template<size_t N> array_view(const std::array<T,N> & array) : data{array.data()}, size{N} {}
-    array_view(std::initializer_list<T> ilist) : data{ilist.begin()}, size{ilist.size()} {}
-    array_view(const std::vector<T> & vec) : data{vec.data()}, size{vec.size()} {}    
-};
 
 struct physical_device_selection
 {
@@ -116,6 +96,7 @@ class texture_2d
     VkDeviceMemory device_memory;
 public:
     texture_2d(context & ctx, uint32_t width, uint32_t height, VkFormat format, const void * initial_data);
+    texture_2d(context & ctx, VkFormat format, const ::image & image) : texture_2d(ctx, image.get_width(), image.get_height(), format, image.get_pixels()) {}
     ~texture_2d();
 
     VkImage get_image() { return image; }
@@ -125,14 +106,14 @@ public:
 class texture_cube
 {
     context & ctx;
-    VkImage im;
+    VkImage img;
     VkImageView image_view;
     VkDeviceMemory device_memory;
 public:
     texture_cube(context & ctx, VkFormat format, const image & posx, const image & negx, const image & posy, const image & negy, const image & posz, const image & negz);
     ~texture_cube();
 
-    VkImage get_image() { return im; }
+    VkImage get_image() { return img; }
     operator VkImageView () const { return image_view; }
 };
 

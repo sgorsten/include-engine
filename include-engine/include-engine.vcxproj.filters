@@ -5,10 +5,12 @@
     <ClInclude Include="linalg.h" />
     <ClInclude Include="data-types.h" />
     <ClInclude Include="vulkan.h" />
+    <ClInclude Include="load.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="fbx.cpp" />
     <ClCompile Include="data-types.cpp" />
     <ClCompile Include="vulkan.cpp" />
+    <ClCompile Include="load.cpp" />
   </ItemGroup>
 </Project>

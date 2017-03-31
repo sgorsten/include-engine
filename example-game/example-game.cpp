@@ -1,6 +1,5 @@
 #include "vulkan.h"
-#include "fbx.h"
-#include "data-types.h"
+#include "load.h"
 #include <fstream>
 #include <iostream>
 #include <chrono>
@@ -62,85 +61,48 @@ struct per_view_uniforms
 
 int main() try
 {
-    std::ifstream in("assets/helmet-mesh.fbx", std::ifstream::binary);
-    const auto doc = fbx::load(in);
-    std::cout << "FBX Version " << doc.version << std::endl;
-    for(auto & node : doc.nodes) std::cout << node << std::endl;
-    auto models = load_models(doc);
-
-    // Adjust coordinates and compute tangent space basis
-    for(auto & m : models) for(auto & g : m.geoms)
-    {
-        for(auto & v : g.vertices)
-        {
-            v.position *= float3{1,-1,-1};
-            v.normal *= float3{1,-1,-1};
-        }
-        for(auto t : g.triangles)
-        {
-            auto & v0 = g.vertices[t.x], & v1 = g.vertices[t.y], & v2 = g.vertices[t.z];
-            const float3 e1 = v1.position - v0.position, e2 = v2.position - v0.position;
-            const float2 d1 = v1.texcoord - v0.texcoord, d2 = v2.texcoord - v0.texcoord;
-            const float3 dpds = float3(d2.y * e1.x - d1.y * e2.x, d2.y * e1.y - d1.y * e2.y, d2.y * e1.z - d1.y * e2.z) / cross(d1, d2);
-            const float3 dpdt = float3(d1.x * e2.x - d2.x * e1.x, d1.x * e2.y - d2.x * e1.y, d1.x * e2.z - d2.x * e1.z) / cross(d1, d2);
-            v0.tangent += dpds; v1.tangent += dpds; v2.tangent += dpds;
-            v0.bitangent += dpdt; v1.bitangent += dpdt; v2.bitangent += dpdt;
-        }
-        for(auto & v : g.vertices)
-        {
-            v.tangent = normalize(v.tangent);
-            v.bitangent = normalize(v.bitangent);
-        }
-    }
-
-    image albedo("assets/helmet-albedo.jpg");
-    image normal("assets/helmet-normal.jpg");
-    image metallic("assets/helmet-metallic.jpg");
-    std::cout << albedo.get_channels() << std::endl;
+    auto fbx_meshes = load_meshes_from_fbx("assets/helmet-mesh.fbx");
 
     context ctx;
 
-    // Create our texture
-    texture_2d albedo_tex(ctx, albedo.get_width(), albedo.get_height(), VK_FORMAT_R8G8B8A8_UNORM, albedo.get_pixels());
-    texture_2d normal_tex(ctx, normal.get_width(), normal.get_height(), VK_FORMAT_R8G8B8A8_UNORM, normal.get_pixels());
-    texture_2d metallic_tex(ctx, metallic.get_width(), metallic.get_height(), VK_FORMAT_R8G8B8A8_UNORM, metallic.get_pixels());
-    texture_cube env_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, "assets/posx.jpg", "assets/negx.jpg", "assets/posy.jpg", 
-        "assets/negy.jpg", "assets/posz.jpg", "assets/negz.jpg");
+    // Create our textures
+    texture_2d albedo_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-albedo.jpg"));
+    texture_2d normal_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-normal.jpg"));
+    texture_2d metallic_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-metallic.jpg"));
+    texture_cube env_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, 
+        load_image("assets/posx.jpg"), load_image("assets/negx.jpg"), 
+        load_image("assets/posy.jpg"), load_image("assets/negy.jpg"),
+        load_image("assets/posz.jpg"), load_image("assets/negz.jpg"));
 
     // Create our sampler
     VkSamplerCreateInfo sampler_info = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sampler_info.magFilter = VK_FILTER_LINEAR;
     sampler_info.minFilter = VK_FILTER_LINEAR;
     sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    sampler_info.maxLod = 1000;
-    sampler_info.minLod = -1000;
+    sampler_info.maxLod = 11;
+    sampler_info.minLod = 0;
     VkSampler sampler;
     check(vkCreateSampler(ctx.device, &sampler_info, nullptr, &sampler));
 
     // Create our meshes
-    struct mesh
+    struct gfx_mesh
     {
-        float4x4 model_matrix;
         std::unique_ptr<dynamic_buffer> vertex_buffer;
         std::unique_ptr<dynamic_buffer> index_buffer;
         VkDescriptorBufferInfo vertices;
         VkDescriptorBufferInfo indices;
         size_t index_count;
     };
-    std::vector<mesh> meshes;
-    for(auto & m : models)
+    std::vector<gfx_mesh> meshes;
+    for(auto & m : fbx_meshes)
     {
-        for(auto & g : m.geoms)
-        {
-            mesh mesh;
-            mesh.model_matrix = m.get_model_matrix();
-            mesh.vertex_buffer = std::make_unique<dynamic_buffer>(ctx, g.vertices.size() * sizeof(fbx::geometry::vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-            mesh.index_buffer = std::make_unique<dynamic_buffer>(ctx, g.triangles.size() * sizeof(uint3), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-            mesh.index_count = g.triangles.size() * 3;
-            mesh.vertices = mesh.vertex_buffer->write(g.vertices.size() * sizeof(fbx::geometry::vertex), g.vertices.data());
-            mesh.indices = mesh.index_buffer->write(g.triangles.size() * sizeof(uint3), g.triangles.data());
-            meshes.push_back(std::move(mesh));
-        }
+        gfx_mesh mesh;
+        mesh.vertex_buffer = std::make_unique<dynamic_buffer>(ctx, m.vertices.size() * sizeof(mesh::vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        mesh.index_buffer = std::make_unique<dynamic_buffer>(ctx, m.triangles.size() * sizeof(uint3), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        mesh.index_count = m.triangles.size() * 3;
+        mesh.vertices = mesh.vertex_buffer->write(m.vertices.size() * sizeof(mesh::vertex), m.vertices.data());
+        mesh.indices = mesh.index_buffer->write(m.triangles.size() * sizeof(uint3), m.triangles.data());
+        meshes.push_back(std::move(mesh));
     }
 
     // Set up our layouts
@@ -197,14 +159,14 @@ int main() try
     VkShaderModule vert_shader = load_spirv_module(ctx.device, "assets/shader.vert.spv");
     VkShaderModule frag_shader = load_spirv_module(ctx.device, "assets/shader.frag.spv");
 
-    const VkVertexInputBindingDescription bindings[] {{0, sizeof(fbx::geometry::vertex), VK_VERTEX_INPUT_RATE_VERTEX}};
+    const VkVertexInputBindingDescription bindings[] {{0, sizeof(mesh::vertex), VK_VERTEX_INPUT_RATE_VERTEX}};
     const VkVertexInputAttributeDescription attributes[] 
     {
-        make_attribute(0, 0, &fbx::geometry::vertex::position), 
-        make_attribute(1, 0, &fbx::geometry::vertex::normal),
-        make_attribute(2, 0, &fbx::geometry::vertex::texcoord),
-        make_attribute(3, 0, &fbx::geometry::vertex::tangent),
-        make_attribute(4, 0, &fbx::geometry::vertex::bitangent)
+        make_attribute(0, 0, &mesh::vertex::position), 
+        make_attribute(1, 0, &mesh::vertex::normal),
+        make_attribute(2, 0, &mesh::vertex::texcoord),
+        make_attribute(3, 0, &mesh::vertex::tangent),
+        make_attribute(4, 0, &mesh::vertex::bitangent)
     };
     VkPipeline pipeline = make_pipeline(ctx.device, bindings, attributes, pipeline_layout, vert_shader, frag_shader, render_pass);
 
@@ -327,8 +289,10 @@ int main() try
 
         for(auto & m : meshes)
         {
+            float4x4 model_matrix = {{1,0,0,0},{0,1,0,0},{0,0,1,0},{0,0,0,1}};
+
             auto per_object = pool.allocate_descriptor_set(per_object_layout);
-            per_object.write_uniform_buffer(0, 0, sizeof(m.model_matrix), &m.model_matrix);
+            per_object.write_uniform_buffer(0, 0, sizeof(model_matrix), &model_matrix);
             per_object.write_combined_image_sampler(1, 0, sampler, albedo_tex);
             per_object.write_combined_image_sampler(2, 0, sampler, normal_tex);
             per_object.write_combined_image_sampler(3, 0, sampler, metallic_tex);
