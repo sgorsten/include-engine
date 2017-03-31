@@ -3,12 +3,12 @@
   <ItemGroup>
     <ClInclude Include="fbx.h" />
     <ClInclude Include="linalg.h" />
-    <ClInclude Include="opengl.h" />
     <ClInclude Include="data-types.h" />
+    <ClInclude Include="vulkan.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="fbx.cpp" />
-    <ClCompile Include="opengl.cpp" />
     <ClCompile Include="data-types.cpp" />
+    <ClCompile Include="vulkan.cpp" />
   </ItemGroup>
 </Project>
