@@ -530,12 +530,15 @@ texture_cube::texture_cube(context & ctx, VkFormat format, const image & posx, c
     {
         memcpy(ctx.mapped_staging_memory, ims[j]->get_pixels(), side_length*side_length*4);
 
+        VkImageSubresourceLayers layers {};
+        layers.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        layers.baseArrayLayer = j;
+        layers.layerCount = 1;
+
         auto cmd = ctx.begin_transient();
         transition_layout(cmd, im, 0, j, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         VkBufferImageCopy copy_region {};
-        copy_region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        copy_region.imageSubresource.baseArrayLayer = j;
-        copy_region.imageSubresource.layerCount = 1;
+        copy_region.imageSubresource = layers;
         copy_region.imageExtent = image_info.extent;
         vkCmdCopyBufferToImage(cmd, ctx.staging_buffer, im, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
 
@@ -543,12 +546,14 @@ texture_cube::texture_cube(context & ctx, VkFormat format, const image & posx, c
         for(uint32_t i=1; i<image_info.mipLevels; ++i)
         {
             VkImageBlit blit {};
-            blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i-1, j, 1};
+            blit.srcSubresource = layers;
+            blit.srcSubresource.mipLevel = i-1;
             blit.srcOffsets[0] = {0, 0, 0};
             blit.srcOffsets[1] = {(int)side_length, (int)side_length, 1};
 
             side_length = std::max(side_length/2,1U);
-            blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, j, 1};
+            blit.dstSubresource = layers;
+            blit.dstSubresource.mipLevel = i;
             blit.dstOffsets[0] = {0, 0, 0};
             blit.dstOffsets[1] = {(int)side_length, (int)side_length, 1};
 
