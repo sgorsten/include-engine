@@ -9,8 +9,8 @@ layout(set=0, binding=0) uniform PerView
 	vec3 u_light_direction;
 	vec3 u_light_color;
 };
-
-layout(set=1, binding=1) uniform sampler2D u_normal;
+layout(set=1, binding=1) uniform sampler2D u_albedo;
+layout(set=1, binding=2) uniform sampler2D u_normal;
 
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec3 normal;
@@ -23,7 +23,7 @@ layout(location = 0) out vec4 f_color;
 void main() 
 {
 	vec3 eye_vec = normalize(u_eye_position - position);
-	vec3 albedo = vec3(1,1,1); //texture(u_albedo, texcoord).rgb;
+	vec3 albedo = texture(u_albedo, texcoord).rgb;
 	vec3 tan_normal = normalize(texture(u_normal, texcoord).xyz*2-1);
 	vec3 normal_vec = normalize(normalize(tangent)*tan_normal.x + normalize(bitangent)*tan_normal.y + normalize(normal)*tan_normal.z);
 	vec3 refl_vec = normal_vec*(dot(eye_vec, normal_vec)*2) - eye_vec;

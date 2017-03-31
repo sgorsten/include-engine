@@ -89,13 +89,15 @@ int main() try
         }
     }
 
-    image albedo("../example-game/assets/helmet-normal.jpg");
+    image albedo("../example-game/assets/helmet-albedo.jpg");
+    image normal("../example-game/assets/helmet-normal.jpg");
     std::cout << albedo.get_channels() << std::endl;
 
     context ctx;
 
     // Create our texture
     texture_2d albedo_tex(ctx, albedo.get_width(), albedo.get_height(), VK_FORMAT_R8G8B8A8_UNORM, albedo.get_pixels());
+    texture_2d normal_tex(ctx, normal.get_width(), normal.get_height(), VK_FORMAT_R8G8B8A8_UNORM, normal.get_pixels());
 
     // Create our sampler
     VkSamplerCreateInfo sampler_info = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -134,7 +136,8 @@ int main() try
     auto per_view_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}});
     auto per_object_layout = ctx.create_descriptor_set_layout({
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
-        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
+        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
     });
     auto pipeline_layout = ctx.create_pipeline_layout({per_view_layout, per_object_layout});
 
@@ -308,6 +311,7 @@ int main() try
             auto per_object = pool.allocate_descriptor_set(per_object_layout);
             per_object.write_uniform_buffer(0, 0, sizeof(m.model_matrix), &m.model_matrix);
             per_object.write_combined_image_sampler(1, 0, sampler, albedo_tex);
+            per_object.write_combined_image_sampler(2, 0, sampler, normal_tex);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, 1, &per_object, 0, nullptr);
 
             vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &m.vertices.offset);
