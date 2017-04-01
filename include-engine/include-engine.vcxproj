@@ -32,6 +32,9 @@
     <ClCompile Include="vulkan.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\3rdparty\glslang\glslang.vcxproj">
+      <Project>{d1be33dc-7603-4b18-9a36-404bfa8a80fa}</Project>
+    </ProjectReference>
     <ProjectReference Include="..\3rdparty\zlib\zlib.vcxproj">
       <Project>{9802a059-433f-4da4-bc72-b7f9580e03c0}</Project>
     </ProjectReference>

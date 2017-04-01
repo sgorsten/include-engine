@@ -14,7 +14,6 @@ std::vector<uint32_t> load_spirv_binary(const char * path)
     return words;
 }
 
-
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
@@ -72,4 +71,52 @@ std::vector<mesh> load_meshes_from_fbx(const char * filename)
         }
     }
     return meshes;
+}
+
+#include "../3rdparty/glslang/glslang/Public/ShaderLang.h"
+#include "../3rdparty/glslang/StandAlone/ResourceLimits.h"
+#include "../3rdparty/glslang/SPIRV/GlslangToSpv.h"
+#include <iostream>
+
+std::vector<uint32_t> compile_glsl_to_spirv(const char * filename)
+{
+    FILE * f = fopen(filename, "r");
+    if(!f) throw std::runtime_error(std::string("failed to open ") + filename);
+    fseek(f, 0, SEEK_END);
+    auto len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    std::vector<char> buffer(len);
+    len = fread(buffer.data(), 1, buffer.size(), f);
+    buffer.resize(len);
+
+    len = strlen(filename);
+    EShLanguage lang;
+    if(filename[len-4] == 'v') lang = EShLanguage::EShLangVertex;
+    else if(filename[len-4] == 'f') lang = EShLanguage::EShLangFragment;
+    else throw std::runtime_error("unknown shader stage");
+
+    const char * s = buffer.data();
+    int l = buffer.size();
+
+    glslang::InitializeProcess();
+    glslang::TShader shader(lang);
+    shader.setStringsWithLengthsAndNames(&s, &l, &filename, 1);
+    if(!shader.parse(&glslang::DefaultTBuiltInResource, 450, false, static_cast<EShMessages>(EShMsgSpvRules|EShMsgVulkanRules)))
+    {
+        throw std::runtime_error(std::string("GLSL compile failure: ") + shader.getInfoLog());
+    }
+    
+    glslang::TProgram program;
+    program.addShader(&shader);
+    if(!program.link(EShMsgVulkanRules))
+    {
+        throw std::runtime_error(std::string("GLSL link failure: ") + program.getInfoLog());
+    }
+
+    std::vector<uint32_t> spirv;
+    spv::SpvBuildLogger logger;
+    glslang::GlslangToSpv(*program.getIntermediate(lang), spirv, &logger);
+    auto messages = logger.getAllMessages();
+    if(!messages.empty()) std::cout << messages << std::endl;
+    return spirv;
 }

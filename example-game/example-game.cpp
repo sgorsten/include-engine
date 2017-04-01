@@ -84,8 +84,8 @@ int main() try
     );
 
     // Set up our shader pipeline
-    VkShaderModule vert_shader = ctx.create_shader_module(load_spirv_binary("assets/shader.vert.spv"));
-    VkShaderModule frag_shader = ctx.create_shader_module(load_spirv_binary("assets/shader.frag.spv"));
+    VkShaderModule vert_shader = ctx.create_shader_module(compile_glsl_to_spirv("assets/shader.vert"));
+    VkShaderModule frag_shader = ctx.create_shader_module(compile_glsl_to_spirv("assets/shader.frag"));
 
     const VkVertexInputBindingDescription bindings[] {{0, sizeof(mesh::vertex), VK_VERTEX_INPUT_RATE_VERTEX}};
     const VkVertexInputAttributeDescription attributes[] 
