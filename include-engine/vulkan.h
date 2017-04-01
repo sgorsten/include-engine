@@ -43,6 +43,9 @@ struct context
 
     VkDescriptorSetLayout create_descriptor_set_layout(array_view<VkDescriptorSetLayoutBinding> bindings);
     VkPipelineLayout create_pipeline_layout(array_view<VkDescriptorSetLayout> descriptor_sets);
+    VkShaderModule create_shader_module(array_view<uint32_t> spirv_words);
+    VkFramebuffer create_framebuffer(VkRenderPass render_pass, array_view<VkImageView> attachments, uint2 dims);
+    VkRenderPass create_render_pass(array_view<VkAttachmentDescription> color_attachments, std::optional<VkAttachmentDescription> depth_attachment);
 
     VkCommandBuffer begin_transient();
     void end_transient(VkCommandBuffer commandBuffer);
@@ -63,6 +66,7 @@ public:
     ~window();
 
     const std::vector<VkImageView> & get_swapchain_image_views() const { return swapchain_image_views; }
+    uint2 get_dims() const { return {width, height}; }
     uint32_t get_width() const { return width; }
     uint32_t get_height() const { return height; }
     bool should_close() const { return !!glfwWindowShouldClose(glfw_window); }
@@ -140,10 +144,32 @@ class descriptor_set
 public:
     descriptor_set(context & ctx, dynamic_buffer & uniform_buffer, VkDescriptorSet set);
 
-    const VkDescriptorSet * operator & () const { return &set; }
+    operator VkDescriptorSet () { return set; }
 
     void write_uniform_buffer(uint32_t binding, uint32_t array_element, size_t size, const void * data);
     void write_combined_image_sampler(uint32_t binding, uint32_t array_element, VkSampler sampler, VkImageView image_view, VkImageLayout image_layout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+};
+
+class command_buffer
+{
+    VkCommandBuffer cmd;
+public:
+    command_buffer(VkCommandBuffer cmd) : cmd{cmd} {}
+
+    operator VkCommandBuffer () { return cmd; }
+
+    void begin(VkCommandBufferUsageFlags flags);
+
+    void bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout layout, uint32_t set_index, VkDescriptorSet set, array_view<uint32_t> dynamic_offsets);
+    void bind_pipeline(VkPipelineBindPoint bind_point, VkPipeline pipeline);
+    void bind_vertex_buffer(uint32_t binding, VkBuffer buffer, VkDeviceSize offset);
+    void bind_index_buffer(VkBuffer buffer, VkDeviceSize offset, VkIndexType index_type);
+
+    void begin_render_pass(VkRenderPass render_pass, VkFramebuffer framebuffer, uint2 dims, array_view<VkClearValue> clear_values);
+    void draw_indexed(uint32_t index_count, uint32_t instance_count=1, uint32_t first_index=0, uint32_t vertex_offset=0, uint32_t first_instance=0);
+    void end_render_pass();
+
+    void end();
 };
 
 // Manages the allocation of short-lived resources which can be recycled in a single call, protected by a fence

@@ -1,6 +1,20 @@
 #include "load.h"
 #include <fstream>
 
+std::vector<uint32_t> load_spirv_binary(const char * path)
+{
+    FILE * f = fopen(path, "rb");
+    if(!f) throw std::runtime_error(std::string("failed to open ") + path);
+    fseek(f, 0, SEEK_END);
+    auto len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    std::vector<uint32_t> words(len/4);
+    if(fread(words.data(), sizeof(uint32_t), words.size(), f) != words.size()) throw std::runtime_error(std::string("failed to read ") + path);
+    fclose(f);
+    return words;
+}
+
+
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 

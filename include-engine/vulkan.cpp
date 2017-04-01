@@ -235,6 +235,60 @@ VkPipelineLayout context::create_pipeline_layout(array_view<VkDescriptorSetLayou
     return pipeline_layout;
 }
 
+VkShaderModule context::create_shader_module(array_view<uint32_t> spirv_words)
+{
+    VkShaderModuleCreateInfo create_info {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    create_info.codeSize = spirv_words.size * sizeof(uint32_t);
+    create_info.pCode = spirv_words.data;
+
+    VkShaderModule module;
+    check(vkCreateShaderModule(device, &create_info, nullptr, &module));
+    return module;
+}
+
+VkFramebuffer context::create_framebuffer(VkRenderPass render_pass, array_view<VkImageView> attachments, uint2 dims)
+{
+    VkFramebufferCreateInfo framebuffer_info {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    framebuffer_info.renderPass = render_pass;
+    framebuffer_info.attachmentCount = attachments.size;
+    framebuffer_info.pAttachments = attachments.data;
+    framebuffer_info.width = dims.x;
+    framebuffer_info.height = dims.y;
+    framebuffer_info.layers = 1;
+
+    VkFramebuffer framebuffer;
+    check(vkCreateFramebuffer(device, &framebuffer_info, nullptr, &framebuffer));
+    return framebuffer;
+}
+
+VkRenderPass context::create_render_pass(array_view<VkAttachmentDescription> color_attachments, std::optional<VkAttachmentDescription> depth_attachment)
+{
+    std::vector<VkAttachmentDescription> attachments(begin(color_attachments), end(color_attachments));
+    std::vector<VkAttachmentReference> attachment_refs;
+    for(uint32_t i=0; i<color_attachments.size; ++i) attachment_refs.push_back({i, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
+
+    VkSubpassDescription subpass_desc {};
+    subpass_desc.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    if(depth_attachment)
+    {
+        attachments.push_back(*depth_attachment);
+        attachment_refs.push_back({color_attachments.size, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL});
+        subpass_desc.pDepthStencilAttachment = &attachment_refs[color_attachments.size];
+    }
+    subpass_desc.colorAttachmentCount = color_attachments.size;
+    subpass_desc.pColorAttachments = attachment_refs.data();
+    
+    VkRenderPassCreateInfo render_pass_info {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    render_pass_info.attachmentCount = countof(attachments);
+    render_pass_info.pAttachments = attachments.data();
+    render_pass_info.subpassCount = 1;
+    render_pass_info.pSubpasses = &subpass_desc;
+
+    VkRenderPass render_pass;
+    check(vkCreateRenderPass(device, &render_pass_info, nullptr, &render_pass));
+    return render_pass;
+}
+
 VkCommandBuffer context::begin_transient() 
 {
     VkCommandBufferAllocateInfo alloc_info {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
@@ -640,10 +694,73 @@ void descriptor_set::write_combined_image_sampler(uint32_t binding, uint32_t arr
     vkUpdateDescriptorSets(ctx.device, 1, &write, 0, nullptr);
 }
 
-///////////////////////////
-// transient_resource_pool //
-///////////////////////////
+////////////////////
+// command_buffer //
+////////////////////
 
+void command_buffer::begin(VkCommandBufferUsageFlags flags)
+{
+    VkCommandBufferBeginInfo begin_info {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    begin_info.flags = flags;
+    vkBeginCommandBuffer(cmd, &begin_info);
+}
+
+void command_buffer::bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout layout, uint32_t set_index, VkDescriptorSet set, array_view<uint32_t> dynamic_offsets)
+{
+    vkCmdBindDescriptorSets(cmd, bind_point, layout, set_index, 1, &set, dynamic_offsets.size, dynamic_offsets.data);
+}
+
+void command_buffer::bind_pipeline(VkPipelineBindPoint bind_point, VkPipeline pipeline)
+{
+    vkCmdBindPipeline(cmd, bind_point, pipeline);
+}
+
+void command_buffer::bind_vertex_buffer(uint32_t binding, VkBuffer buffer, VkDeviceSize offset)
+{
+    vkCmdBindVertexBuffers(cmd, binding, 1, &buffer, &offset);
+}
+
+void command_buffer::bind_index_buffer(VkBuffer buffer, VkDeviceSize offset, VkIndexType index_type)
+{
+    vkCmdBindIndexBuffer(cmd, buffer, offset, index_type);
+}
+
+void command_buffer::begin_render_pass(VkRenderPass render_pass, VkFramebuffer framebuffer, uint2 dims, array_view<VkClearValue> clear_values)
+{
+    VkRenderPassBeginInfo pass_begin_info {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    pass_begin_info.renderPass = render_pass;
+    pass_begin_info.framebuffer = framebuffer;
+    pass_begin_info.renderArea.offset = {0, 0};
+    pass_begin_info.renderArea.extent = {dims.x, dims.y};
+    pass_begin_info.clearValueCount = clear_values.size;
+    pass_begin_info.pClearValues = clear_values.data;
+    vkCmdBeginRenderPass(cmd, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+
+    const VkViewport viewport {0, 0, static_cast<float>(dims.x), static_cast<float>(dims.y), 0.0f, 1.0f};
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+    const VkRect2D scissor {0, 0, dims.x, dims.y};
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+}
+
+void command_buffer::draw_indexed(uint32_t index_count, uint32_t instance_count, uint32_t first_index, uint32_t vertex_offset, uint32_t first_instance)
+{
+    vkCmdDrawIndexed(cmd, index_count, instance_count, first_index, vertex_offset, first_instance);
+}
+
+void command_buffer::end_render_pass() 
+{ 
+    vkCmdEndRenderPass(cmd); 
+}
+
+void command_buffer::end()
+{ 
+    check(vkEndCommandBuffer(cmd)); 
+}
+
+/////////////////////////////
+// transient_resource_pool //
+/////////////////////////////
 
 transient_resource_pool::transient_resource_pool(context & ctx, array_view<VkDescriptorPoolSize> descriptor_pool_sizes, uint32_t max_descriptor_sets)
     : ctx{ctx}, uniform_buffer{ctx, 1024*1024, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT}

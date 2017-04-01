@@ -5,44 +5,6 @@
 #include <chrono>
 #include <memory>
 
-std::vector<uint32_t> load_spirv_binary(const char * path)
-{
-    FILE * f = fopen(path, "rb");
-    if(!f) throw std::runtime_error(std::string("failed to open ") + path);
-    fseek(f, 0, SEEK_END);
-    auto len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    std::vector<uint32_t> words(len/4);
-    if(fread(words.data(), sizeof(uint32_t), words.size(), f) != words.size()) throw std::runtime_error(std::string("failed to read ") + path);
-    fclose(f);
-    return words;
-}
-
-VkShaderModule load_spirv_module(VkDevice device, const char * path)
-{
-    auto words = load_spirv_binary(path);
-
-    VkShaderModuleCreateInfo create_info {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    create_info.codeSize = words.size() * sizeof(uint32_t);
-    create_info.pCode = words.data();
-    VkShaderModule module;
-    check(vkCreateShaderModule(device, &create_info, nullptr, &module));
-    return module;
-}
-
-template<class Vertex, int N> VkVertexInputAttributeDescription make_attribute(uint32_t location, uint32_t binding, linalg::vec<float,N> (Vertex::*attribute))
-{
-    const Vertex vertex {};
-    switch(N)
-    {
-    case 1: return {location, binding, VK_FORMAT_R32_SFLOAT, static_cast<uint32_t>(offsetof(Vertex, *attribute))};
-    case 2: return {location, binding, VK_FORMAT_R32G32_SFLOAT, static_cast<uint32_t>(offsetof(Vertex, *attribute))};
-    case 3: return {location, binding, VK_FORMAT_R32G32B32_SFLOAT, static_cast<uint32_t>(offsetof(Vertex, *attribute))};
-    case 4: return {location, binding, VK_FORMAT_R32G32B32A32_SFLOAT, static_cast<uint32_t>(offsetof(Vertex, *attribute))};
-    default: throw std::logic_error("unsupported attribute type");
-    }
-}
-
 VkPipeline make_pipeline(VkDevice device, array_view<VkVertexInputBindingDescription> vertex_bindings, array_view<VkVertexInputAttributeDescription> vertex_attributes,    
     VkPipelineLayout layout, VkShaderModule vert_shader, VkShaderModule frag_shader, VkRenderPass render_pass);
 
@@ -59,10 +21,22 @@ struct per_view_uniforms
 	alignas(16) float3 eye_position;
 };
 
+VkAttachmentDescription make_attachment_description(VkFormat format, VkSampleCountFlagBits samples, VkAttachmentLoadOp load_op, VkImageLayout initial_layout=VK_IMAGE_LAYOUT_UNDEFINED, VkAttachmentStoreOp store_op=VK_ATTACHMENT_STORE_OP_DONT_CARE, VkImageLayout final_layout=VK_IMAGE_LAYOUT_UNDEFINED)
+{
+    VkAttachmentDescription desc {};
+    desc.format = format;
+    desc.samples = samples;
+    desc.loadOp = load_op;
+    desc.storeOp = store_op;
+    desc.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    desc.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    desc.initialLayout = initial_layout;
+    desc.finalLayout = final_layout;
+    return desc;
+}
+
 int main() try
 {
-    auto fbx_meshes = load_meshes_from_fbx("assets/helmet-mesh.fbx");
-
     context ctx;
 
     // Create our textures
@@ -94,7 +68,7 @@ int main() try
         size_t index_count;
     };
     std::vector<gfx_mesh> meshes;
-    for(auto & m : fbx_meshes)
+    for(auto & m : load_meshes_from_fbx("assets/helmet-mesh.fbx"))
     {
         gfx_mesh mesh;
         mesh.vertex_buffer = std::make_unique<dynamic_buffer>(ctx, m.vertices.size() * sizeof(mesh::vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -118,55 +92,23 @@ int main() try
     auto pipeline_layout = ctx.create_pipeline_layout({per_scene_layout, per_view_layout, per_object_layout});
 
     // Set up a render pass
-    VkAttachmentDescription attachments[2] {};
-    attachments[0].format = ctx.selection.surface_format.format;
-    attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
-    attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    attachments[1].format = VK_FORMAT_D32_SFLOAT;
-    attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
-    attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    attachments[1].finalLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    VkAttachmentReference attachment_refs[] 
-    {
-        {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-        {1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL}
-    };
-    VkSubpassDescription subpass_desc {};
-    subpass_desc.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass_desc.colorAttachmentCount = 1;
-    subpass_desc.pColorAttachments = &attachment_refs[0];
-    subpass_desc.pDepthStencilAttachment = &attachment_refs[1];
-    
-    VkRenderPassCreateInfo render_pass_info {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
-    render_pass_info.attachmentCount = countof(attachments);
-    render_pass_info.pAttachments = attachments;
-    render_pass_info.subpassCount = 1;
-    render_pass_info.pSubpasses = &subpass_desc;
-
-    VkRenderPass render_pass;
-    check(vkCreateRenderPass(ctx.device, &render_pass_info, nullptr, &render_pass));
+    auto render_pass = ctx.create_render_pass(
+        {make_attachment_description(ctx.selection.surface_format.format, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)},
+        make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED)
+    );
 
     // Set up our shader pipeline
-    VkShaderModule vert_shader = load_spirv_module(ctx.device, "assets/shader.vert.spv");
-    VkShaderModule frag_shader = load_spirv_module(ctx.device, "assets/shader.frag.spv");
+    VkShaderModule vert_shader = ctx.create_shader_module(load_spirv_binary("assets/shader.vert.spv"));
+    VkShaderModule frag_shader = ctx.create_shader_module(load_spirv_binary("assets/shader.frag.spv"));
 
     const VkVertexInputBindingDescription bindings[] {{0, sizeof(mesh::vertex), VK_VERTEX_INPUT_RATE_VERTEX}};
     const VkVertexInputAttributeDescription attributes[] 
     {
-        make_attribute(0, 0, &mesh::vertex::position), 
-        make_attribute(1, 0, &mesh::vertex::normal),
-        make_attribute(2, 0, &mesh::vertex::texcoord),
-        make_attribute(3, 0, &mesh::vertex::tangent),
-        make_attribute(4, 0, &mesh::vertex::bitangent)
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, position)}, 
+        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, normal)},
+        {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(mesh::vertex, texcoord)},
+        {3, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, tangent)},
+        {4, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, bitangent)}
     };
     VkPipeline pipeline = make_pipeline(ctx.device, bindings, attributes, pipeline_layout, vert_shader, frag_shader, render_pass);
 
@@ -175,21 +117,8 @@ int main() try
     depth_buffer depth {ctx, win.get_width(), win.get_height()};
 
     // Create framebuffers
-    std::vector<VkFramebuffer> swapchain_framebuffers(win.get_swapchain_image_views().size());
-    for(uint32_t i=0; i<swapchain_framebuffers.size(); ++i)
-    {
-        VkImageView attachments[] {win.get_swapchain_image_views()[i], depth};
-        VkFramebufferCreateInfo framebuffer_info {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-        framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebuffer_info.renderPass = render_pass;
-        framebuffer_info.attachmentCount = countof(attachments);
-        framebuffer_info.pAttachments = attachments;
-        framebuffer_info.width = win.get_width();
-        framebuffer_info.height = win.get_height();
-        framebuffer_info.layers = 1;
-
-        check(vkCreateFramebuffer(ctx.device, &framebuffer_info, nullptr, &swapchain_framebuffers[i]));
-    }
+    std::vector<VkFramebuffer> swapchain_framebuffers;
+    for(auto & view : win.get_swapchain_image_views()) swapchain_framebuffers.push_back(ctx.create_framebuffer(render_pass, {view, depth}, win.get_dims()));
 
     // Set up our transient resource pools
     const VkDescriptorPoolSize pool_sizes[]
@@ -245,11 +174,9 @@ int main() try
         frame_index = (frame_index+1)%3;
         pool.reset();
 
-        VkCommandBuffer cmd = pool.allocate_command_buffer();
+        command_buffer cmd = pool.allocate_command_buffer();
 
-        VkCommandBufferBeginInfo begin_info {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cmd, &begin_info);
+        cmd.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 
         // Bind per-view uniforms
         auto per_scene = pool.allocate_descriptor_set(per_scene_layout);
@@ -258,54 +185,42 @@ int main() try
         ps.light_direction = normalize(float3{1,-5,-2});
         ps.light_color = {0.8f,0.7f,0.5f};
         per_scene.write_uniform_buffer(0, 0, sizeof(ps), &ps);      
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &per_scene, 0, nullptr);
+        cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, per_scene, {});
 
         auto per_view = pool.allocate_descriptor_set(per_view_layout);
         per_view_uniforms pv;
         pv.view_proj_matrix = mul(proj_matrix, view_matrix);
         pv.eye_position = camera_position;
         per_view.write_uniform_buffer(0, 0, sizeof(pv), &pv);      
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, 1, &per_view, 0, nullptr);
+        cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, per_view, {});
 
         const uint32_t index = win.begin();
-        VkRenderPassBeginInfo pass_begin_info {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-        pass_begin_info.renderPass = render_pass;
-        pass_begin_info.framebuffer = swapchain_framebuffers[index];
-        pass_begin_info.renderArea.offset = {0, 0};
-        pass_begin_info.renderArea.extent = {win.get_width(), win.get_height()};
-        VkClearValue clear_values[2];
-        clear_values[0].color = {0, 0, 0, 1};
-        clear_values[1].depthStencil = {1.0f, 0};
-        pass_begin_info.clearValueCount = countof(clear_values);
-        pass_begin_info.pClearValues = clear_values;
-        vkCmdBeginRenderPass(cmd, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+        cmd.begin_render_pass(render_pass, swapchain_framebuffers[index], win.get_dims(), {{0, 0, 0, 1}, {1.0f, 0}});
 
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-
-        const VkViewport viewport {0, 0, static_cast<float>(win.get_width()), static_cast<float>(win.get_height()), 0.0f, 1.0f};
-        const VkRect2D scissor {0, 0, win.get_width(), win.get_height()};
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
+        cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
         for(auto & m : meshes)
         {
-            float4x4 model_matrix = {{1,0,0,0},{0,1,0,0},{0,0,1,0},{0,0,0,1}};
+            for(int i=0; i<9; ++i)
+            {
+                float4x4 model_matrix = linalg::translation_matrix(float3{i*10.0f-40,0,0});
 
-            auto per_object = pool.allocate_descriptor_set(per_object_layout);
-            per_object.write_uniform_buffer(0, 0, sizeof(model_matrix), &model_matrix);
-            per_object.write_combined_image_sampler(1, 0, sampler, albedo_tex);
-            per_object.write_combined_image_sampler(2, 0, sampler, normal_tex);
-            per_object.write_combined_image_sampler(3, 0, sampler, metallic_tex);
-            per_object.write_combined_image_sampler(4, 0, sampler, env_tex);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, 1, &per_object, 0, nullptr);
+                auto per_object = pool.allocate_descriptor_set(per_object_layout);
+                per_object.write_uniform_buffer(0, 0, sizeof(model_matrix), &model_matrix);
+                per_object.write_combined_image_sampler(1, 0, sampler, albedo_tex);
+                per_object.write_combined_image_sampler(2, 0, sampler, normal_tex);
+                per_object.write_combined_image_sampler(3, 0, sampler, metallic_tex);
+                per_object.write_combined_image_sampler(4, 0, sampler, env_tex);
+                cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
 
-            vkCmdBindVertexBuffers(cmd, 0, 1, &m.vertices.buffer, &m.vertices.offset);
-            vkCmdBindIndexBuffer(cmd, m.indices.buffer, m.indices.offset, VkIndexType::VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd, m.index_count, 1, 0, 0, 0);
+                cmd.bind_vertex_buffer(0, m.vertices.buffer, m.vertices.offset);
+                cmd.bind_index_buffer(m.indices.buffer, m.indices.offset, VkIndexType::VK_INDEX_TYPE_UINT32);
+                cmd.draw_indexed(m.index_count);
+            }
         }
 
-        vkCmdEndRenderPass(cmd);
-        check(vkEndCommandBuffer(cmd));
+        cmd.end_render_pass();
+        cmd.end();
 
         win.end(index, {cmd}, pool.get_fence());
         

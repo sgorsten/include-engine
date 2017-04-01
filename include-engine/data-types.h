@@ -6,6 +6,7 @@ using namespace linalg::aliases;
 
 #include <memory>
 #include <vector>
+#include <optional>
 
 // Abstract over determining the number of elements in a collection
 template<class T, uint32_t N> constexpr uint32_t countof(const T (&)[N]) { return N; }
@@ -22,8 +23,10 @@ template<class T> struct array_view
     template<uint32_t N> array_view(const T (& array)[N]) : data{array}, size{countof(array)} {}
     template<uint32_t N> array_view(const std::array<T,N> & array) : data{array.data()}, size{countof(array)} {}
     array_view(std::initializer_list<T> ilist) : data{ilist.begin()}, size{countof(ilist)} {}
-    array_view(const std::vector<T> & vec) : data{vec.data()}, size{countof(vec)} {}    
+    array_view(const std::vector<T> & vec) : data{vec.data()}, size{countof(vec)} {}
 };
+template<class T> const T * begin(const array_view<T> & view) { return view.data; }
+template<class T> const T * end(const array_view<T> & view) { return view.data + view.size; }
 
 // A container for storing contiguous 2D bitmaps of pixels
 struct std_free_deleter { void operator() (void * p) { std::free(p); } };
