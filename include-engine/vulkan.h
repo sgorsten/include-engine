@@ -76,7 +76,7 @@ public:
     bool get_key(int key) const { return glfwGetKey(glfw_window, key) == GLFW_PRESS; }
 
     uint32_t begin();
-    void end(uint32_t index, std::initializer_list<VkCommandBuffer> commands, VkFence fence);
+    void end(uint32_t index, array_view<VkCommandBuffer> commands, VkFence fence);
 };
 
 class depth_buffer
@@ -121,6 +121,18 @@ public:
     operator VkImageView () const { return image_view; }
 };
 
+class static_buffer
+{
+    context & ctx;
+    VkBuffer buffer;
+    VkDeviceMemory device_memory;
+public:
+    static_buffer(context & ctx, VkBufferUsageFlags usage, VkMemoryPropertyFlags memory_properties, VkDeviceSize size, const void * initial_data);
+    ~static_buffer();
+
+    operator VkBuffer () { return buffer; }
+};
+
 class dynamic_buffer
 {
     context & ctx;
@@ -148,6 +160,7 @@ public:
 
     void write_uniform_buffer(uint32_t binding, uint32_t array_element, size_t size, const void * data);
     void write_combined_image_sampler(uint32_t binding, uint32_t array_element, VkSampler sampler, VkImageView image_view, VkImageLayout image_layout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    template<class T> void write_uniform_buffer(uint32_t binding, uint32_t array_element, const T & data) { write_uniform_buffer(binding, array_element, sizeof(data), &data); }
 };
 
 class command_buffer
@@ -190,5 +203,11 @@ public:
     descriptor_set allocate_descriptor_set(VkDescriptorSetLayout layout);
     VkFence get_fence() { return fence; }
 };
+
+// Other utility functions
+void transition_layout(VkCommandBuffer command_buffer, VkImage image, uint32_t mip_level, uint32_t array_layer, VkImageLayout old_layout, VkImageLayout new_layout);
+VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout layout, 
+    array_view<VkVertexInputBindingDescription> vertex_bindings, array_view<VkVertexInputAttributeDescription> vertex_attributes, 
+    VkShaderModule vert_shader, VkShaderModule frag_shader);
 
 #endif

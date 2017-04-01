@@ -5,8 +5,7 @@
 #include <chrono>
 #include <memory>
 
-VkPipeline make_pipeline(VkDevice device, array_view<VkVertexInputBindingDescription> vertex_bindings, array_view<VkVertexInputAttributeDescription> vertex_attributes,    
-    VkPipelineLayout layout, VkShaderModule vert_shader, VkShaderModule frag_shader, VkRenderPass render_pass);
+VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout layout, array_view<VkVertexInputBindingDescription> vertex_bindings, array_view<VkVertexInputAttributeDescription> vertex_attributes, VkShaderModule vert_shader, VkShaderModule frag_shader);
 
 struct per_scene_uniforms
 {
@@ -23,16 +22,7 @@ struct per_view_uniforms
 
 VkAttachmentDescription make_attachment_description(VkFormat format, VkSampleCountFlagBits samples, VkAttachmentLoadOp load_op, VkImageLayout initial_layout=VK_IMAGE_LAYOUT_UNDEFINED, VkAttachmentStoreOp store_op=VK_ATTACHMENT_STORE_OP_DONT_CARE, VkImageLayout final_layout=VK_IMAGE_LAYOUT_UNDEFINED)
 {
-    VkAttachmentDescription desc {};
-    desc.format = format;
-    desc.samples = samples;
-    desc.loadOp = load_op;
-    desc.storeOp = store_op;
-    desc.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    desc.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    desc.initialLayout = initial_layout;
-    desc.finalLayout = final_layout;
-    return desc;
+    return {0, format, samples, load_op, store_op, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE, initial_layout, final_layout};
 }
 
 int main() try
@@ -61,21 +51,17 @@ int main() try
     // Create our meshes
     struct gfx_mesh
     {
-        std::unique_ptr<dynamic_buffer> vertex_buffer;
-        std::unique_ptr<dynamic_buffer> index_buffer;
-        VkDescriptorBufferInfo vertices;
-        VkDescriptorBufferInfo indices;
+        std::unique_ptr<static_buffer> vertex_buffer;
+        std::unique_ptr<static_buffer> index_buffer;
         size_t index_count;
     };
     std::vector<gfx_mesh> meshes;
     for(auto & m : load_meshes_from_fbx("assets/helmet-mesh.fbx"))
     {
         gfx_mesh mesh;
-        mesh.vertex_buffer = std::make_unique<dynamic_buffer>(ctx, m.vertices.size() * sizeof(mesh::vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        mesh.index_buffer = std::make_unique<dynamic_buffer>(ctx, m.triangles.size() * sizeof(uint3), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        mesh.vertex_buffer = std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.vertices.size() * sizeof(mesh::vertex), m.vertices.data());
+        mesh.index_buffer = std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.triangles.size() * sizeof(uint3), m.triangles.data());
         mesh.index_count = m.triangles.size() * 3;
-        mesh.vertices = mesh.vertex_buffer->write(m.vertices.size() * sizeof(mesh::vertex), m.vertices.data());
-        mesh.indices = mesh.index_buffer->write(m.triangles.size() * sizeof(uint3), m.triangles.data());
         meshes.push_back(std::move(mesh));
     }
 
@@ -110,7 +96,7 @@ int main() try
         {3, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, tangent)},
         {4, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, bitangent)}
     };
-    VkPipeline pipeline = make_pipeline(ctx.device, bindings, attributes, pipeline_layout, vert_shader, frag_shader, render_pass);
+    VkPipeline pipeline = make_pipeline(ctx.device, render_pass, pipeline_layout, bindings, attributes, vert_shader, frag_shader);
 
     // Set up a window with swapchain framebuffers
     window win {ctx, 640, 480};
@@ -179,42 +165,43 @@ int main() try
         cmd.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 
         // Bind per-view uniforms
-        auto per_scene = pool.allocate_descriptor_set(per_scene_layout);
         per_scene_uniforms ps;
         ps.ambient_light = {0.01f,0.01f,0.01f};
         ps.light_direction = normalize(float3{1,-5,-2});
         ps.light_color = {0.8f,0.7f,0.5f};
-        per_scene.write_uniform_buffer(0, 0, sizeof(ps), &ps);      
+
+        auto per_scene = pool.allocate_descriptor_set(per_scene_layout);
+        per_scene.write_uniform_buffer(0, 0, ps);      
         cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, per_scene, {});
 
-        auto per_view = pool.allocate_descriptor_set(per_view_layout);
         per_view_uniforms pv;
         pv.view_proj_matrix = mul(proj_matrix, view_matrix);
         pv.eye_position = camera_position;
-        per_view.write_uniform_buffer(0, 0, sizeof(pv), &pv);      
+
+        auto per_view = pool.allocate_descriptor_set(per_view_layout);
+        per_view.write_uniform_buffer(0, 0, pv);      
         cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, per_view, {});
 
         const uint32_t index = win.begin();
         cmd.begin_render_pass(render_pass, swapchain_framebuffers[index], win.get_dims(), {{0, 0, 0, 1}, {1.0f, 0}});
 
         cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-
         for(auto & m : meshes)
         {
             for(int i=0; i<9; ++i)
             {
-                float4x4 model_matrix = linalg::translation_matrix(float3{i*10.0f-40,0,0});
+                const float4x4 model_matrix = linalg::translation_matrix(float3{i*10.0f-40,0,0});
 
                 auto per_object = pool.allocate_descriptor_set(per_object_layout);
-                per_object.write_uniform_buffer(0, 0, sizeof(model_matrix), &model_matrix);
+                per_object.write_uniform_buffer(0, 0, model_matrix);
                 per_object.write_combined_image_sampler(1, 0, sampler, albedo_tex);
                 per_object.write_combined_image_sampler(2, 0, sampler, normal_tex);
                 per_object.write_combined_image_sampler(3, 0, sampler, metallic_tex);
                 per_object.write_combined_image_sampler(4, 0, sampler, env_tex);
                 cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
 
-                cmd.bind_vertex_buffer(0, m.vertices.buffer, m.vertices.offset);
-                cmd.bind_index_buffer(m.indices.buffer, m.indices.offset, VkIndexType::VK_INDEX_TYPE_UINT32);
+                cmd.bind_vertex_buffer(0, *m.vertex_buffer, 0);
+                cmd.bind_index_buffer(*m.index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
                 cmd.draw_indexed(m.index_count);
             }
         }
@@ -244,103 +231,4 @@ catch(const std::exception & e)
 {
     std::cerr << e.what() << std::endl;
     return EXIT_FAILURE;
-}
-
-VkPipeline make_pipeline(VkDevice device, array_view<VkVertexInputBindingDescription> vertex_bindings, array_view<VkVertexInputAttributeDescription> vertex_attributes,    
-    VkPipelineLayout layout, VkShaderModule vert_shader, VkShaderModule frag_shader, VkRenderPass render_pass)
-{
-    const VkPipelineShaderStageCreateInfo shader_stages[]
-    {
-        {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vert_shader, "main"},
-        {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, frag_shader, "main"}
-    };
-
-    VkPipelineVertexInputStateCreateInfo vertexInputInfo {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-    vertexInputInfo.vertexBindingDescriptionCount = vertex_bindings.size;
-    vertexInputInfo.pVertexBindingDescriptions = vertex_bindings.data;
-    vertexInputInfo.vertexAttributeDescriptionCount = vertex_attributes.size;
-    vertexInputInfo.pVertexAttributeDescriptions = vertex_attributes.data;
-
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    inputAssembly.primitiveRestartEnable = VK_FALSE;
-
-    const VkViewport viewport {};
-    const VkRect2D scissor {};
-    VkPipelineViewportStateCreateInfo viewportState {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
-    viewportState.viewportCount = 1;
-    viewportState.pViewports = &viewport;
-    viewportState.scissorCount = 1;
-    viewportState.pScissors = &scissor;
-
-    VkPipelineRasterizationStateCreateInfo rasterizer {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-    rasterizer.depthClampEnable = VK_FALSE;
-    rasterizer.rasterizerDiscardEnable = VK_FALSE;
-    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_NONE; //VK_CULL_MODE_BACK_BIT;
-    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
-    rasterizer.depthBiasEnable = VK_FALSE;
-    rasterizer.depthBiasConstantFactor = 0.0f; // Optional
-    rasterizer.depthBiasClamp = 0.0f; // Optional
-    rasterizer.depthBiasSlopeFactor = 0.0f; // Optional
-
-    VkPipelineMultisampleStateCreateInfo multisampling {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-    multisampling.sampleShadingEnable = VK_FALSE;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    multisampling.minSampleShading = 1.0f; // Optional
-    multisampling.pSampleMask = nullptr; /// Optional
-    multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
-    multisampling.alphaToOneEnable = VK_FALSE; // Optional
-
-    VkPipelineColorBlendAttachmentState colorBlendAttachment {};
-    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    colorBlendAttachment.blendEnable = VK_FALSE;
-    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
-    colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
-    colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
-    colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
-    colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
-    colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
-
-    VkPipelineColorBlendStateCreateInfo colorBlending {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-    colorBlending.logicOpEnable = VK_FALSE;
-    colorBlending.logicOp = VK_LOGIC_OP_COPY; // Optional
-    colorBlending.attachmentCount = 1;
-    colorBlending.pAttachments = &colorBlendAttachment;
-    colorBlending.blendConstants[0] = 0.0f; // Optional
-    colorBlending.blendConstants[1] = 0.0f; // Optional
-    colorBlending.blendConstants[2] = 0.0f; // Optional
-    colorBlending.blendConstants[3] = 0.0f; // Optional
-
-    const VkDynamicState dynamic_states[] {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    VkPipelineDynamicStateCreateInfo dynamicState {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-    dynamicState.dynamicStateCount = countof(dynamic_states);
-    dynamicState.pDynamicStates = dynamic_states;
-
-    VkPipelineDepthStencilStateCreateInfo depth_stencil_state {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-    depth_stencil_state.depthWriteEnable = VK_TRUE;
-    depth_stencil_state.depthTestEnable = VK_TRUE;
-    depth_stencil_state.depthCompareOp = VK_COMPARE_OP_LESS;
-
-    VkGraphicsPipelineCreateInfo pipelineInfo {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-    pipelineInfo.stageCount = countof(shader_stages);
-    pipelineInfo.pStages = shader_stages;
-    pipelineInfo.pVertexInputState = &vertexInputInfo;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = &depth_stencil_state;
-    pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.pDynamicState = &dynamicState;
-    pipelineInfo.layout = layout;
-    pipelineInfo.renderPass = render_pass;
-    pipelineInfo.subpass = 0;
-    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
-    pipelineInfo.basePipelineIndex = -1; // Optional
-
-    VkPipeline pipeline;
-    check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline));
-    return pipeline;
 }

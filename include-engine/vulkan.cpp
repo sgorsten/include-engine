@@ -400,15 +400,15 @@ uint32_t window::begin()
     return index;
 }
 
-void window::end(uint32_t index, std::initializer_list<VkCommandBuffer> commands, VkFence fence)
+void window::end(uint32_t index, array_view<VkCommandBuffer> commands, VkFence fence)
 {
     VkPipelineStageFlags wait_stages[] {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     VkSubmitInfo submit_info {VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submit_info.waitSemaphoreCount = 1;
     submit_info.pWaitSemaphores = &image_available;
     submit_info.pWaitDstStageMask = wait_stages;
-    submit_info.commandBufferCount = commands.size();
-    submit_info.pCommandBuffers = commands.begin();
+    submit_info.commandBufferCount = commands.size;
+    submit_info.pCommandBuffers = commands.data;
     submit_info.signalSemaphoreCount = 1;
     submit_info.pSignalSemaphores = &render_finished;
     check(vkQueueSubmit(ctx.queue, 1, &submit_info, fence));
@@ -477,7 +477,7 @@ texture_2d::texture_2d(context & ctx, uint32_t width, uint32_t height, VkFormat 
     image_info.imageType = VK_IMAGE_TYPE_2D;
     image_info.format = format;
     image_info.extent = {width, height, 1};
-    image_info.mipLevels = 1+std::ceil(std::log2(std::max(width,height)));
+    image_info.mipLevels = 1+static_cast<uint32_t>(std::ceil(std::log2(std::max(width,height))));
     image_info.arrayLayers = 1;
     image_info.samples = VK_SAMPLE_COUNT_1_BIT;
     image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -629,6 +629,37 @@ texture_cube::~texture_cube()
     vkFreeMemory(ctx.device, device_memory, nullptr);
 }
 
+///////////////////
+// static_buffer //
+///////////////////
+
+static_buffer::static_buffer(context & ctx, VkBufferUsageFlags usage, VkMemoryPropertyFlags memory_properties, VkDeviceSize size, const void * initial_data) : ctx{ctx}
+{
+    memcpy(ctx.mapped_staging_memory, initial_data, size);
+
+    VkBufferCreateInfo buffer_info {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    buffer_info.size = size;
+    buffer_info.usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    check(vkCreateBuffer(ctx.device, &buffer_info, nullptr, &buffer));
+
+    VkMemoryRequirements mem_reqs;
+    vkGetBufferMemoryRequirements(ctx.device, buffer, &mem_reqs);
+    device_memory = ctx.allocate(mem_reqs, memory_properties);
+    vkBindBufferMemory(ctx.device, buffer, device_memory, 0);
+
+    auto cmd = ctx.begin_transient();
+    const VkBufferCopy copy {0, 0, size};
+    vkCmdCopyBuffer(cmd, ctx.staging_buffer, buffer, 1, &copy);
+    ctx.end_transient(cmd);
+}
+
+static_buffer::~static_buffer()
+{
+    vkDestroyBuffer(ctx.device, buffer, nullptr);
+    vkFreeMemory(ctx.device, device_memory, nullptr);
+}
+
 ////////////////////
 // dynamic_buffer //
 ////////////////////
@@ -643,7 +674,7 @@ dynamic_buffer::dynamic_buffer(context & ctx, VkDeviceSize size, VkBufferUsageFl
 
     VkMemoryRequirements mem_reqs;
     vkGetBufferMemoryRequirements(ctx.device, buffer, &mem_reqs);
-    device_memory = ctx.allocate(mem_reqs, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    device_memory = ctx.allocate(mem_reqs, memory_properties);
     vkBindBufferMemory(ctx.device, buffer, device_memory, 0);
 
     void * mapped;
@@ -866,6 +897,105 @@ void transition_layout(VkCommandBuffer command_buffer, VkImage image, uint32_t m
     default: throw std::logic_error("unsupported layout transition");
     }
     vkCmdPipelineBarrier(command_buffer, src_stage_mask, dst_stage_mask, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+}
+
+
+VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout layout, array_view<VkVertexInputBindingDescription> vertex_bindings, array_view<VkVertexInputAttributeDescription> vertex_attributes, VkShaderModule vert_shader, VkShaderModule frag_shader)
+{
+    const VkPipelineShaderStageCreateInfo shader_stages[]
+    {
+        {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vert_shader, "main"},
+        {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, frag_shader, "main"}
+    };
+
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    vertexInputInfo.vertexBindingDescriptionCount = vertex_bindings.size;
+    vertexInputInfo.pVertexBindingDescriptions = vertex_bindings.data;
+    vertexInputInfo.vertexAttributeDescriptionCount = vertex_attributes.size;
+    vertexInputInfo.pVertexAttributeDescriptions = vertex_attributes.data;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+    const VkViewport viewport {};
+    const VkRect2D scissor {};
+    VkPipelineViewportStateCreateInfo viewportState {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    viewportState.viewportCount = 1;
+    viewportState.pViewports = &viewport;
+    viewportState.scissorCount = 1;
+    viewportState.pScissors = &scissor;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_NONE; //VK_CULL_MODE_BACK_BIT;
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_FALSE;
+    rasterizer.depthBiasConstantFactor = 0.0f; // Optional
+    rasterizer.depthBiasClamp = 0.0f; // Optional
+    rasterizer.depthBiasSlopeFactor = 0.0f; // Optional
+
+    VkPipelineMultisampleStateCreateInfo multisampling {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    multisampling.minSampleShading = 1.0f; // Optional
+    multisampling.pSampleMask = nullptr; /// Optional
+    multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
+    multisampling.alphaToOneEnable = VK_FALSE; // Optional
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachment {};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = VK_FALSE;
+    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
+    colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+    colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
+    colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
+    colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+    colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
+
+    VkPipelineColorBlendStateCreateInfo colorBlending {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.logicOp = VK_LOGIC_OP_COPY; // Optional
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+    colorBlending.blendConstants[0] = 0.0f; // Optional
+    colorBlending.blendConstants[1] = 0.0f; // Optional
+    colorBlending.blendConstants[2] = 0.0f; // Optional
+    colorBlending.blendConstants[3] = 0.0f; // Optional
+
+    const VkDynamicState dynamic_states[] {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamicState {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dynamicState.dynamicStateCount = countof(dynamic_states);
+    dynamicState.pDynamicStates = dynamic_states;
+
+    VkPipelineDepthStencilStateCreateInfo depth_stencil_state {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    depth_stencil_state.depthWriteEnable = VK_TRUE;
+    depth_stencil_state.depthTestEnable = VK_TRUE;
+    depth_stencil_state.depthCompareOp = VK_COMPARE_OP_LESS;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    pipelineInfo.stageCount = countof(shader_stages);
+    pipelineInfo.pStages = shader_stages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depth_stencil_state;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = layout;
+    pipelineInfo.renderPass = render_pass;
+    pipelineInfo.subpass = 0;
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
+    pipelineInfo.basePipelineIndex = -1; // Optional
+
+    VkPipeline pipeline;
+    check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline));
+    return pipeline;
 }
 
 /////////////////
