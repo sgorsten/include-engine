@@ -1,11 +1,7 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
-
-layout(set=1, binding=0) uniform PerView
-{
-	mat4 u_view_proj_matrix;
-	vec3 u_eye_position;
-};
+#extension GL_GOOGLE_include_directive : enable
+#include "scene.glsl"
 
 layout(set=2, binding=0) uniform PerObject
 {

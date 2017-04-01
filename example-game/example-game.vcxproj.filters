@@ -4,7 +4,19 @@
     <ClCompile Include="example-game.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="assets\shader.vert" />
-    <None Include="assets\shader.frag" />
+    <Filter Include="shaders">
+      <UniqueIdentifier>{e78330ba-19d6-41bd-8894-f8437d0bc732}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="assets\scene.glsl">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="assets\shader.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="assets\shader.vert">
+      <Filter>shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

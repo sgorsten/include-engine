@@ -1,5 +1,6 @@
 #include "load.h"
 #include <fstream>
+#include <algorithm>
 
 std::vector<uint32_t> load_spirv_binary(const char * path)
 {
@@ -76,9 +77,8 @@ std::vector<mesh> load_meshes_from_fbx(const char * filename)
 #include "../3rdparty/glslang/glslang/Public/ShaderLang.h"
 #include "../3rdparty/glslang/StandAlone/ResourceLimits.h"
 #include "../3rdparty/glslang/SPIRV/GlslangToSpv.h"
-#include <iostream>
 
-std::vector<uint32_t> compile_glsl_to_spirv(const char * filename)
+std::vector<char> load_text_file(const char * filename)
 {
     FILE * f = fopen(filename, "r");
     if(!f) throw std::runtime_error(std::string("failed to open ") + filename);
@@ -88,20 +88,81 @@ std::vector<uint32_t> compile_glsl_to_spirv(const char * filename)
     std::vector<char> buffer(len);
     len = fread(buffer.data(), 1, buffer.size(), f);
     buffer.resize(len);
+    return buffer;
+}
 
-    len = strlen(filename);
+struct shader_compiler_impl : glslang::TShader::Includer
+{
+    struct result_text
+    {
+        std::vector<char> text;
+        IncludeResult result;
+        result_text(const std::string & header_name) : text{load_text_file(header_name.c_str())}, result{header_name, text.data(), text.size(), nullptr} {}
+    };
+    std::vector<std::unique_ptr<result_text>> results;
+
+    IncludeResult * get_header(const std::string & name)
+    {
+        // Return previously loaded include file
+        for(auto & r : results)
+        {
+            if(r->result.headerName == name)
+            {
+                return &r->result;
+            }
+        }
+
+        // Otherwise attempt to load
+        try
+        {
+            results.push_back(std::make_unique<result_text>(name));
+            return &results.back()->result;
+        }
+        catch(const std::runtime_error &)
+        {
+            return nullptr; 
+        }
+    }
+
+    // Implement glslang::TShader::Includer
+    IncludeResult * includeSystem(const char * header_name, const char * includer_name, size_t inclusion_depth) override { return nullptr; }
+    IncludeResult * includeLocal(const char * header_name, const char * includer_name, size_t inclusion_depth) override 
+    { 
+        std::string path {includer_name};
+        size_t off = path.rfind('/');
+        if(off != std::string::npos) path.resize(off+1);
+        return get_header(path + header_name);
+    }
+    void releaseInclude(IncludeResult * result) override {}
+};
+
+shader_compiler::shader_compiler()
+{
+    glslang::InitializeProcess();
+    impl = std::make_unique<shader_compiler_impl>();
+}
+
+shader_compiler::~shader_compiler()
+{
+    impl.reset();
+    glslang::FinalizeProcess();
+}
+
+std::vector<uint32_t> shader_compiler::compile_glsl(const char * filename)
+{
+    auto buffer = load_text_file(filename);
+
+    const size_t len = strlen(filename);
     EShLanguage lang;
     if(filename[len-4] == 'v') lang = EShLanguage::EShLangVertex;
     else if(filename[len-4] == 'f') lang = EShLanguage::EShLangFragment;
     else throw std::runtime_error("unknown shader stage");
-
+    
+    glslang::TShader shader(lang);
     const char * s = buffer.data();
     int l = buffer.size();
-
-    glslang::InitializeProcess();
-    glslang::TShader shader(lang);
     shader.setStringsWithLengthsAndNames(&s, &l, &filename, 1);
-    if(!shader.parse(&glslang::DefaultTBuiltInResource, 450, false, static_cast<EShMessages>(EShMsgSpvRules|EShMsgVulkanRules)))
+    if(!shader.parse(&glslang::DefaultTBuiltInResource, 450, ENoProfile, false, false, static_cast<EShMessages>(EShMsgSpvRules|EShMsgVulkanRules), *impl))
     {
         throw std::runtime_error(std::string("GLSL compile failure: ") + shader.getInfoLog());
     }
@@ -114,9 +175,6 @@ std::vector<uint32_t> compile_glsl_to_spirv(const char * filename)
     }
 
     std::vector<uint32_t> spirv;
-    spv::SpvBuildLogger logger;
-    glslang::GlslangToSpv(*program.getIntermediate(lang), spirv, &logger);
-    auto messages = logger.getAllMessages();
-    if(!messages.empty()) std::cout << messages << std::endl;
+    glslang::GlslangToSpv(*program.getIntermediate(lang), spirv, nullptr);
     return spirv;
 }
