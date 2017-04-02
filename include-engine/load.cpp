@@ -5,6 +5,14 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
+image generate_single_color_image(const byte4 & color)
+{
+    auto p = std::malloc(sizeof(color));
+    if(!p) throw std::bad_alloc();
+    memcpy(p, &color, sizeof(color));
+    return image{1, 1, std::unique_ptr<void, std_free_deleter>(p)};
+}
+
 image load_image(const char * filename) 
 { 
     int x, y;
@@ -13,16 +21,36 @@ image load_image(const char * filename)
     return image{x, y, std::unique_ptr<void, std_free_deleter>(p)};
 }
 
+mesh compute_tangent_basis(mesh && m)
+{
+    for(auto t : m.triangles)
+    {
+        auto & v0 = m.vertices[t.x], & v1 = m.vertices[t.y], & v2 = m.vertices[t.z];
+        const float3 e1 = v1.position - v0.position, e2 = v2.position - v0.position;
+        const float2 d1 = v1.texcoord - v0.texcoord, d2 = v2.texcoord - v0.texcoord;
+        const float3 dpds = float3(d2.y * e1.x - d1.y * e2.x, d2.y * e1.y - d1.y * e2.y, d2.y * e1.z - d1.y * e2.z) / cross(d1, d2);
+        const float3 dpdt = float3(d1.x * e2.x - d2.x * e1.x, d1.x * e2.y - d2.x * e1.y, d1.x * e2.z - d2.x * e1.z) / cross(d1, d2);
+        v0.tangent += dpds; v1.tangent += dpds; v2.tangent += dpds;
+        v0.bitangent += dpdt; v1.bitangent += dpdt; v2.bitangent += dpdt;
+    }
+    for(auto & v : m.vertices)
+    {
+        v.tangent = normalize(v.tangent);
+        v.bitangent = normalize(v.bitangent);
+    }
+    return m;
+}
+
 mesh generate_box_mesh(const float3 & a, const float3 & b)
 {
-    return {{
-        {{a.z,a.x,a.y}, {-1,0,0}, {0,0}}, {{a.z,b.x,a.y}, {-1,0,0}, {1,0}}, {{a.z,b.x,b.y}, {-1,0,0}, {1,1}}, {{a.z,a.x,b.y}, {-1,0,0}, {0,1}},
-        {{b.z,b.x,a.y}, {+1,0,0}, {0,0}}, {{b.z,a.x,a.y}, {+1,0,0}, {1,0}}, {{b.z,a.x,b.y}, {+1,0,0}, {1,1}}, {{b.z,b.x,b.y}, {+1,0,0}, {0,1}},
-        {{a.y,a.z,a.x}, {0,-1,0}, {0,0}}, {{a.y,a.z,b.x}, {0,-1,0}, {1,0}}, {{b.y,a.z,b.x}, {0,-1,0}, {1,1}}, {{b.y,a.z,a.x}, {0,-1,0}, {0,1}},
-        {{a.y,b.z,b.x}, {0,+1,0}, {0,0}}, {{a.y,b.z,a.x}, {0,+1,0}, {1,0}}, {{b.y,b.z,a.x}, {0,+1,0}, {1,1}}, {{b.y,b.z,b.x}, {0,+1,0}, {0,1}},
+    return compute_tangent_basis({{
+        {{a.x,a.y,a.z}, {-1,0,0}, {0,0}}, {{a.x,b.y,a.z}, {-1,0,0}, {1,0}}, {{a.x,b.y,b.z}, {-1,0,0}, {1,1}}, {{a.x,a.y,b.z}, {-1,0,0}, {0,1}},
+        {{b.x,b.y,a.z}, {+1,0,0}, {0,0}}, {{b.x,a.y,a.z}, {+1,0,0}, {1,0}}, {{b.x,a.y,b.z}, {+1,0,0}, {1,1}}, {{b.x,b.y,b.z}, {+1,0,0}, {0,1}},
+        {{a.x,a.y,a.z}, {0,-1,0}, {0,0}}, {{a.x,a.y,b.z}, {0,-1,0}, {1,0}}, {{b.x,a.y,b.z}, {0,-1,0}, {1,1}}, {{b.x,a.y,a.z}, {0,-1,0}, {0,1}},
+        {{a.x,b.y,b.z}, {0,+1,0}, {0,0}}, {{a.x,b.y,a.z}, {0,+1,0}, {1,0}}, {{b.x,b.y,a.z}, {0,+1,0}, {1,1}}, {{b.x,b.y,b.z}, {0,+1,0}, {0,1}},
         {{a.x,a.y,a.z}, {0,0,-1}, {0,0}}, {{b.x,a.y,a.z}, {0,0,-1}, {1,0}}, {{b.x,b.y,a.z}, {0,0,-1}, {1,1}}, {{a.x,b.y,a.z}, {0,0,-1}, {0,1}},
         {{b.x,a.y,b.z}, {0,0,+1}, {0,0}}, {{a.x,a.y,b.z}, {0,0,+1}, {1,0}}, {{a.x,b.y,b.z}, {0,0,+1}, {1,1}}, {{b.x,b.y,b.z}, {0,0,+1}, {0,1}},
-    }, {{0,1,2},{0,2,3},{4,5,6},{4,6,7},{8,9,10},{8,10,11},{12,13,14},{12,14,15},{16,17,18},{16,18,19},{20,21,22},{20,22,23}}};
+    }, {{0,1,2},{0,2,3},{4,5,6},{4,6,7},{8,9,10},{8,10,11},{12,13,14},{12,14,15},{16,17,18},{16,18,19},{20,21,22},{20,22,23}}});
 }
 
 #include "fbx.h"
@@ -49,25 +77,7 @@ std::vector<mesh> load_meshes_from_fbx(const char * filename)
                 mesh.vertices.push_back({mul(model_matrix, float4{v.position,1}).xyz(), mul(normal_matrix, float4{v.normal,0}).xyz(), v.texcoord});
             }
             mesh.triangles = g.triangles;
-
-            // Compute tangents and bitangents
-            for(auto t : mesh.triangles)
-            {
-                auto & v0 = mesh.vertices[t.x], & v1 = mesh.vertices[t.y], & v2 = mesh.vertices[t.z];
-                const float3 e1 = v1.position - v0.position, e2 = v2.position - v0.position;
-                const float2 d1 = v1.texcoord - v0.texcoord, d2 = v2.texcoord - v0.texcoord;
-                const float3 dpds = float3(d2.y * e1.x - d1.y * e2.x, d2.y * e1.y - d1.y * e2.y, d2.y * e1.z - d1.y * e2.z) / cross(d1, d2);
-                const float3 dpdt = float3(d1.x * e2.x - d2.x * e1.x, d1.x * e2.y - d2.x * e1.y, d1.x * e2.z - d2.x * e1.z) / cross(d1, d2);
-                v0.tangent += dpds; v1.tangent += dpds; v2.tangent += dpds;
-                v0.bitangent += dpdt; v1.bitangent += dpdt; v2.bitangent += dpdt;
-            }
-            for(auto & v : mesh.vertices)
-            {
-                v.tangent = normalize(v.tangent);
-                v.bitangent = normalize(v.bitangent);
-            }
-
-            meshes.push_back(std::move(mesh));
+            meshes.push_back(compute_tangent_basis(std::move(mesh)));
         }
     }
     return meshes;

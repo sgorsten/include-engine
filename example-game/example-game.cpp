@@ -29,6 +29,9 @@ int main() try
     context ctx;
 
     // Create our textures
+    texture_2d black_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({0,0,0,255}));
+    texture_2d gray_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({128,128,128,255}));
+    texture_2d flat_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({128,128,255,255}));
     texture_2d albedo_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-albedo.jpg"));
     texture_2d normal_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-normal.jpg"));
     texture_2d metallic_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-metallic.jpg"));
@@ -52,12 +55,12 @@ int main() try
     {
         std::unique_ptr<static_buffer> vertex_buffer;
         std::unique_ptr<static_buffer> index_buffer;
-        size_t index_count;
+        uint32_t index_count;
 
         gfx_mesh(context & ctx, const mesh & m) :
             vertex_buffer{std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.vertices.size() * sizeof(mesh::vertex), m.vertices.data())},
             index_buffer{std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.triangles.size() * sizeof(uint3), m.triangles.data())},
-            index_count{m.triangles.size() * 3}
+            index_count{static_cast<uint32_t>(m.triangles.size() * 3)}
         {
         
         }
@@ -75,6 +78,7 @@ int main() try
         meshes.push_back({ctx, m});
     }
     gfx_mesh skybox_mesh {ctx, generate_box_mesh({-10,-10,-10}, {10,10,10})};
+    gfx_mesh ground_mesh {ctx, generate_box_mesh({-80,8,-80}, {80,10,80})};
 
     // Set up our layouts
     auto per_scene_layout = ctx.create_descriptor_set_layout({
@@ -101,7 +105,7 @@ int main() try
 
     // Set up our shader pipeline
     shader_compiler compiler;
-    VkShaderModule vert_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_VERTEX_BIT, "assets/shader.vert"));
+    VkShaderModule vert_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_VERTEX_BIT, "assets/static.vert"));
     VkShaderModule frag_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/shader.frag"));
     VkShaderModule skybox_vert_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_VERTEX_BIT, "assets/skybox.vert"));
     VkShaderModule skybox_frag_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/skybox.frag"));
@@ -115,8 +119,12 @@ int main() try
         {3, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, tangent)},
         {4, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, bitangent)}
     };
+    const VkVertexInputAttributeDescription skybox_attributes[] 
+    {
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, position)}
+    };
     VkPipeline pipeline = make_pipeline(ctx.device, render_pass, pipeline_layout, bindings, attributes, vert_shader, frag_shader, true, true);
-    VkPipeline skybox_pipeline = make_pipeline(ctx.device, render_pass, skybox_pipeline_layout, bindings, attributes, skybox_vert_shader, skybox_frag_shader, false, false);
+    VkPipeline skybox_pipeline = make_pipeline(ctx.device, render_pass, skybox_pipeline_layout, bindings, skybox_attributes, skybox_vert_shader, skybox_frag_shader, false, false);
 
     // Set up a window with swapchain framebuffers
     window win {ctx, {640, 480}, "Example Game"};
@@ -209,10 +217,6 @@ int main() try
 
         // Draw skybox
         cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, skybox_pipeline);
-        const float4x4 identity_matrix = translation_matrix(float3{0,0,0});
-        auto per_object = pool.allocate_descriptor_set(per_object_layout);
-        per_object.write_uniform_buffer(0, 0, identity_matrix);
-        cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
         skybox_mesh.draw(cmd);
 
         // Draw meshes
@@ -232,6 +236,16 @@ int main() try
                 m.draw(cmd);
             }
         }
+
+
+        const float4x4 identity_matrix = translation_matrix(float3{0,0,0});
+        auto per_object = pool.allocate_descriptor_set(per_object_layout);
+        per_object.write_uniform_buffer(0, 0, identity_matrix);
+        per_object.write_combined_image_sampler(1, 0, sampler, gray_tex);
+        per_object.write_combined_image_sampler(2, 0, sampler, flat_tex);
+        per_object.write_combined_image_sampler(3, 0, sampler, black_tex);
+        cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
+        ground_mesh.draw(cmd);
 
         cmd.end_render_pass();
         cmd.end();
