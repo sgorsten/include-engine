@@ -69,7 +69,7 @@ int main() try
     {
         meshes.push_back({ctx, m});
     }
-    gfx_mesh skybox_mesh {ctx, generate_box_mesh({-50,-50,-50}, {50,50,50})};
+    gfx_mesh skybox_mesh {ctx, generate_box_mesh({-10,-10,-10}, {10,10,10})};
 
     // Set up our layouts
     auto per_scene_layout = ctx.create_descriptor_set_layout({
@@ -90,7 +90,7 @@ int main() try
 
     // Set up a render pass
     auto render_pass = ctx.create_render_pass(
-        {make_attachment_description(ctx.selection.surface_format.format, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)},
+        {make_attachment_description(ctx.selection.surface_format.format, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)},
         make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED)
     );
 
@@ -114,8 +114,8 @@ int main() try
     VkPipeline skybox_pipeline = make_pipeline(ctx.device, render_pass, skybox_pipeline_layout, bindings, attributes, skybox_vert_shader, skybox_frag_shader, false, false);
 
     // Set up a window with swapchain framebuffers
-    window win {ctx, 640, 480};
-    depth_buffer depth {ctx, win.get_width(), win.get_height()};
+    window win {ctx, {640, 480}, "Example Game"};
+    depth_buffer depth {ctx, win.get_dims()};
 
     // Create framebuffers
     std::vector<VkFramebuffer> swapchain_framebuffers;
@@ -166,8 +166,7 @@ int main() try
         if(win.get_key(GLFW_KEY_D)) camera_position += qxdir(camera_orientation) * (timestep * 50);
 
         // Determine matrices
-        int width=win.get_width(), height=win.get_height();
-        const auto proj_matrix = linalg::perspective_matrix(1.0f, (float)width/height, 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one);
+        const auto proj_matrix = linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one);
 
         // Render a frame
         auto & pool = pools[frame_index];

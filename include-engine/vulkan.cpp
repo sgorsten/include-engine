@@ -322,12 +322,12 @@ void context::end_transient(VkCommandBuffer command_buffer)
 // window //
 ////////////
 
-window::window(context & ctx, uint32_t width, uint32_t height) : ctx{ctx}, width{width}, height{height}
+window::window(context & ctx, uint2 dims, const char * title) : ctx{ctx}, dims{dims}
 {
     glfwDefaultWindowHints();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-    glfw_window = glfwCreateWindow(width, height, "Vulkan Window", nullptr, nullptr);
+    glfw_window = glfwCreateWindow(dims.x, dims.y, title, nullptr, nullptr);
 
     check(glfwCreateWindowSurface(ctx.instance, glfw_window, nullptr, &surface));
 
@@ -336,7 +336,7 @@ window::window(context & ctx, uint32_t width, uint32_t height) : ctx{ctx}, width
     if(!present) throw std::runtime_error("vkGetPhysicalDeviceSurfaceSupportKHR(...) inconsistent");
 
     // Determine swap extent
-    VkExtent2D swap_extent {width, height};
+    VkExtent2D swap_extent {dims.x, dims.y};
     VkSurfaceCapabilitiesKHR surface_caps;
     check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.selection.physical_device, surface, &surface_caps));
     swap_extent.width = std::min(std::max(swap_extent.width, surface_caps.minImageExtent.width), surface_caps.maxImageExtent.width);
@@ -426,12 +426,12 @@ void window::end(uint32_t index, array_view<VkCommandBuffer> commands, VkFence f
 // depth_buffer //
 //////////////////
 
-depth_buffer::depth_buffer(context & ctx, uint32_t width, uint32_t height) : ctx{ctx}
+depth_buffer::depth_buffer(context & ctx, uint2 dims) : ctx{ctx}
 {
     VkImageCreateInfo image_info {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     image_info.imageType = VK_IMAGE_TYPE_2D;
     image_info.format = VK_FORMAT_D32_SFLOAT;
-    image_info.extent = {width, height, 1};
+    image_info.extent = {dims.x, dims.y, 1};
     image_info.mipLevels = 1;
     image_info.arrayLayers = 1;
     image_info.samples = VK_SAMPLE_COUNT_1_BIT;

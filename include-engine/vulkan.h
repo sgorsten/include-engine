@@ -60,15 +60,14 @@ class window
     VkSwapchainKHR swapchain {};
     std::vector<VkImageView> swapchain_image_views;
     VkSemaphore image_available {}, render_finished {};
-    uint32_t width {}, height {};
+    uint2 dims;
 public:
-    window(context & ctx, uint32_t width, uint32_t height);
+    window(context & ctx, uint2 dims, const char * title);
     ~window();
 
     const std::vector<VkImageView> & get_swapchain_image_views() const { return swapchain_image_views; }
-    uint2 get_dims() const { return {width, height}; }
-    uint32_t get_width() const { return width; }
-    uint32_t get_height() const { return height; }
+    uint2 get_dims() const { return dims; }
+    float get_aspect() const { return (float)dims.x/dims.y; }
     bool should_close() const { return !!glfwWindowShouldClose(glfw_window); }
 
     float2 get_cursor_pos() const { double2 c; glfwGetCursorPos(glfw_window, &c.x, &c.y); return float2{c}; }
@@ -86,7 +85,7 @@ class depth_buffer
     VkImageView image_view;
     VkDeviceMemory device_memory;
 public:
-    depth_buffer(context & ctx, uint32_t width, uint32_t height);
+    depth_buffer(context & ctx, uint2 dims);
     ~depth_buffer();
 
     operator VkImageView () const { return image_view; }
