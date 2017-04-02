@@ -9,5 +9,5 @@ layout(location = 0) out vec4 f_color;
 
 void main() 
 {
-	f_color = texture(u_env, direction*vec3(1,-1,-1));
+	f_color = vec4(sample_environment(direction), 1);
 }

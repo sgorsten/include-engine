@@ -5,8 +5,6 @@
 #include <chrono>
 #include <memory>
 
-VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout layout, array_view<VkVertexInputBindingDescription> vertex_bindings, array_view<VkVertexInputAttributeDescription> vertex_attributes, VkShaderModule vert_shader, VkShaderModule frag_shader);
-
 struct per_scene_uniforms
 {
 	alignas(16) float3 ambient_light;
@@ -63,6 +61,13 @@ int main() try
         {
         
         }
+
+        void draw(command_buffer & cmd) const
+        {
+            cmd.bind_vertex_buffer(0, *vertex_buffer, 0);
+            cmd.bind_index_buffer(*index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
+            cmd.draw_indexed(index_count);
+        }
     };
     std::vector<gfx_mesh> meshes;
     for(auto & m : load_meshes_from_fbx("assets/helmet-mesh.fbx"))
@@ -86,7 +91,7 @@ int main() try
         {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
     });
     auto pipeline_layout = ctx.create_pipeline_layout({per_scene_layout, per_view_layout, per_object_layout});
-    auto skybox_pipeline_layout = ctx.create_pipeline_layout({per_scene_layout, per_view_layout, per_object_layout});
+    auto skybox_pipeline_layout = ctx.create_pipeline_layout({per_scene_layout, per_view_layout});
 
     // Set up a render pass
     auto render_pass = ctx.create_render_pass(
@@ -208,10 +213,7 @@ int main() try
         auto per_object = pool.allocate_descriptor_set(per_object_layout);
         per_object.write_uniform_buffer(0, 0, identity_matrix);
         cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
-
-        cmd.bind_vertex_buffer(0, *skybox_mesh.vertex_buffer, 0);
-        cmd.bind_index_buffer(*skybox_mesh.index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
-        cmd.draw_indexed(skybox_mesh.index_count);
+        skybox_mesh.draw(cmd);
 
         // Draw meshes
         cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
@@ -227,10 +229,7 @@ int main() try
                 per_object.write_combined_image_sampler(2, 0, sampler, normal_tex);
                 per_object.write_combined_image_sampler(3, 0, sampler, metallic_tex);
                 cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
-
-                cmd.bind_vertex_buffer(0, *m.vertex_buffer, 0);
-                cmd.bind_index_buffer(*m.index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
-                cmd.draw_indexed(m.index_count);
+                m.draw(cmd);
             }
         }
 

@@ -22,7 +22,7 @@ void main()
 	vec3 tan_normal = normalize(texture(u_normal, texcoord).xyz*2-1);
 	vec3 normal_vec = normalize(normalize(tangent)*tan_normal.x + normalize(bitangent)*tan_normal.y + normalize(normal)*tan_normal.z);
 	vec3 refl_vec = normal_vec*(dot(eye_vec, normal_vec)*2) - eye_vec;
-	vec3 refl_light = albedo * texture(u_env, refl_vec*vec3(1,-1,-1)).rgb*2;
+	vec3 refl_light = albedo * sample_environment(refl_vec)*2;
 
 	vec3 light = u_ambient_light;
 
