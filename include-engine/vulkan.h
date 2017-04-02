@@ -206,8 +206,9 @@ public:
 
 // Other utility functions
 void transition_layout(VkCommandBuffer command_buffer, VkImage image, uint32_t mip_level, uint32_t array_layer, VkImageLayout old_layout, VkImageLayout new_layout);
+
 VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout layout, 
     array_view<VkVertexInputBindingDescription> vertex_bindings, array_view<VkVertexInputAttributeDescription> vertex_attributes, 
-    VkShaderModule vert_shader, VkShaderModule frag_shader);
+    VkShaderModule vert_shader, VkShaderModule frag_shader, bool depth_write, bool depth_test);
 
 #endif

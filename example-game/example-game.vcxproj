@@ -188,6 +188,8 @@
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(FullPath).spv</Outputs>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(FullPath).spv</Outputs>
     </None>
+    <None Include="assets\skybox.frag" />
+    <None Include="assets\skybox.vert" />
   </ItemGroup>
   <ItemGroup>
     <None Include="assets\scene.glsl" />

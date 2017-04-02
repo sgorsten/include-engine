@@ -900,7 +900,7 @@ void transition_layout(VkCommandBuffer command_buffer, VkImage image, uint32_t m
 }
 
 
-VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout layout, array_view<VkVertexInputBindingDescription> vertex_bindings, array_view<VkVertexInputAttributeDescription> vertex_attributes, VkShaderModule vert_shader, VkShaderModule frag_shader)
+VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout layout, array_view<VkVertexInputBindingDescription> vertex_bindings, array_view<VkVertexInputAttributeDescription> vertex_attributes, VkShaderModule vert_shader, VkShaderModule frag_shader, bool depth_write, bool depth_test)
 {
     const VkPipelineShaderStageCreateInfo shader_stages[]
     {
@@ -972,8 +972,8 @@ VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLa
     dynamicState.pDynamicStates = dynamic_states;
 
     VkPipelineDepthStencilStateCreateInfo depth_stencil_state {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-    depth_stencil_state.depthWriteEnable = VK_TRUE;
-    depth_stencil_state.depthTestEnable = VK_TRUE;
+    depth_stencil_state.depthWriteEnable = depth_write;
+    depth_stencil_state.depthTestEnable = depth_test;
     depth_stencil_state.depthCompareOp = VK_COMPARE_OP_LESS;
 
     VkGraphicsPipelineCreateInfo pipelineInfo {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};

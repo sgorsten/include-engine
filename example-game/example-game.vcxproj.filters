@@ -18,5 +18,11 @@
     <None Include="assets\shader.vert">
       <Filter>shaders</Filter>
     </None>
+    <None Include="assets\skybox.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="assets\skybox.vert">
+      <Filter>shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

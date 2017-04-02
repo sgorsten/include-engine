@@ -17,6 +17,7 @@ struct per_scene_uniforms
 struct per_view_uniforms
 {
 	alignas(16) float4x4 view_proj_matrix;
+    alignas(16) float4x4 rotation_only_view_proj_matrix;
 	alignas(16) float3 eye_position;
 };
 
@@ -54,28 +55,38 @@ int main() try
         std::unique_ptr<static_buffer> vertex_buffer;
         std::unique_ptr<static_buffer> index_buffer;
         size_t index_count;
+
+        gfx_mesh(context & ctx, const mesh & m) :
+            vertex_buffer{std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.vertices.size() * sizeof(mesh::vertex), m.vertices.data())},
+            index_buffer{std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.triangles.size() * sizeof(uint3), m.triangles.data())},
+            index_count{m.triangles.size() * 3}
+        {
+        
+        }
     };
     std::vector<gfx_mesh> meshes;
     for(auto & m : load_meshes_from_fbx("assets/helmet-mesh.fbx"))
     {
-        gfx_mesh mesh;
-        mesh.vertex_buffer = std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.vertices.size() * sizeof(mesh::vertex), m.vertices.data());
-        mesh.index_buffer = std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.triangles.size() * sizeof(uint3), m.triangles.data());
-        mesh.index_count = m.triangles.size() * 3;
-        meshes.push_back(std::move(mesh));
+        meshes.push_back({ctx, m});
     }
+    gfx_mesh skybox_mesh {ctx, generate_box_mesh({-50,-50,-50}, {50,50,50})};
 
     // Set up our layouts
-    auto per_scene_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}});
-    auto per_view_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}});
+    auto per_scene_layout = ctx.create_descriptor_set_layout({
+        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
+    });
+    auto per_view_layout = ctx.create_descriptor_set_layout({
+        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}
+    });
     auto per_object_layout = ctx.create_descriptor_set_layout({
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
     });
     auto pipeline_layout = ctx.create_pipeline_layout({per_scene_layout, per_view_layout, per_object_layout});
+    auto skybox_pipeline_layout = ctx.create_pipeline_layout({per_scene_layout, per_view_layout, per_object_layout});
 
     // Set up a render pass
     auto render_pass = ctx.create_render_pass(
@@ -85,8 +96,10 @@ int main() try
 
     // Set up our shader pipeline
     shader_compiler compiler;
-    VkShaderModule vert_shader = ctx.create_shader_module(compiler.compile_glsl("assets/shader.vert"));
-    VkShaderModule frag_shader = ctx.create_shader_module(compiler.compile_glsl("assets/shader.frag"));
+    VkShaderModule vert_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_VERTEX_BIT, "assets/shader.vert"));
+    VkShaderModule frag_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/shader.frag"));
+    VkShaderModule skybox_vert_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_VERTEX_BIT, "assets/skybox.vert"));
+    VkShaderModule skybox_frag_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/skybox.frag"));
 
     const VkVertexInputBindingDescription bindings[] {{0, sizeof(mesh::vertex), VK_VERTEX_INPUT_RATE_VERTEX}};
     const VkVertexInputAttributeDescription attributes[] 
@@ -97,7 +110,8 @@ int main() try
         {3, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, tangent)},
         {4, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, bitangent)}
     };
-    VkPipeline pipeline = make_pipeline(ctx.device, render_pass, pipeline_layout, bindings, attributes, vert_shader, frag_shader);
+    VkPipeline pipeline = make_pipeline(ctx.device, render_pass, pipeline_layout, bindings, attributes, vert_shader, frag_shader, true, true);
+    VkPipeline skybox_pipeline = make_pipeline(ctx.device, render_pass, skybox_pipeline_layout, bindings, attributes, skybox_vert_shader, skybox_frag_shader, false, false);
 
     // Set up a window with swapchain framebuffers
     window win {ctx, 640, 480};
@@ -154,7 +168,6 @@ int main() try
         // Determine matrices
         int width=win.get_width(), height=win.get_height();
         const auto proj_matrix = linalg::perspective_matrix(1.0f, (float)width/height, 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one);
-        const auto view_matrix = inverse(pose_matrix(camera_orientation, camera_position));
 
         // Render a frame
         auto & pool = pools[frame_index];
@@ -165,7 +178,7 @@ int main() try
 
         cmd.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 
-        // Bind per-view uniforms
+        // Bind per-scene uniforms
         per_scene_uniforms ps;
         ps.ambient_light = {0.01f,0.01f,0.01f};
         ps.light_direction = normalize(float3{1,-5,-2});
@@ -173,32 +186,47 @@ int main() try
 
         auto per_scene = pool.allocate_descriptor_set(per_scene_layout);
         per_scene.write_uniform_buffer(0, 0, ps);      
+        per_scene.write_combined_image_sampler(1, 0, sampler, env_tex);
         cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, per_scene, {});
 
+        // Bind per-view uniforms
         per_view_uniforms pv;
-        pv.view_proj_matrix = mul(proj_matrix, view_matrix);
+        pv.view_proj_matrix = mul(proj_matrix, inverse(pose_matrix(camera_orientation, camera_position)));
+        pv.rotation_only_view_proj_matrix = mul(proj_matrix, inverse(pose_matrix(camera_orientation, float3{0,0,0})));
         pv.eye_position = camera_position;
 
         auto per_view = pool.allocate_descriptor_set(per_view_layout);
         per_view.write_uniform_buffer(0, 0, pv);      
         cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, per_view, {});
 
+        // Begin render pass
         const uint32_t index = win.begin();
         cmd.begin_render_pass(render_pass, swapchain_framebuffers[index], win.get_dims(), {{0, 0, 0, 1}, {1.0f, 0}});
 
+        // Draw skybox
+        cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, skybox_pipeline);
+        const float4x4 identity_matrix = translation_matrix(float3{0,0,0});
+        auto per_object = pool.allocate_descriptor_set(per_object_layout);
+        per_object.write_uniform_buffer(0, 0, identity_matrix);
+        cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
+
+        cmd.bind_vertex_buffer(0, *skybox_mesh.vertex_buffer, 0);
+        cmd.bind_index_buffer(*skybox_mesh.index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
+        cmd.draw_indexed(skybox_mesh.index_count);
+
+        // Draw meshes
         cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         for(auto & m : meshes)
         {
             for(int i=0; i<9; ++i)
             {
-                const float4x4 model_matrix = linalg::translation_matrix(float3{i*10.0f-40,0,0});
+                const float4x4 model_matrix = translation_matrix(float3{i*10.0f-40,0,0});
 
                 auto per_object = pool.allocate_descriptor_set(per_object_layout);
                 per_object.write_uniform_buffer(0, 0, model_matrix);
                 per_object.write_combined_image_sampler(1, 0, sampler, albedo_tex);
                 per_object.write_combined_image_sampler(2, 0, sampler, normal_tex);
                 per_object.write_combined_image_sampler(3, 0, sampler, metallic_tex);
-                per_object.write_combined_image_sampler(4, 0, sampler, env_tex);
                 cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
 
                 cmd.bind_vertex_buffer(0, *m.vertex_buffer, 0);
@@ -218,12 +246,16 @@ int main() try
     vkDeviceWaitIdle(ctx.device);
     vkDestroySampler(ctx.device, sampler, nullptr);
     vkDestroyPipeline(ctx.device, pipeline, nullptr);
+    vkDestroyPipeline(ctx.device, skybox_pipeline, nullptr);
     vkDestroyPipelineLayout(ctx.device, pipeline_layout, nullptr);
+    vkDestroyPipelineLayout(ctx.device, skybox_pipeline_layout, nullptr);
     vkDestroyDescriptorSetLayout(ctx.device, per_object_layout, nullptr);
     vkDestroyDescriptorSetLayout(ctx.device, per_view_layout, nullptr);
     vkDestroyDescriptorSetLayout(ctx.device, per_scene_layout, nullptr);
     vkDestroyShaderModule(ctx.device, vert_shader, nullptr);
     vkDestroyShaderModule(ctx.device, frag_shader, nullptr);
+    vkDestroyShaderModule(ctx.device, skybox_vert_shader, nullptr);
+    vkDestroyShaderModule(ctx.device, skybox_frag_shader, nullptr);
     for(auto framebuffer : swapchain_framebuffers) vkDestroyFramebuffer(ctx.device, framebuffer, nullptr);
     vkDestroyRenderPass(ctx.device, render_pass, nullptr);    
     return EXIT_SUCCESS;

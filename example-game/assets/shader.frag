@@ -6,7 +6,6 @@
 layout(set=2, binding=1) uniform sampler2D u_albedo;
 layout(set=2, binding=2) uniform sampler2D u_normal;
 layout(set=2, binding=3) uniform sampler2D u_metallic;
-layout(set=2, binding=4) uniform samplerCube u_env;
 
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec3 normal;

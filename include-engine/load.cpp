@@ -2,19 +2,6 @@
 #include <fstream>
 #include <algorithm>
 
-std::vector<uint32_t> load_spirv_binary(const char * path)
-{
-    FILE * f = fopen(path, "rb");
-    if(!f) throw std::runtime_error(std::string("failed to open ") + path);
-    fseek(f, 0, SEEK_END);
-    auto len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    std::vector<uint32_t> words(len/4);
-    if(fread(words.data(), sizeof(uint32_t), words.size(), f) != words.size()) throw std::runtime_error(std::string("failed to read ") + path);
-    fclose(f);
-    return words;
-}
-
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
@@ -24,6 +11,18 @@ image load_image(const char * filename)
     auto p = stbi_load(filename, &x, &y, nullptr, 4);
     if(!p) throw std::runtime_error(std::string("failed to load ") + filename);
     return image{x, y, std::unique_ptr<void, std_free_deleter>(p)};
+}
+
+mesh generate_box_mesh(const float3 & a, const float3 & b)
+{
+    return {{
+        {{a.z,a.x,a.y}, {-1,0,0}, {0,0}}, {{a.z,b.x,a.y}, {-1,0,0}, {1,0}}, {{a.z,b.x,b.y}, {-1,0,0}, {1,1}}, {{a.z,a.x,b.y}, {-1,0,0}, {0,1}},
+        {{b.z,b.x,a.y}, {+1,0,0}, {0,0}}, {{b.z,a.x,a.y}, {+1,0,0}, {1,0}}, {{b.z,a.x,b.y}, {+1,0,0}, {1,1}}, {{b.z,b.x,b.y}, {+1,0,0}, {0,1}},
+        {{a.y,a.z,a.x}, {0,-1,0}, {0,0}}, {{a.y,a.z,b.x}, {0,-1,0}, {1,0}}, {{b.y,a.z,b.x}, {0,-1,0}, {1,1}}, {{b.y,a.z,a.x}, {0,-1,0}, {0,1}},
+        {{a.y,b.z,b.x}, {0,+1,0}, {0,0}}, {{a.y,b.z,a.x}, {0,+1,0}, {1,0}}, {{b.y,b.z,a.x}, {0,+1,0}, {1,1}}, {{b.y,b.z,b.x}, {0,+1,0}, {0,1}},
+        {{a.x,a.y,a.z}, {0,0,-1}, {0,0}}, {{b.x,a.y,a.z}, {0,0,-1}, {1,0}}, {{b.x,b.y,a.z}, {0,0,-1}, {1,1}}, {{a.x,b.y,a.z}, {0,0,-1}, {0,1}},
+        {{b.x,a.y,b.z}, {0,0,+1}, {0,0}}, {{a.x,a.y,b.z}, {0,0,+1}, {1,0}}, {{a.x,b.y,b.z}, {0,0,+1}, {1,1}}, {{b.x,b.y,b.z}, {0,0,+1}, {0,1}},
+    }, {{0,1,2},{0,2,3},{4,5,6},{4,6,7},{8,9,10},{8,10,11},{12,13,14},{12,14,15},{16,17,18},{16,18,19},{20,21,22},{20,22,23}}};
 }
 
 #include "fbx.h"
@@ -148,20 +147,27 @@ shader_compiler::~shader_compiler()
     glslang::FinalizeProcess();
 }
 
-std::vector<uint32_t> shader_compiler::compile_glsl(const char * filename)
-{
-    auto buffer = load_text_file(filename);
+std::vector<uint32_t> shader_compiler::compile_glsl(VkShaderStageFlagBits stage, const char * filename)
+{    
+    glslang::TShader shader([stage]()
+    {
+        switch(stage)
+        {
+        case VK_SHADER_STAGE_VERTEX_BIT: return EShLangVertex;
+        case VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT: return EShLangTessControl;
+        case VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT: return EShLangTessEvaluation;
+        case VK_SHADER_STAGE_GEOMETRY_BIT: return EShLangGeometry;
+        case VK_SHADER_STAGE_FRAGMENT_BIT: return EShLangFragment;
+        case VK_SHADER_STAGE_COMPUTE_BIT: return EShLangCompute;
+        default: throw std::logic_error("bad stage");
+        }
+    }());    
 
-    const size_t len = strlen(filename);
-    EShLanguage lang;
-    if(filename[len-4] == 'v') lang = EShLanguage::EShLangVertex;
-    else if(filename[len-4] == 'f') lang = EShLanguage::EShLangFragment;
-    else throw std::runtime_error("unknown shader stage");
-    
-    glslang::TShader shader(lang);
+    auto buffer = load_text_file(filename);
     const char * s = buffer.data();
     int l = buffer.size();
     shader.setStringsWithLengthsAndNames(&s, &l, &filename, 1);
+
     if(!shader.parse(&glslang::DefaultTBuiltInResource, 450, ENoProfile, false, false, static_cast<EShMessages>(EShMsgSpvRules|EShMsgVulkanRules), *impl))
     {
         throw std::runtime_error(std::string("GLSL compile failure: ") + shader.getInfoLog());
@@ -175,6 +181,6 @@ std::vector<uint32_t> shader_compiler::compile_glsl(const char * filename)
     }
 
     std::vector<uint32_t> spirv;
-    glslang::GlslangToSpv(*program.getIntermediate(lang), spirv, nullptr);
+    glslang::GlslangToSpv(*program.getIntermediate(shader.getStage()), spirv, nullptr);
     return spirv;
 }
