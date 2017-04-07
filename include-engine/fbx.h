@@ -19,7 +19,7 @@ namespace fbx
         explicit operator bool() const { return static_cast<bool>(byte & 1); } 
     };
 
-    using property = std::variant
+    using property_variant = std::variant
     <
         boolean,               // type 'C'
         int16_t,               // type 'Y'
@@ -36,6 +36,35 @@ namespace fbx
         std::string,           // type 'S'
         std::vector<uint8_t>   // type 'R'
     >;
+
+    class property
+    {
+        property_variant contents;
+
+        struct vector_size_visitor
+        {
+            template<class T> size_t operator() (const std::vector<T> & v) { return v.size(); }
+            size_t operator() (...) { return 1; }
+        };
+
+        template<class U> struct vector_element_visitor
+        {
+            size_t index;
+            template<class T> U operator() (const std::vector<T> & v) { return static_cast<U>(v[index]); }
+            U operator() (const std::vector<boolean> & v) { return static_cast<U>(v[index] ? 1 : 0); }
+            U operator() (int32_t n) { return static_cast<U>(n); }
+            U operator() (int64_t n) { return static_cast<U>(n); }
+            U operator() (double n) { return static_cast<U>(n); }
+            U operator() (...) { return {}; }
+        };
+    public:
+        property(property_variant && contents) : contents{move(contents)} {}
+        
+        size_t size() const { return std::visit(vector_size_visitor{}, contents); }
+        template<class U> U get(size_t i=0) const { return std::visit(vector_element_visitor<U>{i}, contents); }
+        const std::string & get_string() const { return std::get<std::string>(contents); }
+        void print(std::ostream & out) const;
+    };
 
     struct node
     {

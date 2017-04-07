@@ -65,27 +65,27 @@ namespace fbx
             const auto length = read<uint32_t>(in, "length");
             std::string string(length, ' ');
             if(!in.read(&string[0], length)) throw std::runtime_error("failed to read string");
-            return string;
+            return {string};
         }
         else if(type == 'R')
         {
             const auto length = read<uint32_t>(in, "length");
             std::vector<uint8_t> raw(length);
             if(!in.read(reinterpret_cast<char *>(raw.data()), length)) throw std::runtime_error("failed to read raw data");
-            return raw;
+            return {raw};
         }
-        else if(type == 'C') return read_scalar<boolean>(in);
-        else if(type == 'Y') return read_scalar<int16_t>(in);
-        else if(type == 'I') return read_scalar<int32_t>(in);
-        else if(type == 'L') return read_scalar<int64_t>(in);
-        else if(type == 'F') return read_scalar<float>(in);
-        else if(type == 'D') return read_scalar<double>(in);
-        else if(type == 'b') return read_array<boolean>(in);
-        else if(type == 'y') return read_array<int16_t>(in);
-        else if(type == 'i') return read_array<int32_t>(in);
-        else if(type == 'l') return read_array<int64_t>(in);
-        else if(type == 'f') return read_array<float>(in);
-        else if(type == 'd') return read_array<double>(in);
+        else if(type == 'C') return {read_scalar<boolean>(in)};
+        else if(type == 'Y') return {read_scalar<int16_t>(in)};
+        else if(type == 'I') return {read_scalar<int32_t>(in)};
+        else if(type == 'L') return {read_scalar<int64_t>(in)};
+        else if(type == 'F') return {read_scalar<float>(in)};
+        else if(type == 'D') return {read_scalar<double>(in)};
+        else if(type == 'b') return {read_array<boolean>(in)};
+        else if(type == 'y') return {read_array<int16_t>(in)};
+        else if(type == 'i') return {read_array<int32_t>(in)};
+        else if(type == 'l') return {read_array<int64_t>(in)};
+        else if(type == 'f') return {read_array<float>(in)};
+        else if(type == 'd') return {read_array<double>(in)};
         else 
         {
             std::ostringstream ss;
@@ -213,22 +213,22 @@ namespace fbx
         }
     }
 
-    std::optional<fbx::property> parse_property(FILE * f)
+    std::optional<property> parse_property(FILE * f)
     {
         skip_whitespace(f);
         int ch = fgetc(f);
 
         // Boolean (TODO: Fix ambiguity)
-        if(ch == 'F') return boolean{0};
-        if(ch == 'T') return boolean{1};        
+        if(ch == 'F') return property{boolean{0}};
+        if(ch == 'T') return property{boolean{1}};
 
         // Number
         if(isdigit(ch) || ch == '-')
         {
             ungetc(ch, f);
             auto s = parse_token(f);
-            if(auto n = parse_number<int64_t>(s)) return *n;
-            if(auto d = parse_number<double>(s)) return *d;
+            if(auto n = parse_number<int64_t>(s)) return property{*n};
+            if(auto d = parse_number<double>(s)) return property{*d};
             throw std::runtime_error("not a number: "+s);
         }
 
@@ -239,7 +239,7 @@ namespace fbx
             while(true)
             {
                 ch = fgetc(f);
-                if(ch == '"') return s;
+                if(ch == '"') return property{s};
                 s += ch;
             }
         }
@@ -265,7 +265,7 @@ namespace fbx
                 if(i+1 < len && ch != ',') throw std::runtime_error("missing ,");
                 if(i+1 == len && ch != '}') throw std::runtime_error("missing }");            
             }
-            return contents;
+            return property{contents};
         }
 
         // Not a property
@@ -350,9 +350,9 @@ namespace fbx
         }
     }
 
-    template<class T, int M> void decode_attribute(linalg::vec<T,M> & attribute, const std::vector<double> & array, size_t index) 
+    template<class T, int M> void decode_attribute(linalg::vec<T,M> & attribute, const property & array, size_t index) 
     {
-        for(int j=0; j<M; ++j) attribute[j] = static_cast<T>(array[index*M+j]);
+        for(int j=0; j<M; ++j) attribute[j] = array.get<T>(index*M+j);
     }
 
     template<class T> constexpr T rad_to_deg = static_cast<T>(57.295779513082320876798154814105);
@@ -364,32 +364,11 @@ namespace fbx
         throw std::runtime_error("missing node " + std::string(name));
     }
 
-    struct vector_size_visitor
-    {
-        template<class T> size_t operator() (const std::vector<T> & v) { return v.size(); }
-        size_t operator() (...) { return 0; }
-    };
-
-    template<class U> struct vector_element_visitor
-    {
-        size_t index;
-        template<class T> U operator() (const std::vector<T> & v) { return static_cast<U>(v[index]); }
-        U operator() (const std::vector<boolean> & v) { return static_cast<U>(v[index] ? 1 : 0); }
-        U operator() (int32_t n) { return static_cast<U>(n); }
-        U operator() (int64_t n) { return static_cast<U>(n); }
-        U operator() (double n) { return static_cast<U>(n); }
-        U operator() (...) { return {}; }
-    };
-
-    size_t get_vector_size(const property & p) { return std::visit(vector_size_visitor{}, p); }
-    template<class U> U get_vector_element(const property & p, size_t i) { return std::visit(vector_element_visitor<U>{i}, p); }
-    template<class U> U get_property(const property & p) { return std::visit(vector_element_visitor<U>{0}, p); }
-
     template<class V, class T, int M> void decode_layer(std::vector<V> & vertices, linalg::vec<T,M> V::*attribute, const fbx::node & node, std::string_view array_name) 
     {
-        auto & array = std::get<std::vector<double>>(find(node.children, array_name).properties[0]);
-        auto mapping_information_type = std::get<std::string>(find(node.children, "MappingInformationType").properties[0]);
-        auto reference_information_type = std::get<std::string>(find(node.children, "ReferenceInformationType").properties[0]);
+        auto & array = find(node.children, array_name).properties[0];
+        auto mapping_information_type = find(node.children, "MappingInformationType").properties[0].get_string();
+        auto reference_information_type = find(node.children, "ReferenceInformationType").properties[0].get_string();
         if(mapping_information_type == "ByPolygonVertex") 
         {
             if(reference_information_type == "Direct")
@@ -399,7 +378,7 @@ namespace fbx
             else if(reference_information_type == "IndexToDirect")
             {
                 auto & index_array = find(node.children, std::string(array_name) + "Index").properties[0];
-                for(size_t i=0; i<vertices.size(); ++i) decode_attribute(vertices[i].*attribute, array, get_vector_element<size_t>(index_array, i));
+                for(size_t i=0; i<vertices.size(); ++i) decode_attribute(vertices[i].*attribute, array, index_array.get<size_t>(i));
             }
             else throw std::runtime_error("unsupported ReferenceInformationType: " + reference_information_type);    
         }
@@ -409,23 +388,23 @@ namespace fbx
 
     geometry::geometry(const fbx::node & node)
     {
-        id = std::get<int64_t>(node.properties[0]);
+        id = node.properties[0].get<int64_t>();
 
         // Obtain vertices
         auto & vertices_node = find(node.children, "Vertices");
         if(vertices_node.properties.size() != 1) throw std::runtime_error("malformed Vertices");
-        auto & vertices_array = std::get<std::vector<double>>(vertices_node.properties[0]);
+        auto & vertices_array = vertices_node.properties[0];
         std::vector<float3> vertex_positions;
-        for(size_t i=0; i<vertices_array.size(); i+=3) vertex_positions.push_back(float3{double3{vertices_array[i], vertices_array[i+1], vertices_array[i+2]}});
+        for(size_t i=0; i<vertices_array.size(); i+=3) vertex_positions.push_back({vertices_array.get<float>(i), vertices_array.get<float>(i+1), vertices_array.get<float>(i+2)});
 
         // Obtain polygons
         auto & indices_node = find(node.children, "PolygonVertexIndex");
         if(indices_node.properties.size() != 1) throw std::runtime_error("malformed PolygonVertexIndex");
 
         size_t polygon_start = 0;
-        for(size_t j=0, n=get_vector_size(indices_node.properties[0]); j<n; ++j)
+        for(size_t j=0, n=indices_node.properties[0].size(); j<n; ++j)
         {
-            auto i = get_vector_element<int32_t>(indices_node.properties[0], j);
+            auto i = indices_node.properties[0].get<int32_t>(j);
 
             // Detect end-of-polygon, indicated by a negative index
             const bool end_of_polygon = i < 0;
@@ -452,23 +431,23 @@ namespace fbx
 
     float3 read_vector3d_property(const fbx::node & prop)
     {
-        return float3{double3{get_property<double>(prop.properties[4]), get_property<double>(prop.properties[5]), get_property<double>(prop.properties[6])}};
+        return {prop.properties[4].get<float>(), prop.properties[5].get<float>(), prop.properties[6].get<float>()};
     }
 
     model::model(const fbx::node & node)
     {
-        id = std::get<int64_t>(node.properties[0]);
+        id = node.properties[0].get<int64_t>();
 
         auto & prop70 = find(node.children, "Properties70"); // TODO: Is this version dependant?
         for(auto & p : prop70.children)
         {
             if(p.name != "P") continue;
-            auto & prop_name = std::get<std::string>(p.properties[0]);
+            auto & prop_name = p.properties[0].get_string();
             if(prop_name == "RotationOffset") rotation_offset = read_vector3d_property(p);
             if(prop_name == "RotationPivot") rotation_pivot = read_vector3d_property(p);
             if(prop_name == "ScalingOffset") scaling_offset = read_vector3d_property(p);
             if(prop_name == "ScalingPivot") scaling_pivot = read_vector3d_property(p);
-            if(prop_name == "RotationOrder") rotation_order = static_cast<fbx::rotation_order>(std::get<int32_t>(p.properties[4])); // Note: Just a guess, need to see one of these in the wild
+            if(prop_name == "RotationOrder") rotation_order = static_cast<fbx::rotation_order>(p.properties[4].get<int32_t>()); // Note: Just a guess, need to see one of these in the wild
             if(prop_name == "PreRotation") pre_rotation = read_vector3d_property(p) * deg_to_rad<float>;
             if(prop_name == "PostRotation") post_rotation = read_vector3d_property(p) * deg_to_rad<float>;
             if(prop_name == "Lcl Translation") translation = read_vector3d_property(p);
@@ -541,8 +520,8 @@ namespace fbx
         for(auto & n : find(doc.nodes, "Connections").children)
         {
             if(n.name != "C") continue;
-            if(std::get<std::string>(n.properties[0]) != "OO") continue; // Object-to-object connection
-            auto a = std::get<int64_t>(n.properties[1]), b = std::get<int64_t>(n.properties[2]);
+            if(n.properties[0].get_string() != "OO") continue; // Object-to-object connection
+            auto a = n.properties[1].get<int64_t>(), b = n.properties[2].get<int64_t>();
             for(auto & m : models)
             {
                 if(m.id == b)
@@ -562,6 +541,19 @@ namespace fbx
     }
 }
 
+struct fbx_property_printer
+{
+    std::ostream & out;
+
+    void operator() (const std::string & string) { out << '"' << string << '"'; }
+    template<class T> void operator() (const T & scalar) { out << scalar; }    
+    template<class T> void operator() (const std::vector<T> & array) { out << typeid(T).name() << '[' << array.size() << ']'; }
+};
+void fbx::property::print(std::ostream & out) const
+{
+    std::visit(fbx_property_printer{out}, contents);
+}
+
 std::ostream & operator << (std::ostream & out, const fbx::boolean & b) { return out << (b ? "true" : "false"); }
-std::ostream & operator << (std::ostream & out, const fbx::property & p) { std::visit(fbx::property_printer{out}, p); return out; }
+std::ostream & operator << (std::ostream & out, const fbx::property & p) { p.print(out); return out; }
 std::ostream & operator << (std::ostream & out, const fbx::node & n) { fbx::print(out, 0, n); return out; }
