@@ -3,8 +3,14 @@
 #include <sstream>
 #include <zlib.h>
 
+#include <iostream>
+
 namespace fbx
 {
+    ///////////////////////////////
+    // Binary file format reader //
+    ///////////////////////////////
+
     template<class T> T read(std::istream & in, const char * desc)
     {
         T value;
@@ -149,6 +155,179 @@ namespace fbx
         return {read<uint32_t>(in, "version"), read_node_list(in)};
     }
 
+    //////////////////////////////
+    // ASCII file format reader //
+    //////////////////////////////
+
+    template<class T> std::optional<T> parse_number(const std::string & s)
+    {
+        std::istringstream in(s);
+        T number;
+        if(!(in >> number)) return std::nullopt;
+        in.get();
+        if(!in.eof()) return std::nullopt;
+        return number;
+    }
+
+    void skip_whitespace(FILE * f)
+    {
+        while(true)
+        {
+            if(feof(f)) return;
+            int ch = fgetc(f);
+            if(isspace(ch)) continue;
+            if(ch == ';')
+            {
+                while(!feof(f) && ch != '\n') ch = fgetc(f);
+                continue;
+            }
+            ungetc(ch, f);
+            return;
+        }
+    }
+
+    std::string parse_key(FILE * f)
+    {
+        std::string s;
+        while(true)
+        {
+            if(feof(f)) throw std::runtime_error("missing ':' after "+s);
+            int ch = fgetc(f);
+            if(ch == ':') return s;
+            s += ch;
+        }
+    }
+
+    std::string parse_token(FILE * f)
+    {
+        std::string s;
+        while(true)
+        {
+            int ch = fgetc(f);
+            if(isspace(ch) || ch == ',') 
+            {
+                ungetc(ch, f);
+                return s;
+            }
+            s.push_back(ch);
+        }
+    }
+
+    std::optional<fbx::property> parse_property(FILE * f)
+    {
+        skip_whitespace(f);
+        int ch = fgetc(f);
+
+        // Boolean (TODO: Fix ambiguity)
+        if(ch == 'F') return boolean{0};
+        if(ch == 'T') return boolean{1};        
+
+        // Number
+        if(isdigit(ch) || ch == '-')
+        {
+            ungetc(ch, f);
+            auto s = parse_token(f);
+            if(auto n = parse_number<int64_t>(s)) return *n;
+            if(auto d = parse_number<double>(s)) return *d;
+            throw std::runtime_error("not a number: "+s);
+        }
+
+        // String
+        if(ch == '"')
+        {
+            std::string s;
+            while(true)
+            {
+                ch = fgetc(f);
+                if(ch == '"') return s;
+                s += ch;
+            }
+        }
+
+        // Array
+        if(ch == '*')
+        {
+            auto s = parse_token(f);
+            auto len = parse_number<size_t>(s);
+            if(!len) throw std::runtime_error("invalid array length: "+s);
+            skip_whitespace(f);
+            if(fgetc(f) != '{') throw std::runtime_error("missing array contents");
+            skip_whitespace(f);
+            if(parse_key(f) != "a") throw std::runtime_error("missing array contents");
+            std::vector<double> contents(*len);
+            for(size_t i=0; i<contents.size(); ++i)
+            {
+                skip_whitespace(f);
+                if(auto d = parse_number<double>(parse_token(f))) contents[i] = *d;
+                else throw std::runtime_error("not a number: "+s);
+                skip_whitespace(f);
+                int ch = fgetc(f);
+                if(i+1 < len && ch != ',') throw std::runtime_error("missing ,");
+                if(i+1 == len && ch != '}') throw std::runtime_error("missing }");            
+            }
+            return contents;
+        }
+
+        // Not a property
+        ungetc(ch, f);
+        return std::nullopt;
+    }
+
+    fbx::node parse_node(FILE * f)
+    {
+        skip_whitespace(f);
+        fbx::node node;
+        node.name = parse_key(f);
+        while(true)
+        {
+            if(auto prop = parse_property(f))
+            {
+                node.properties.push_back(*prop);
+
+                skip_whitespace(f);
+                int ch = fgetc(f);
+                if(ch == ',') continue;
+                ungetc(ch, f);
+            }
+            break;
+        }
+
+        skip_whitespace(f);
+        int ch = fgetc(f);
+        if(ch == '{')
+        {
+            while(true)
+            {
+                skip_whitespace(f);
+                int ch = fgetc(f);
+                if(ch == '}') 
+                {
+                    break;
+                }
+                ungetc(ch, f);
+                node.children.push_back(parse_node(f));
+            }
+        }
+        else ungetc(ch, f);
+        return node;
+    }
+
+    document load_ascii(FILE * f)
+    {
+        document doc {};
+        while(true) 
+        {
+            skip_whitespace(f);
+            if(feof(f)) break;
+            doc.nodes.push_back(parse_node(f));
+        }
+        return doc;
+    }
+
+    ///////////
+    // Other //
+    ///////////
+
     struct property_printer
     {
         std::ostream & out;
@@ -185,6 +364,27 @@ namespace fbx
         throw std::runtime_error("missing node " + std::string(name));
     }
 
+    struct vector_size_visitor
+    {
+        template<class T> size_t operator() (const std::vector<T> & v) { return v.size(); }
+        size_t operator() (...) { return 0; }
+    };
+
+    template<class U> struct vector_element_visitor
+    {
+        size_t index;
+        template<class T> U operator() (const std::vector<T> & v) { return static_cast<U>(v[index]); }
+        U operator() (const std::vector<boolean> & v) { return static_cast<U>(v[index] ? 1 : 0); }
+        U operator() (int32_t n) { return static_cast<U>(n); }
+        U operator() (int64_t n) { return static_cast<U>(n); }
+        U operator() (double n) { return static_cast<U>(n); }
+        U operator() (...) { return {}; }
+    };
+
+    size_t get_vector_size(const property & p) { return std::visit(vector_size_visitor{}, p); }
+    template<class U> U get_vector_element(const property & p, size_t i) { return std::visit(vector_element_visitor<U>{i}, p); }
+    template<class U> U get_property(const property & p) { return std::visit(vector_element_visitor<U>{0}, p); }
+
     template<class V, class T, int M> void decode_layer(std::vector<V> & vertices, linalg::vec<T,M> V::*attribute, const fbx::node & node, std::string_view array_name) 
     {
         auto & array = std::get<std::vector<double>>(find(node.children, array_name).properties[0]);
@@ -198,8 +398,8 @@ namespace fbx
             }
             else if(reference_information_type == "IndexToDirect")
             {
-                auto & index_array = std::get<std::vector<int>>(find(node.children, std::string(array_name) + "Index").properties[0]);
-                for(size_t i=0; i<vertices.size(); ++i) decode_attribute(vertices[i].*attribute, array, static_cast<size_t>(index_array[i]));
+                auto & index_array = find(node.children, std::string(array_name) + "Index").properties[0];
+                for(size_t i=0; i<vertices.size(); ++i) decode_attribute(vertices[i].*attribute, array, get_vector_element<size_t>(index_array, i));
             }
             else throw std::runtime_error("unsupported ReferenceInformationType: " + reference_information_type);    
         }
@@ -223,8 +423,10 @@ namespace fbx
         if(indices_node.properties.size() != 1) throw std::runtime_error("malformed PolygonVertexIndex");
 
         size_t polygon_start = 0;
-        for(auto i : std::get<std::vector<int32_t>>(indices_node.properties[0]))
+        for(size_t j=0, n=get_vector_size(indices_node.properties[0]); j<n; ++j)
         {
+            auto i = get_vector_element<int32_t>(indices_node.properties[0], j);
+
             // Detect end-of-polygon, indicated by a negative index
             const bool end_of_polygon = i < 0;
             if(end_of_polygon) i = ~i;
@@ -250,7 +452,7 @@ namespace fbx
 
     float3 read_vector3d_property(const fbx::node & prop)
     {
-        return float3{double3{std::get<double>(prop.properties[4]), std::get<double>(prop.properties[5]), std::get<double>(prop.properties[6])}};
+        return float3{double3{get_property<double>(prop.properties[4]), get_property<double>(prop.properties[5]), get_property<double>(prop.properties[6])}};
     }
 
     model::model(const fbx::node & node)

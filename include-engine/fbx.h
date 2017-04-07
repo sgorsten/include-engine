@@ -51,6 +51,7 @@ namespace fbx
     };
 
     document load(std::istream & in);
+    document load_ascii(FILE * f);
 
     /////////////////////
     // FBX Scene Graph //

@@ -1,5 +1,6 @@
 #include "vulkan.h"
 #include "load.h"
+#include "fbx.h"
 #include <fstream>
 #include <iostream>
 #include <chrono>
@@ -73,7 +74,7 @@ int main() try
         }
     };
     std::vector<gfx_mesh> meshes;
-    for(auto & m : load_meshes_from_fbx("assets/helmet-mesh.fbx"))
+    for(auto & m : load_meshes_from_fbx("assets/jincho.fbx"))
     {
         meshes.push_back({ctx, m});
     }
