@@ -166,33 +166,11 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
-    <None Include="assets\shader.frag">
-      <FileType>Document</FileType>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%Vulkan_SDK%/Bin32/glslangValidator.exe -V %(FullPath) -o %(FullPath).spv</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%Vulkan_SDK%/Bin32/glslangValidator.exe -V %(FullPath) -o %(FullPath).spv</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%Vulkan_SDK%/Bin32/glslangValidator.exe -V %(FullPath) -o %(FullPath).spv</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%Vulkan_SDK%/Bin32/glslangValidator.exe -V %(FullPath) -o %(FullPath).spv</Command>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(FullPath).spv</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(FullPath).spv</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(FullPath).spv</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(FullPath).spv</Outputs>
-    </None>
-    <None Include="assets\static.vert">
-      <FileType>Document</FileType>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%Vulkan_SDK%/Bin32/glslangValidator.exe -V %(FullPath) -o %(FullPath).spv</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%Vulkan_SDK%/Bin32/glslangValidator.exe -V %(FullPath) -o %(FullPath).spv</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%Vulkan_SDK%/Bin32/glslangValidator.exe -V %(FullPath) -o %(FullPath).spv</Command>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%Vulkan_SDK%/Bin32/glslangValidator.exe -V %(FullPath) -o %(FullPath).spv</Command>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(FullPath).spv</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(FullPath).spv</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(FullPath).spv</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(FullPath).spv</Outputs>
-    </None>
+    <None Include="assets\shader.frag" />
+    <None Include="assets\static.vert" />
     <None Include="assets\skybox.frag" />
     <None Include="assets\skybox.vert" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="assets\scene.glsl" />
+	<None Include="assets\scene.glsl" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
