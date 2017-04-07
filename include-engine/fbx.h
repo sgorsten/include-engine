@@ -41,27 +41,25 @@ namespace fbx
     {
         property_variant contents;
 
-        struct vector_size_visitor
+        struct size_visitor
         {
             template<class T> size_t operator() (const std::vector<T> & v) { return v.size(); }
             size_t operator() (...) { return 1; }
         };
 
-        template<class U> struct vector_element_visitor
+        template<class U> struct element_visitor
         {
             size_t index;
-            template<class T> U operator() (const std::vector<T> & v) { return static_cast<U>(v[index]); }
-            U operator() (const std::vector<boolean> & v) { return static_cast<U>(v[index] ? 1 : 0); }
-            U operator() (int32_t n) { return static_cast<U>(n); }
-            U operator() (int64_t n) { return static_cast<U>(n); }
-            U operator() (double n) { return static_cast<U>(n); }
-            U operator() (...) { return {}; }
+            template<class T> U operator() (const std::vector<T> & v) { return operator()(v[index]); }
+            template<class T> U operator() (const T & n) { return static_cast<U>(n); }
+            U operator() (const std::string & s) { return {}; }
+            U operator() (const boolean & b) { return b ? U{1} : U{0}; }
         };
     public:
         property(property_variant && contents) : contents{move(contents)} {}
         
-        size_t size() const { return std::visit(vector_size_visitor{}, contents); }
-        template<class U> U get(size_t i=0) const { return std::visit(vector_element_visitor<U>{i}, contents); }
+        size_t size() const { return std::visit(size_visitor{}, contents); }
+        template<class U> U get(size_t i=0) const { return std::visit(element_visitor<U>{i}, contents); }
         const std::string & get_string() const { return std::get<std::string>(contents); }
         void print(std::ostream & out) const;
     };

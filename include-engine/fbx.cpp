@@ -144,10 +144,6 @@ namespace fbx
 
     document load(std::istream & in)
     {
-        in.seekg(0, std::istream::end);
-        uint32_t file_len = in.tellg();
-        in.seekg(0, std::istream::beg);
-
         char header[23] {};
         if(!in.read(header, sizeof(header))) throw std::runtime_error("failed to read header");
         if(strcmp("Kaydara FBX Binary  ", header)) throw std::runtime_error("not an FBX Binary file");

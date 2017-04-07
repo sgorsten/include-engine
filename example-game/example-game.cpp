@@ -33,8 +33,8 @@ int main() try
     texture_2d black_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({0,0,0,255}));
     texture_2d gray_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({128,128,128,255}));
     texture_2d flat_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({128,128,255,255}));
-    texture_2d albedo_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-albedo.jpg"));
-    texture_2d normal_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-normal.jpg"));
+    texture_2d albedo_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/mutant-albedo.jpg")); //"assets/helmet-albedo.jpg"));
+    texture_2d normal_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/mutant-normal.jpg")); //helmet-normal.jpg"));
     texture_2d metallic_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-metallic.jpg"));
     texture_cube env_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, 
         load_image("assets/posx.jpg"), load_image("assets/negx.jpg"), 
@@ -74,7 +74,7 @@ int main() try
         }
     };
     std::vector<gfx_mesh> meshes;
-    for(auto & m : load_meshes_from_fbx("assets/jincho.fbx"))
+    for(auto & m : load_meshes_from_fbx("assets/mutant-mesh.fbx"))
     {
         meshes.push_back({ctx, m});
     }
@@ -224,18 +224,14 @@ int main() try
         cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         for(auto & m : meshes)
         {
-            for(int i=0; i<9; ++i)
-            {
-                const float4x4 model_matrix = translation_matrix(float3{i*10.0f-40,0,0});
-
-                auto per_object = pool.allocate_descriptor_set(per_object_layout);
-                per_object.write_uniform_buffer(0, 0, model_matrix);
-                per_object.write_combined_image_sampler(1, 0, sampler, albedo_tex);
-                per_object.write_combined_image_sampler(2, 0, sampler, normal_tex);
-                per_object.write_combined_image_sampler(3, 0, sampler, metallic_tex);
-                cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
-                m.draw(cmd);
-            }
+            const float4x4 model_matrix = translation_matrix(float3{0,0,0});
+            auto per_object = pool.allocate_descriptor_set(per_object_layout);
+            per_object.write_uniform_buffer(0, 0, model_matrix);
+            per_object.write_combined_image_sampler(1, 0, sampler, albedo_tex);
+            per_object.write_combined_image_sampler(2, 0, sampler, normal_tex);
+            per_object.write_combined_image_sampler(3, 0, sampler, metallic_tex);
+            cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
+            m.draw(cmd);
         }
 
 
