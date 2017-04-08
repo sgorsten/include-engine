@@ -1,323 +1,327 @@
 #include "fbx.h"
 #include <optional>
 #include <sstream>
+#include <map>
 #include <zlib.h>
 
 #include <iostream>
 
 namespace fbx
 {
-    ///////////////////////////////
-    // Binary file format reader //
-    ///////////////////////////////
-
-    template<class T> T read(std::istream & in, const char * desc)
+    namespace ast
     {
-        T value;
-        if(in.read(reinterpret_cast<char *>(&value), sizeof(T))) return value;
-        std::ostringstream ss;
-        ss << "failed to read " << desc;
-        throw std::runtime_error(ss.str());
-    }
+        ///////////////////////////////
+        // Binary file format reader //
+        ///////////////////////////////
 
-    template<class T> T read_scalar(std::istream & in)
-    {
-        return read<T>(in, typeid(T).name());
-    }
-
-    template<class T> std::vector<T> read_array(std::istream & in)
-    {
-        const auto array_length = read<uint32_t>(in, "array_length");
-        const auto encoding = read<uint32_t>(in, "encoding");
-        const auto compressed_length = read<uint32_t>(in, "compressed_length");
-
-        std::vector<T> elements(array_length);
-        if(encoding == 0)
+        template<class T> T read(std::istream & in, const char * desc)
         {
-            if(!in.read(reinterpret_cast<char *>(elements.data()), sizeof(T)*elements.size())) throw std::runtime_error("failed to read array data");
-            return elements;
-        }
-
-        if(encoding == 1)
-        {
-            std::vector<Byte> compressed(compressed_length);
-            if(!in.read(reinterpret_cast<char *>(compressed.data()), compressed.size())) throw std::runtime_error("failed to read compressed array data");
-            
-            z_stream strm {};
-            strm.next_in = compressed.data();
-            strm.avail_in = compressed.size();
-            strm.next_out = reinterpret_cast<Bytef *>(elements.data());
-            strm.avail_out = elements.size() * sizeof(T);
-            if(inflateInit(&strm) != Z_OK) throw std::runtime_error("inflateInit(...) failed");
-            if(inflate(&strm, Z_NO_FLUSH) == Z_STREAM_ERROR) throw std::runtime_error("inflate(...) failed");
-            if(inflateEnd(&strm) != Z_OK) throw std::runtime_error("inflateEnd(...) failed");
-            return elements;
-        }
-
-        throw std::runtime_error("unknown array encoding");
-    }
-
-    property read_property(std::istream & in)
-    {
-        const auto type = read<uint8_t>(in, "type");
-        if(type == 'S')
-        {
-            const auto length = read<uint32_t>(in, "length");
-            std::string string(length, ' ');
-            if(!in.read(&string[0], length)) throw std::runtime_error("failed to read string");
-            return {string};
-        }
-        else if(type == 'R')
-        {
-            const auto length = read<uint32_t>(in, "length");
-            std::vector<uint8_t> raw(length);
-            if(!in.read(reinterpret_cast<char *>(raw.data()), length)) throw std::runtime_error("failed to read raw data");
-            return {raw};
-        }
-        else if(type == 'C') return {read_scalar<boolean>(in)};
-        else if(type == 'Y') return {read_scalar<int16_t>(in)};
-        else if(type == 'I') return {read_scalar<int32_t>(in)};
-        else if(type == 'L') return {read_scalar<int64_t>(in)};
-        else if(type == 'F') return {read_scalar<float>(in)};
-        else if(type == 'D') return {read_scalar<double>(in)};
-        else if(type == 'b') return {read_array<boolean>(in)};
-        else if(type == 'y') return {read_array<int16_t>(in)};
-        else if(type == 'i') return {read_array<int32_t>(in)};
-        else if(type == 'l') return {read_array<int64_t>(in)};
-        else if(type == 'f') return {read_array<float>(in)};
-        else if(type == 'd') return {read_array<double>(in)};
-        else 
-        {
+            T value;
+            if(in.read(reinterpret_cast<char *>(&value), sizeof(T))) return value;
             std::ostringstream ss;
-            ss << "unknown property type '" << type << '\'';
+            ss << "failed to read " << desc;
             throw std::runtime_error(ss.str());
         }
-    }
 
-    std::vector<node> read_node_list(std::istream & in);
+        template<class T> T read_scalar(std::istream & in)
+        {
+            return read<T>(in, typeid(T).name());
+        }
 
-    std::optional<node> read_node(std::istream & in)
-    {
-        // Read node header
-        const auto end_offset           = read<uint32_t>(in, "end_offset");
-        const auto num_properties       = read<uint32_t>(in, "num_properties");
-        const auto property_list_len    = read<uint32_t>(in, "property_list_len");
-        const auto name_len             = read<uint8_t>(in, "name_len");
+        template<class T> std::vector<T> read_array(std::istream & in)
+        {
+            const auto array_length = read<uint32_t>(in, "array_length");
+            const auto encoding = read<uint32_t>(in, "encoding");
+            const auto compressed_length = read<uint32_t>(in, "compressed_length");
 
-        // If all header entries are zero, this is a null node (used to terminate lists of child nodes)
-        if(end_offset == 0 && num_properties == 0 && property_list_len == 0 && name_len == 0) return std::nullopt;
+            std::vector<T> elements(array_length);
+            if(encoding == 0)
+            {
+                if(!in.read(reinterpret_cast<char *>(elements.data()), sizeof(T)*elements.size())) throw std::runtime_error("failed to read array data");
+                return elements;
+            }
 
-        // Read name
-        node node;
-        node.name.resize(name_len);
+            if(encoding == 1)
+            {
+                std::vector<Byte> compressed(compressed_length);
+                if(!in.read(reinterpret_cast<char *>(compressed.data()), compressed.size())) throw std::runtime_error("failed to read compressed array data");
+            
+                z_stream strm {};
+                strm.next_in = compressed.data();
+                strm.avail_in = compressed.size();
+                strm.next_out = reinterpret_cast<Bytef *>(elements.data());
+                strm.avail_out = elements.size() * sizeof(T);
+                if(inflateInit(&strm) != Z_OK) throw std::runtime_error("inflateInit(...) failed");
+                if(inflate(&strm, Z_NO_FLUSH) == Z_STREAM_ERROR) throw std::runtime_error("inflate(...) failed");
+                if(inflateEnd(&strm) != Z_OK) throw std::runtime_error("inflateEnd(...) failed");
+                return elements;
+            }
+
+            throw std::runtime_error("unknown array encoding");
+        }
+
+        property read_property(std::istream & in)
+        {
+            const auto type = read<uint8_t>(in, "type");
+            if(type == 'S')
+            {
+                const auto length = read<uint32_t>(in, "length");
+                std::string string(length, ' ');
+                if(!in.read(&string[0], length)) throw std::runtime_error("failed to read string");
+                return {string};
+            }
+            else if(type == 'R')
+            {
+                const auto length = read<uint32_t>(in, "length");
+                std::vector<uint8_t> raw(length);
+                if(!in.read(reinterpret_cast<char *>(raw.data()), length)) throw std::runtime_error("failed to read raw data");
+                return {raw};
+            }
+            else if(type == 'C') return {read_scalar<boolean>(in)};
+            else if(type == 'Y') return {read_scalar<int16_t>(in)};
+            else if(type == 'I') return {read_scalar<int32_t>(in)};
+            else if(type == 'L') return {read_scalar<int64_t>(in)};
+            else if(type == 'F') return {read_scalar<float>(in)};
+            else if(type == 'D') return {read_scalar<double>(in)};
+            else if(type == 'b') return {read_array<boolean>(in)};
+            else if(type == 'y') return {read_array<int16_t>(in)};
+            else if(type == 'i') return {read_array<int32_t>(in)};
+            else if(type == 'l') return {read_array<int64_t>(in)};
+            else if(type == 'f') return {read_array<float>(in)};
+            else if(type == 'd') return {read_array<double>(in)};
+            else 
+            {
+                std::ostringstream ss;
+                ss << "unknown property type '" << type << '\'';
+                throw std::runtime_error(ss.str());
+            }
+        }
+
+        std::vector<node> read_node_list(std::istream & in);
+
+        std::optional<node> read_node(std::istream & in)
+        {
+            // Read node header
+            const auto end_offset           = read<uint32_t>(in, "end_offset");
+            const auto num_properties       = read<uint32_t>(in, "num_properties");
+            const auto property_list_len    = read<uint32_t>(in, "property_list_len");
+            const auto name_len             = read<uint8_t>(in, "name_len");
+
+            // If all header entries are zero, this is a null node (used to terminate lists of child nodes)
+            if(end_offset == 0 && num_properties == 0 && property_list_len == 0 && name_len == 0) return std::nullopt;
+
+            // Read name
+            node node;
+            node.name.resize(name_len);
         
-        if(!in.read(&node.name[0], name_len)) throw std::runtime_error("failed to read name");
+            if(!in.read(&node.name[0], name_len)) throw std::runtime_error("failed to read name");
        
-        // Read property list
-        const uint32_t property_list_start = in.tellg();
-        for(uint32_t i=0; i<num_properties; ++i)
-        {
-            node.properties.push_back(read_property(in));
-        }
-        if(static_cast<uint32_t>(in.tellg()) != property_list_start + property_list_len) throw std::runtime_error("malformed property list");   
-
-        // Read child nodes
-        if(static_cast<uint32_t>(in.tellg()) != end_offset)
-        {
-            node.children = read_node_list(in);
-            if(static_cast<uint32_t>(in.tellg()) != end_offset) throw std::runtime_error("malformed children list");           
-        }
-
-        return node;
-    }
-
-    std::vector<node> read_node_list(std::istream & in)
-    {
-        std::vector<node> nodes;
-        while(true)
-        {
-            auto n = read_node(in);
-            if(n) nodes.push_back(*std::move(n));
-            else return nodes;
-        }
-    }
-
-    document load(std::istream & in)
-    {
-        char header[23] {};
-        if(!in.read(header, sizeof(header))) throw std::runtime_error("failed to read header");
-        if(strcmp("Kaydara FBX Binary  ", header)) throw std::runtime_error("not an FBX Binary file");
-
-        return {read<uint32_t>(in, "version"), read_node_list(in)};
-    }
-
-    //////////////////////////////
-    // ASCII file format reader //
-    //////////////////////////////
-
-    template<class T> std::optional<T> parse_number(const std::string & s)
-    {
-        std::istringstream in(s);
-        T number;
-        if(!(in >> number)) return std::nullopt;
-        in.get();
-        if(!in.eof()) return std::nullopt;
-        return number;
-    }
-
-    void skip_whitespace(FILE * f)
-    {
-        while(true)
-        {
-            if(feof(f)) return;
-            int ch = fgetc(f);
-            if(isspace(ch)) continue;
-            if(ch == ';')
+            // Read property list
+            const uint32_t property_list_start = in.tellg();
+            for(uint32_t i=0; i<num_properties; ++i)
             {
-                while(!feof(f) && ch != '\n') ch = fgetc(f);
-                continue;
+                node.properties.push_back(read_property(in));
             }
-            ungetc(ch, f);
-            return;
-        }
-    }
+            if(static_cast<uint32_t>(in.tellg()) != property_list_start + property_list_len) throw std::runtime_error("malformed property list");   
 
-    std::string parse_key(FILE * f)
-    {
-        std::string s;
-        while(true)
-        {
-            if(feof(f)) throw std::runtime_error("missing ':' after "+s);
-            int ch = fgetc(f);
-            if(ch == ':') return s;
-            s += ch;
-        }
-    }
-
-    std::string parse_token(FILE * f)
-    {
-        std::string s;
-        while(true)
-        {
-            int ch = fgetc(f);
-            if(isspace(ch) || ch == ',') 
+            // Read child nodes
+            if(static_cast<uint32_t>(in.tellg()) != end_offset)
             {
-                ungetc(ch, f);
-                return s;
+                node.children = read_node_list(in);
+                if(static_cast<uint32_t>(in.tellg()) != end_offset) throw std::runtime_error("malformed children list");           
             }
-            s.push_back(ch);
+
+            return node;
         }
-    }
 
-    std::optional<property> parse_property(FILE * f)
-    {
-        skip_whitespace(f);
-        int ch = fgetc(f);
-
-        // Boolean (TODO: Fix ambiguity)
-        if(ch == 'F') return property{boolean{0}};
-        if(ch == 'T') return property{boolean{1}};
-
-        // Number
-        if(isdigit(ch) || ch == '-')
+        std::vector<node> read_node_list(std::istream & in)
         {
-            ungetc(ch, f);
-            auto s = parse_token(f);
-            if(auto n = parse_number<int64_t>(s)) return property{*n};
-            if(auto d = parse_number<double>(s)) return property{*d};
-            throw std::runtime_error("not a number: "+s);
+            std::vector<node> nodes;
+            while(true)
+            {
+                auto n = read_node(in);
+                if(n) nodes.push_back(*std::move(n));
+                else return nodes;
+            }
         }
 
-        // String
-        if(ch == '"')
+        //////////////////////////////
+        // ASCII file format reader //
+        //////////////////////////////
+
+        template<class T> std::optional<T> parse_number(const std::string & s)
+        {
+            std::istringstream in(s);
+            T number;
+            if(!(in >> number)) return std::nullopt;
+            in.get();
+            if(!!in.good()) return std::nullopt;
+            return number;
+        }
+
+        void skip_whitespace(std::istream & in)
+        {
+            while(true)
+            {
+                if(!in.good()) return;
+                int ch = in.get();
+                if(isspace(ch)) continue;
+                if(ch == ';')
+                {
+                    while(!!in.good() && ch != '\n') ch = in.get();
+                    continue;
+                }
+                in.unget();
+                return;
+            }
+        }
+
+        std::string parse_key(std::istream & in)
         {
             std::string s;
             while(true)
             {
-                ch = fgetc(f);
-                if(ch == '"') return property{s};
+                if(!in.good()) throw std::runtime_error("missing ':' after "+s);
+                int ch = in.get();
+                if(ch == ':') return s;
                 s += ch;
             }
         }
 
-        // Array
-        if(ch == '*')
+        std::string parse_token(std::istream & in)
         {
-            auto s = parse_token(f);
-            auto len = parse_number<size_t>(s);
-            if(!len) throw std::runtime_error("invalid array length: "+s);
-            skip_whitespace(f);
-            if(fgetc(f) != '{') throw std::runtime_error("missing array contents");
-            skip_whitespace(f);
-            if(parse_key(f) != "a") throw std::runtime_error("missing array contents");
-            std::vector<double> contents(*len);
-            for(size_t i=0; i<contents.size(); ++i)
-            {
-                skip_whitespace(f);
-                if(auto d = parse_number<double>(parse_token(f))) contents[i] = *d;
-                else throw std::runtime_error("not a number: "+s);
-                skip_whitespace(f);
-                int ch = fgetc(f);
-                if(i+1 < len && ch != ',') throw std::runtime_error("missing ,");
-                if(i+1 == len && ch != '}') throw std::runtime_error("missing }");            
-            }
-            return property{contents};
-        }
-
-        // Not a property
-        ungetc(ch, f);
-        return std::nullopt;
-    }
-
-    fbx::node parse_node(FILE * f)
-    {
-        skip_whitespace(f);
-        fbx::node node;
-        node.name = parse_key(f);
-        while(true)
-        {
-            if(auto prop = parse_property(f))
-            {
-                node.properties.push_back(*prop);
-
-                skip_whitespace(f);
-                int ch = fgetc(f);
-                if(ch == ',') continue;
-                ungetc(ch, f);
-            }
-            break;
-        }
-
-        skip_whitespace(f);
-        int ch = fgetc(f);
-        if(ch == '{')
-        {
+            std::string s;
             while(true)
             {
-                skip_whitespace(f);
-                int ch = fgetc(f);
-                if(ch == '}') 
+                int ch = in.get();
+                if(isspace(ch) || ch == ',') 
                 {
-                    break;
+                    in.unget();
+                    return s;
                 }
-                ungetc(ch, f);
-                node.children.push_back(parse_node(f));
+                s.push_back(ch);
             }
         }
-        else ungetc(ch, f);
-        return node;
-    }
 
-    document load_ascii(FILE * f)
-    {
-        document doc {};
-        while(true) 
+        std::optional<property> parse_property(std::istream & in)
         {
-            skip_whitespace(f);
-            if(feof(f)) break;
-            doc.nodes.push_back(parse_node(f));
+            skip_whitespace(in);
+            int ch = in.get();
+
+            // Boolean
+            if(ch == 'F' && (isspace(in.peek()) || in.peek() == ',')) return property{boolean{0}};
+            if(ch == 'T' && (isspace(in.peek()) || in.peek() == ',')) return property{boolean{1}};
+
+            // Number
+            if(isdigit(ch) || ch == '-')
+            {
+                in.unget();
+                auto s = parse_token(in);
+                if(auto n = parse_number<int64_t>(s)) return property{*n};
+                if(auto d = parse_number<double>(s)) return property{*d};
+                throw std::runtime_error("not a number: "+s);
+            }
+
+            // String
+            if(ch == '"')
+            {
+                std::string s;
+                while(true)
+                {
+                    ch = in.get();
+                    if(ch == '"') return property{s};
+                    s += ch;
+                }
+            }
+
+            // Array
+            if(ch == '*')
+            {
+                auto s = parse_token(in);
+                auto len = parse_number<size_t>(s);
+                if(!len) throw std::runtime_error("invalid array length: "+s);
+                skip_whitespace(in);
+                if(in.get() != '{') throw std::runtime_error("missing array contents");
+                skip_whitespace(in);
+                if(parse_key(in) != "a") throw std::runtime_error("missing array contents");
+                std::vector<double> contents(*len);
+                for(size_t i=0; i<contents.size(); ++i)
+                {
+                    skip_whitespace(in);
+                    if(auto d = parse_number<double>(parse_token(in))) contents[i] = *d;
+                    else throw std::runtime_error("not a number: "+s);
+                    skip_whitespace(in);
+                    int ch = in.get();
+                    if(i+1 < len && ch != ',') throw std::runtime_error("missing ,");
+                    if(i+1 == len && ch != '}') throw std::runtime_error("missing }");            
+                }
+                return property{contents};
+            }
+
+            // Not a property
+            in.unget();
+            return std::nullopt;
         }
-        return doc;
+
+        node parse_node(std::istream & in)
+        {
+            skip_whitespace(in);
+            node node;
+            node.name = parse_key(in);
+            while(true)
+            {
+                if(auto prop = parse_property(in))
+                {
+                    node.properties.push_back(*prop);
+
+                    skip_whitespace(in);
+                    int ch = in.get();
+                    if(ch == ',') continue;
+                    in.unget();
+                }
+                break;
+            }
+
+            skip_whitespace(in);
+            int ch = in.get();
+            if(ch == '{')
+            {
+                while(true)
+                {
+                    skip_whitespace(in);
+                    int ch = in.get();
+                    if(ch == '}') 
+                    {
+                        break;
+                    }
+                    in.unget();
+                    node.children.push_back(parse_node(in));
+                }
+            }
+            else in.unget();
+            return node;
+        }
+    
+        document load(std::istream & in)
+        {
+            // Try reading file as FBX binary
+            char header[23] {};
+            if(in.read(header, sizeof(header)) && strcmp("Kaydara FBX Binary  ", header) == 0)
+            {
+                return {read<uint32_t>(in, "version"), read_node_list(in)};
+            }
+
+            // Try reading file as FBX ascii
+            in.seekg(0);
+            document doc {};
+            while(true) 
+            {
+                skip_whitespace(in);
+                if(!in.good()) break;
+                doc.nodes.push_back(parse_node(in));
+            }
+            return doc;
+        }
     }
 
     ///////////
@@ -333,7 +337,7 @@ namespace fbx
         template<class T> void operator() (const std::vector<T> & array) { out << typeid(T).name() << '[' << array.size() << ']'; }
     };
 
-    void print(std::ostream & out, int indent, const fbx::node & node)
+    void print(std::ostream & out, int indent, const ast::node & node)
     {
         if(indent) out << '\n';
         for(int i=0; i<indent; ++i) out << "  ";
@@ -346,7 +350,7 @@ namespace fbx
         }
     }
 
-    template<class T, int M> void decode_attribute(linalg::vec<T,M> & attribute, const property & array, size_t index) 
+    template<class T, int M> void decode_attribute(linalg::vec<T,M> & attribute, const ast::property & array, size_t index) 
     {
         for(int j=0; j<M; ++j) attribute[j] = array.get<T>(index*M+j);
     }
@@ -354,13 +358,13 @@ namespace fbx
     template<class T> constexpr T rad_to_deg = static_cast<T>(57.295779513082320876798154814105);
     template<class T> constexpr T deg_to_rad = static_cast<T>(0.0174532925199432957692369076848);
 
-    const fbx::node & find(const std::vector<fbx::node> & nodes, std::string_view name)
+    const ast::node & find(const std::vector<ast::node> & nodes, std::string_view name)
     {
         for(auto & n : nodes) if(n.name == name) return n;
         throw std::runtime_error("missing node " + std::string(name));
     }
 
-    template<class V, class T, int M> void decode_layer(std::vector<V> & vertices, linalg::vec<T,M> V::*attribute, const fbx::node & node, std::string_view array_name) 
+    template<class V, class T, int M> void decode_layer(std::vector<V> & vertices, linalg::vec<T,M> V::*attribute, const ast::node & node, std::string_view array_name) 
     {
         auto & array = find(node.children, array_name).properties[0];
         auto mapping_information_type = find(node.children, "MappingInformationType").properties[0].get_string();
@@ -382,7 +386,7 @@ namespace fbx
         
     }
 
-    geometry::geometry(const fbx::node & node)
+    geometry::geometry(const ast::node & node)
     {
         id = node.properties[0].get<int64_t>();
 
@@ -425,12 +429,12 @@ namespace fbx
         decode_layer(vertices, &vertex::texcoord, find(node.children, "LayerElementUV"), "UV");
     }
 
-    float3 read_vector3d_property(const fbx::node & prop)
+    float3 read_vector3d_property(const ast::node & prop)
     {
         return {prop.properties[4].get<float>(), prop.properties[5].get<float>(), prop.properties[6].get<float>()};
     }
 
-    model::model(const fbx::node & node)
+    model::model(const ast::node & node)
     {
         id = node.properties[0].get<int64_t>();
 
@@ -487,20 +491,169 @@ namespace fbx
         );        
     }
 
-    std::vector<model> load_models(const fbx::document & doc)
+    struct object
     {
+        const ast::node * node;
+        std::vector<const object *> object_children; // Objects which were attached to us via an OO connection
+        std::map<std::string, std::vector<const object *>> property_children; // Objects which were attached to us via an OP connection
+        
+        int64_t get_id() const { return node->properties[0].get<int64_t>(); }
+        const std::string & get_name() const { return node->properties[1].get_string(); }
+        const std::string & get_type() const { return node->name; }
+        const std::string & get_subtype() const { return node->properties[2].get_string(); }        
+
+        const object * get_first_child(std::string_view type) const { for(auto * obj : object_children) if(obj->get_type() == type) return obj; return nullptr; }
+    };
+
+    std::vector<object> index(const ast::document & doc)
+    {
+        // Obtain a reference to all AST nodes which describe objects
+        std::vector<object> objects;
+        for(auto & n : find(doc.nodes, "Objects").children) 
+        {
+            objects.push_back({&n});
+        }
+
+        // Capture all connections between objects
+        auto find_object_by_id = [&objects](int64_t id) -> object & 
+        { 
+            for(auto & obj : objects) 
+            {
+                if(obj.get_id() == id) 
+                {
+                    return obj; 
+                }
+            }
+            throw std::runtime_error("invalid object ID"); 
+        };
+        for(auto & n : find(doc.nodes, "Connections").children)
+        {
+            if(n.properties[0].get_string() == "OO")
+            {
+                const auto id_a = n.properties[1].get<int64_t>(), id_b = n.properties[2].get<int64_t>();
+                if(id_b) find_object_by_id(id_b).object_children.push_back(&find_object_by_id(id_a));
+            }
+            if(n.properties[0].get_string() == "OP")
+            {
+                const auto id_a = n.properties[1].get<int64_t>(), id_b = n.properties[2].get<int64_t>();
+                if(id_b) find_object_by_id(id_b).property_children[n.properties[3].get_string()].push_back(&find_object_by_id(id_a));
+            }
+        }
+
+        // NOTE: We are relying on move semantics (or copy ellision) to ensure that the addresses of individual object structs do not change
+        return objects;
+    }
+
+    document load(const ast::document & doc)
+    {
+        const auto objects = index(doc);
+
         // Load all objects
-        std::vector<model> models;
+        document d;
+        for(auto & obj : objects)
+        {
+            if(obj.get_type() == "Geometry")
+            {
+                auto * skin = obj.get_first_child("Deformer");
+                if(skin && skin->get_subtype() == "Skin")
+                {
+                    std::cout << "Geometry " << obj.get_id() << " is deformed by Skin " << skin->get_id() << ":" << std::endl;
+                    for(auto * cluster : skin->object_children)
+                    {
+                        if(cluster->get_type() != "Deformer" || cluster->get_subtype() != "Cluster") continue;
+                        auto * model = cluster->get_first_child("Model");
+                        std::cout << "  Cluster " << cluster->get_id() << " is driven by Model " << model->get_id() << std::endl;
+                    }
+                }
+            }
+
+            if(obj.get_type() == "AnimationStack")
+            {
+                std::cout << "AnimationStack " << obj.get_id() << " is named " << obj.get_name() << ":" << std::endl;
+                for(auto * layer : obj.object_children)
+                {
+                    if(layer->get_type() != "AnimationLayer") continue;
+                    std::cout << "  AnimationLayer " << layer->get_id() << " is named " << layer->get_name() << ":" << std::endl;
+                    for(auto * curve_node : layer->object_children)
+                    {
+                        if(curve_node->get_type() != "AnimationCurveNode") continue;
+                        std::cout << "    AnimationCurveNode " << curve_node->get_id() << " has curves for";
+                        for(auto & p : curve_node->property_children)
+                        {
+                            for(auto * curve : p.second)
+                            {
+                                if(curve->get_type() != "AnimationCurve") continue;
+                                std::cout << " " << p.first;
+                            }
+                        }
+                        std::cout << std::endl;
+                    }
+                }
+            }
+        }
+
         std::vector<geometry> geoms;
+
+        std::map<int64_t, std::vector<animation_keyframe>> animation_curves;
+        std::map<int64_t, cluster> clusters;
+
+        
+
         for(auto & n : find(doc.nodes, "Objects").children)
         {
             if(n.name == "Model")
             {
-                models.push_back(fbx::model{n});
+                d.models.push_back(fbx::model{n});
             }
             if(n.name == "Geometry")
             {
                 geoms.push_back(fbx::geometry{n});
+            }
+            if(n.name == "AnimationCurve")
+            {
+                auto & keyframes = animation_curves[n.properties[0].get<int64_t>()];
+                const auto & key_time = find(n.children, "KeyTime").properties[0];
+                const auto & key_value = find(n.children, "KeyValueFloat").properties[0];
+                if(key_time.size() != key_value.size()) throw std::runtime_error("Length of KeyTime array does not match length of KeyValueFloat array");
+                for(size_t i=0; i<key_time.size(); ++i) keyframes.push_back({key_time.get<int64_t>(i), key_value.get<float>(i)});
+            }
+            if(n.name == "AnimationCurveNode")
+            {
+                animation_curve_node c { n.properties[0].get<int64_t>() };
+                d.curve_nodes.push_back(std::move(c));
+            }
+            if(n.name == "Deformer")
+            {
+                if(n.properties[2].get_string() == "Cluster")
+                {
+                    auto & c = clusters[n.properties[0].get<int64_t>()];
+                    const auto & indices = find(n.children, "Indexes").properties[0];
+                    const auto & weights = find(n.children, "Weights").properties[0];
+                    const auto & transform = find(n.children, "Transform").properties[0];
+                    const auto & transform_link = find(n.children, "TransformLink").properties[0];
+                    
+                    if(indices.size() != weights.size()) throw std::runtime_error("Length of Indexes array does not match length of Weights array");
+                    for(size_t i=0; i<indices.size(); ++i)
+                    {
+                        c.indices.push_back(indices.get<int64_t>(i));
+                        c.weights.push_back(weights.get<float>(i));
+                    }
+                    if(transform.size() != 16) throw std::runtime_error("Length of Transform array is not 16");
+                    if(transform_link.size() != 16) throw std::runtime_error("Length of TransformLink array is not 16");
+                    for(int j=0; j<4; ++j)
+                    {
+                        for(int i=0; i<4; ++i)
+                        {
+                            // TODO: Verify column major storage in FBX files
+                            c.transform[j][i] = transform.get<float>(j*4+i);
+                            c.transform_link[j][i] = transform_link.get<float>(j*4+i);
+                        }
+                    }
+                }
+            }
+            if(n.properties[2].get_string() == "Skin")
+            {
+                d.skins.push_back({n.properties[0].get<int64_t>()});
             }
         }
 
@@ -516,24 +669,59 @@ namespace fbx
         for(auto & n : find(doc.nodes, "Connections").children)
         {
             if(n.name != "C") continue;
-            if(n.properties[0].get_string() != "OO") continue; // Object-to-object connection
             auto a = n.properties[1].get<int64_t>(), b = n.properties[2].get<int64_t>();
-            for(auto & m : models)
+
+            // Object-to-property connection
+            if(n.properties[0].get_string() == "OP")
             {
-                if(m.id == b)
+                auto & prop = n.properties[3].get_string();
+                for(auto & c : d.curve_nodes)
                 {
-                    for(auto & g : geoms)
+                    if(c.id == b)
                     {
-                        if(g.id == a)
-                        {
-                            m.geoms.push_back(g);
-                        }
+                        auto it = animation_curves.find(a);
+                        if(it == end(animation_curves)) throw std::runtime_error("no object with ID " + a);
+                    
+                        if(prop == "d|X") c.x = std::move(it->second);
+                        else if(prop == "d|Y") c.y = std::move(it->second);
+                        else if(prop == "d|Z") c.z = std::move(it->second);
+                        else throw std::runtime_error("unknown property " + prop);
+                        animation_curves.erase(it);
                     }
                 }
             }
+            else if(n.properties[0].get_string() == "OO") // Object-to-object connection
+            {
+                for(auto & m : d.models)
+                {
+                    if(m.id == b)
+                    {
+                        for(auto & g : geoms)
+                        {
+                            if(g.id == a)
+                            {
+                                m.geoms.push_back(g);
+                            }
+                        }
+                    }
+                }
+
+                for(auto & s : d.skins)
+                {
+                    if(s.id == b)
+                    {
+                        auto it = clusters.find(a);
+                        if(it == end(clusters)) continue;
+
+                        s.clusters.push_back(std::move(it->second));
+                        clusters.erase(it);
+                    }
+                }
+            }
+            else throw std::runtime_error("Unknown connection type " + n.properties[0].get_string());
         }
 
-        return models;
+        return d;
     }
 }
 
@@ -545,11 +733,11 @@ struct fbx_property_printer
     template<class T> void operator() (const T & scalar) { out << scalar; }    
     template<class T> void operator() (const std::vector<T> & array) { out << typeid(T).name() << '[' << array.size() << ']'; }
 };
-void fbx::property::print(std::ostream & out) const
+void fbx::ast::property::print(std::ostream & out) const
 {
     std::visit(fbx_property_printer{out}, contents);
 }
 
-std::ostream & operator << (std::ostream & out, const fbx::boolean & b) { return out << (b ? "true" : "false"); }
-std::ostream & operator << (std::ostream & out, const fbx::property & p) { p.print(out); return out; }
-std::ostream & operator << (std::ostream & out, const fbx::node & n) { fbx::print(out, 0, n); return out; }
+std::ostream & operator << (std::ostream & out, const fbx::ast::boolean & b) { return out << (b ? "true" : "false"); }
+std::ostream & operator << (std::ostream & out, const fbx::ast::property & p) { p.print(out); return out; }
+std::ostream & operator << (std::ostream & out, const fbx::ast::node & n) { fbx::print(out, 0, n); return out; }

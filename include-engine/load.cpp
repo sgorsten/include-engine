@@ -54,25 +54,20 @@ mesh generate_box_mesh(const float3 & a, const float3 & b)
 }
 
 #include "fbx.h"
+//#include <iostream>
 
 std::vector<mesh> load_meshes_from_fbx(const char * filename)
 {
-    fbx::document doc;
-    try 
-    { 
-        std::ifstream in(filename, std::ifstream::binary);
-        doc = fbx::load(in); 
-    }
-    catch(...)
-    {
-        doc = fbx::load_ascii(fopen(filename, "r"));
-    }
-    //std::cout << "FBX Version " << doc.version << std::endl;
-    //for(auto & node : doc.nodes) std::cout << node << std::endl;
-    auto models = load_models(doc);
+    std::ifstream in(filename, std::ifstream::binary);
+    auto doc = fbx::ast::load(in); 
+
+    /*std::ofstream out("mesh.txt");
+    out << "FBX Version " << doc.version << std::endl;
+    for(auto & node : doc.nodes) out << node << std::endl;*/
+    auto d = fbx::load(doc);
 
     std::vector<mesh> meshes;
-    for(auto & m : models) 
+    for(auto & m : d.models) 
     {
         auto model_matrix = mul(scaling_matrix(float3{1,-1,-1}), m.get_model_matrix());
         auto normal_matrix = inverse(transpose(model_matrix));
