@@ -1,6 +1,7 @@
 ﻿#include "fbx.h"
 #include <optional>
 #include <sstream>
+#include <set>
 #include <map>
 #include <zlib.h>
 
@@ -463,7 +464,7 @@ namespace fbx
 
         const object * get_first_parent(std::string_view type) const { for(auto & c : parents) if(c.obj->get_type() == type) return c.obj; return nullptr; }
         const object * get_first_child(std::string_view type) const { for(auto & c : children) if(c.obj->get_type() == type) return c.obj; return nullptr; }
-        auto get_children(std::string_view type) { std::vector<const object *> objects; for(auto & c : children) if(c.obj->get_type() == type) objects.push_back(c.obj); return objects; }
+        auto get_children(std::string_view type) const { std::vector<const object *> objects; for(auto & c : children) if(c.obj->get_type() == type) objects.push_back(c.obj); return objects; }
     };
     std::vector<object> index(const ast::document & doc)
     {
@@ -521,7 +522,21 @@ namespace fbx
         {
             if(prop.name == "P" && prop.properties[0].get_string() == "UnitScaleFactor") unit_scale_factor = prop.properties[4].get<float>();
         }
-               
+              
+        // Obtain full set of animation curves, indexed by the AnimationCurve object
+        struct keyframe { int64_t key; float value; };
+        std::map<const object *, std::vector<keyframe>> curves;
+        for(auto & obj : objects)
+        {
+            if(obj.get_type() != "AnimationCurve") continue;
+            
+            auto & keyframes = curves[&obj];
+            const auto & key_time = find(obj.node->children, "KeyTime").properties[0];
+            const auto & key_value = find(obj.node->children, "KeyValueFloat").properties[0];
+            if(key_time.size() != key_value.size()) throw std::runtime_error("Length of KeyTime array does not match length of KeyValueFloat array");
+            for(size_t i=0; i<key_time.size(); ++i) keyframes.push_back({key_time.get<int64_t>(i), key_value.get<float>(i)});
+        }
+
         // Obtain skeletal meshes
         std::vector<geometry> geometries;
         for(auto & obj : objects)
@@ -613,6 +628,74 @@ namespace fbx
                         }
                     }
                 }
+
+                // Get animations
+                for(auto & stack : objects)
+                {
+                    if(stack.get_type() != "AnimationStack") continue;
+                    auto * layer = stack.get_first_child("AnimationLayer");
+                    if(!layer) continue;
+
+                    animation a;
+                    a.name = stack.get_name();
+
+                    // Gather complete set of keyframes for this animation
+                    const auto curve_nodes = layer->get_children("AnimationCurveNode");
+                    std::set<int64_t> keys;
+                    
+                    for(auto * curve_node : curve_nodes)
+                    {
+                        for(auto * curve : curve_node->get_children("AnimationCurve"))
+                        {
+                            for(auto & kf : curves[curve])
+                            {
+                                keys.insert(kf.key);
+                            }                        
+                        }
+                    }
+
+                    // Initialize states of all of our models
+                    std::map<const object *, fbx::model> model_states;
+                    for(auto * model : bone_models) model_states[model] = fbx::model(*model->node);
+
+                    // For each keyframe
+                    for(auto key : keys)
+                    {   
+                        // Apply animation state (TODO: Interpolation)
+                        for(auto * curve_node : curve_nodes)
+                        {
+                            for(auto & p : curve_node->parents)
+                            {
+                                if(p.obj->get_type() != "Model" || !p.prop) continue;
+                                float3 * prop = nullptr;
+                                float scale = 1;
+                                if(*p.prop == "Lcl Translation") prop = &model_states[p.obj].translation;
+                                else if(*p.prop == "Lcl Rotation") { prop = &model_states[p.obj].rotation; scale = deg_to_rad<float>; }
+                                else if(*p.prop == "Lcl Scaling") prop = &model_states[p.obj].scaling;
+                                else continue;
+
+                                for(auto & c : curve_node->children)
+                                {
+                                    if(c.obj->get_type() != "AnimationCurve" || !c.prop) continue;
+                                    auto it = std::find_if(begin(curves[c.obj]), end(curves[c.obj]), [key](const keyframe & kf) { return kf.key == key; });
+                                    if(it != end(curves[c.obj]))
+                                    {
+                                        if(*c.prop == "d|X") prop->x = it->value * scale;
+                                        if(*c.prop == "d|Y") prop->y = it->value * scale;
+                                        if(*c.prop == "d|Z") prop->z = it->value * scale;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Compute local matrices
+                        animation_keyframe anim_kf {key};
+                        for(auto * model : bone_models) anim_kf.local_transforms.push_back(model_states[model].get_model_matrix());
+                        a.keyframes.push_back(anim_kf);
+                    }
+
+                    geom.animations.push_back(a);
+                }
             }
 
             // Obtain polygons
@@ -649,81 +732,15 @@ namespace fbx
 
             geometries.push_back(geom);
         }
-
-        // Obtain full set of animation curves, indexed by the AnimationCurve index
-        /*struct keyframe { int64_t key; float value; };
-        std::vector<std::vector<keyframe>> curves(objects.size());
-        for(auto & obj : objects)
-        {
-            if(obj.get_type() != "AnimationCurve") continue;
-            
-            auto & keyframes = curves[obj.index];
-            const auto & key_time = find(obj.node->children, "KeyTime").properties[0];
-            const auto & key_value = find(obj.node->children, "KeyValueFloat").properties[0];
-            if(key_time.size() != key_value.size()) throw std::runtime_error("Length of KeyTime array does not match length of KeyValueFloat array");
-            for(size_t i=0; i<key_time.size(); ++i) keyframes.push_back({key_time.get<int64_t>(i), key_value.get<float>(i)});
-        }*/
-
-        // For each stack, save an animation
-        /*for(auto & stack : objects)
-        {
-            if(stack.get_type() != "AnimationStack") continue;
-            if(stack.object_children.size() != 1 || stack.object_children[0]->get_type() != "AnimationLayer") throw std::runtime_error("We only support single AnimationLayer AnimationStacks at the moment");
-            auto & layer = *stack.object_children[0];
-
-            std::vector<std::optional<float3>> evaluated_values(objects.size());
-            for(auto * curve_node : layer.object_children)
-            {
-                if(curve_node->get_type() != "AnimationCurveNode") continue;
-                auto dx = curve_node->property_children.find("d|X");
-                auto dy = curve_node->property_children.find("d|Y");
-                auto dz = curve_node->property_children.find("d|Z");
-            }
-        }*/
-
-        // Load all objects
-        document d;
-        /*for(auto & obj : objects)
-        {
-            if(obj.get_type() == "AnimationStack")
-            {
-                std::cout << "AnimationStack " << obj.get_id() << " is named " << obj.get_name() << ":" << std::endl;
-                for(auto * layer : obj.object_children)
-                {
-                    if(layer->get_type() != "AnimationLayer") continue;
-                    std::cout << "  AnimationLayer " << layer->get_id() << " is named " << layer->get_name() << ":" << std::endl;
-                    for(auto * curve_node : layer->object_children)
-                    {
-                        if(curve_node->get_type() != "AnimationCurveNode") continue;
-                        std::cout << "    AnimationCurveNode " << curve_node->get_id() << " has curves for";
-                        for(auto & p : curve_node->property_children)
-                        {
-                            for(auto * curve : p.second)
-                            {
-                                if(curve->get_type() != "AnimationCurve") continue;
-                                std::cout << " " << p.first;
-                            }
-                        }
-                        std::cout << std::endl;
-                    }
-                }
-            }
-        }*/
         
+        // Load all objects
+        document d;        
         std::map<int64_t, std::vector<animation_keyframe>> animation_curves;
         for(auto & n : find(doc.nodes, "Objects").children)
         {
             if(n.name == "Model")
             {
                 d.models.push_back(fbx::model{n});
-            }
-            if(n.name == "AnimationCurve")
-            {
-                auto & keyframes = animation_curves[n.properties[0].get<int64_t>()];
-                const auto & key_time = find(n.children, "KeyTime").properties[0];
-                const auto & key_value = find(n.children, "KeyValueFloat").properties[0];
-                if(key_time.size() != key_value.size()) throw std::runtime_error("Length of KeyTime array does not match length of KeyValueFloat array");
-                for(size_t i=0; i<key_time.size(); ++i) keyframes.push_back({key_time.get<int64_t>(i), key_value.get<float>(i)});
             }
         }
 

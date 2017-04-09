@@ -160,11 +160,13 @@ int main() try
     };
     int frame_index = 0;
 
-    float3 camera_position {0,-50,-60};
+    float3 camera_position {0,-20,-20};
     float camera_yaw {0}, camera_pitch {0};
     float2 last_cursor;
     float total_time = 0;
     auto t0 = std::chrono::high_resolution_clock::now();
+
+    size_t anim_frame = 0;
     while(!win.should_close())
     {
         glfwPollEvents();
@@ -191,7 +193,7 @@ int main() try
         if(win.get_key(GLFW_KEY_A)) camera_position -= qxdir(camera_orientation) * (timestep * 50);
         if(win.get_key(GLFW_KEY_S)) camera_position -= qzdir(camera_orientation) * (timestep * 50);
         if(win.get_key(GLFW_KEY_D)) camera_position += qxdir(camera_orientation) * (timestep * 50);
-
+        
         // Determine matrices
         const auto proj_matrix = linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one);
 
@@ -237,11 +239,13 @@ int main() try
         cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, skinned_pipeline);
         for(auto & m : meshes)
         {
-            per_skinned_object po;
-            for(int i=0; i<64; ++i) po.bone_matrices[i] = mul(scaling_matrix(float3{1,-1,-1}), translation_matrix(float3{0,0,0}));
+            if(++anim_frame >= m.m.animations[0].keyframes.size()) anim_frame = 0;
+            auto & kf = m.m.animations[0].keyframes[anim_frame];
+
+            per_skinned_object po {};
             for(size_t i=0; i<m.m.bones.size(); ++i)
             {   
-                po.bone_matrices[i] = mul(scaling_matrix(float3{1,-1,-1}), m.m.get_bone_pose(i), m.m.bones[i].model_to_bone_matrix);
+                po.bone_matrices[i] = mul(scaling_matrix(float3{1,-1,-1}), m.m.get_bone_pose(kf.local_transforms, i), m.m.bones[i].model_to_bone_matrix);
             }
 
             auto per_object = pool.allocate_descriptor_set(per_object_layout);
@@ -253,7 +257,7 @@ int main() try
             m.draw(cmd);
 
             // Visualize skeleton
-            for(size_t i=0; i<m.m.bones.size(); ++i)
+            /*for(size_t i=0; i<m.m.bones.size(); ++i)
             {
                 cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, static_pipeline);
                 const float4x4 pose_matrix = mul(scaling_matrix(float3{1,-1,-1}), m.m.get_bone_pose(i));
@@ -264,7 +268,7 @@ int main() try
                 per_object.write_combined_image_sampler(3, 0, sampler, black_tex);
                 cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
                 box_mesh.draw(cmd);
-            }
+            }*/
         }
 
         cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, static_pipeline);

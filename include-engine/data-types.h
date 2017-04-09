@@ -63,9 +63,26 @@ struct mesh
         uint4 bone_indices;
         float4 bone_weights;
     };
+    struct keyframe
+    {
+        int64_t key;
+        std::vector<float4x4> local_transforms;
+    };
+    struct animation
+    {
+        std::string name;
+        std::vector<keyframe> keyframes;
+    };
     std::vector<vertex> vertices;
     std::vector<uint3> triangles;
     std::vector<bone> bones;
+    std::vector<animation> animations;
+
+    float4x4 get_bone_pose(const std::vector<float4x4> & local_transforms, size_t index) const
+    {
+        auto & b = bones[index];
+        return b.parent_index ? mul(get_bone_pose(local_transforms, *b.parent_index), local_transforms[index]) : local_transforms[index];
+    }
 
     float4x4 get_bone_pose(size_t index) const
     {

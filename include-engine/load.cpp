@@ -85,6 +85,12 @@ std::vector<mesh> load_meshes_from_fbx(const char * filename)
                 mesh.vertices[i].bone_weights = g.weights[i].weights;
             }
             for(auto & b : g.bones) mesh.bones.push_back({b.name, b.parent_index, b.initial_pose, b.transform});
+            for(auto & a : g.animations)
+            {
+                mesh::animation anim {a.name};
+                for(auto & kf : a.keyframes) anim.keyframes.push_back({kf.key, kf.local_transforms});
+                mesh.animations.push_back(anim);
+            }
             mesh.triangles = g.triangles;
             meshes.push_back(compute_tangent_basis(std::move(mesh)));
         }
