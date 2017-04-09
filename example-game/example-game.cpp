@@ -94,7 +94,7 @@ int main() try
     gfx_mesh mutant_mesh {ctx, load_meshes_from_fbx("assets/mutant-mesh.fbx")[0]};
     gfx_mesh skybox_mesh {ctx, generate_box_mesh({-10,-10,-10}, {10,10,10})};
     gfx_mesh ground_mesh {ctx, generate_box_mesh({-80,8,-80}, {80,10,80})};
-    gfx_mesh box_mesh {ctx, generate_box_mesh({-1,-1,-1}, {1,1,1})};
+    //gfx_mesh box_mesh {ctx, load_meshes_from_fbx("assets/cube-mesh.fbx")[0]};
 
     // Set up our layouts
     auto per_scene_layout = ctx.create_descriptor_set_layout({
@@ -287,6 +287,18 @@ int main() try
             cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object_2, {});
             mutant_mesh.draw(cmd, 2);
         }
+
+        /*{
+            cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, static_pipeline);
+            const float4x4 model_matrix = translation_matrix(float3{-30,-20,0});
+            auto per_object = pool.allocate_descriptor_set(per_object_layout);
+            per_object.write_uniform_buffer(0, 0, model_matrix);
+            per_object.write_combined_image_sampler(1, 0, sampler, gray_tex);
+            per_object.write_combined_image_sampler(2, 0, sampler, flat_tex);
+            per_object.write_combined_image_sampler(3, 0, sampler, black_tex);
+            cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
+            box_mesh.draw(cmd);
+        }*/
 
         cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, static_pipeline);
         const float4x4 identity_matrix = translation_matrix(float3{0,0,0});

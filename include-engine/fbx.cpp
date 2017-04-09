@@ -371,7 +371,7 @@ namespace fbx
     }
 
     
-    template<class V, class T, int M> void decode_layer(std::vector<V> & vertices, linalg::vec<T,M> V::*attribute, const ast::node & node, std::string_view array_name) 
+    template<class T, int M> void decode_layer(linalg::vec<T,M> & attribute, const ast::node & node, std::string_view array_name, size_t polygon_vertex_id) 
     {
         auto & array = find(node.children, array_name).properties[0];
         auto mapping_information_type = find(node.children, "MappingInformationType").properties[0].get_string();
@@ -380,12 +380,12 @@ namespace fbx
         {
             if(reference_information_type == "Direct")
             {
-                for(size_t i=0; i<vertices.size(); ++i) decode_attribute(vertices[i].*attribute, array, i);
+                decode_attribute(attribute, array, polygon_vertex_id);
             }
             else if(reference_information_type == "IndexToDirect")
             {
                 auto & index_array = find(node.children, std::string(array_name) + "Index").properties[0];
-                for(size_t i=0; i<vertices.size(); ++i) decode_attribute(vertices[i].*attribute, array, index_array.get<size_t>(i));
+                decode_attribute(attribute, array, index_array.get<size_t>(polygon_vertex_id));
             }
             else throw std::runtime_error("unsupported ReferenceInformationType: " + reference_information_type);    
         }
@@ -725,9 +725,13 @@ namespace fbx
                 // Detect end-of-polygon, indicated by a negative index
                 const bool end_of_polygon = i < 0;
                 if(end_of_polygon) i = ~i;
+                const size_t polygon_vertex_id = geom.vertices.size();
 
                 // Store a polygon vertex
-                geom.vertices.push_back(geom_vertices[i]);
+                auto vertex = geom_vertices[i];
+                decode_layer(vertex.normal, find(obj.node->children, "LayerElementNormal"), "Normals", polygon_vertex_id);
+                decode_layer(vertex.texcoord, find(obj.node->children, "LayerElementUV"), "UV", polygon_vertex_id);
+                geom.vertices.push_back(vertex);
 
                 // Generate triangles if necessary
                 if(end_of_polygon)
@@ -745,8 +749,6 @@ namespace fbx
             }
 
             // Obtain normals and UVs
-            decode_layer(geom.vertices, &mesh::vertex::normal, find(obj.node->children, "LayerElementNormal"), "Normals");
-            decode_layer(geom.vertices, &mesh::vertex::texcoord, find(obj.node->children, "LayerElementUV"), "UV");
             for(auto & v : geom.vertices) v.texcoord.y = 1 - v.texcoord.y;
 
             for(auto & tris : material_triangles)
