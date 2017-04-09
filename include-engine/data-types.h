@@ -48,11 +48,18 @@ public:
 // Value type which holds mesh information
 struct mesh
 {
+    struct bone_keyframe
+    {
+        float3 translation;
+        float4 rotation;
+        float3 scaling;
+        float4x4 get_local_transform() const { return mul(translation_matrix(translation), rotation_matrix(rotation), scaling_matrix(scaling)); }
+    };
     struct bone
     {
         std::string name;
         std::optional<size_t> parent_index;
-        float4x4 initial_pose;
+        bone_keyframe initial_pose;
         float4x4 model_to_bone_matrix;
     };
     struct vertex
@@ -66,7 +73,7 @@ struct mesh
     struct keyframe
     {
         int64_t key;
-        std::vector<float4x4> local_transforms;
+        std::vector<bone_keyframe> local_transforms;
     };
     struct animation
     {
@@ -83,16 +90,16 @@ struct mesh
     std::vector<animation> animations;
     std::vector<material> materials;
 
-    float4x4 get_bone_pose(const std::vector<float4x4> & local_transforms, size_t index) const
+    float4x4 get_bone_pose(const std::vector<bone_keyframe> & bone_keyframes, size_t index) const
     {
         auto & b = bones[index];
-        return b.parent_index ? mul(get_bone_pose(local_transforms, *b.parent_index), local_transforms[index]) : local_transforms[index];
+        return b.parent_index ? mul(get_bone_pose(bone_keyframes, *b.parent_index), bone_keyframes[index].get_local_transform()) : bone_keyframes[index].get_local_transform();
     }
 
     float4x4 get_bone_pose(size_t index) const
     {
         auto & b = bones[index];
-        return b.parent_index ? mul(get_bone_pose(*b.parent_index), b.initial_pose) : b.initial_pose;
+        return b.parent_index ? mul(get_bone_pose(*b.parent_index), b.initial_pose.get_local_transform()) : b.initial_pose.get_local_transform();
     }
 };
 

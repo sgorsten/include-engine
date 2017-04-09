@@ -391,77 +391,66 @@ namespace fbx
         return {prop.properties[4].get<float>(), prop.properties[5].get<float>(), prop.properties[6].get<float>()};
     }
 
-    enum class rotation_order { xyz, xzy, yzx, yxz, zxy, zyx, spheric_xyz };
-    struct model
+    struct model_transform
     {
-        int64_t id;
-        rotation_order rotation_order {rotation_order::xyz};
+        enum class rotation_order { xyz, xzy, yzx, yxz, zxy, zyx, spheric_xyz };
+        rotation_order rot_order {rotation_order::xyz};
         float3 translation, rotation_offset, rotation_pivot; // Translation vectors
         float3 pre_rotation, rotation, post_rotation; // Euler angles in radians
         float3 scaling_offset, scaling_pivot; // Translation vectors
         float3 scaling; // Scaling factors
 
-        model() {};
-        model(const ast::node & node);
-        float4x4 get_model_matrix() const;
+        model_transform() {};
+
+        model_transform(const ast::node & node)
+        {
+            auto & prop70 = find(node.children, "Properties70"); // TODO: Is this version dependant?
+            for(auto & p : prop70.children)
+            {
+                if(p.name != "P") continue;
+                auto & prop_name = p.properties[0].get_string();
+                if(prop_name == "RotationOffset") rotation_offset = read_vector3d_property(p);
+                if(prop_name == "RotationPivot") rotation_pivot = read_vector3d_property(p);
+                if(prop_name == "ScalingOffset") scaling_offset = read_vector3d_property(p);
+                if(prop_name == "ScalingPivot") scaling_pivot = read_vector3d_property(p);
+                if(prop_name == "RotationOrder") rot_order = static_cast<rotation_order>(p.properties[4].get<int32_t>()); // Note: Just a guess, need to see one of these in the wild
+                if(prop_name == "PreRotation") pre_rotation = read_vector3d_property(p);
+                if(prop_name == "PostRotation") post_rotation = read_vector3d_property(p);
+                if(prop_name == "Lcl Translation") translation = read_vector3d_property(p);
+                if(prop_name == "Lcl Rotation") rotation = read_vector3d_property(p);
+                if(prop_name == "Lcl Scaling") scaling = read_vector3d_property(p);
+            }
+        }
+
+        float4 quat_from_euler(float3 angles) const
+        {
+            angles *= deg_to_rad<float>;
+            const float4 x = rotation_quat(float3{1,0,0}, angles.x), y = rotation_quat(float3{0,1,0}, angles.y), z = rotation_quat(float3{0,0,1}, angles.z);
+            switch(rot_order)
+            {
+            case rotation_order::xyz: return qmul(z, y, x);
+            case rotation_order::xzy: return qmul(y, z, x);
+            case rotation_order::yzx: return qmul(x, z, y);
+            case rotation_order::yxz: return qmul(z, x, y);
+            case rotation_order::zxy: return qmul(y, x, z);
+            case rotation_order::zyx: return qmul(x, y, z);
+            case rotation_order::spheric_xyz: throw std::runtime_error("spheric_xyz rotation order not yet supported");
+            default: throw std::runtime_error("bad rotation_order");
+            }
+        }
+
+        mesh::bone_keyframe get_keyframe() const        
+        {
+            // Derived from http://help.autodesk.com/view/FBX/2017/ENU/?guid=__files_GUID_10CDD63C_79C1_4F2D_BB28_AD2BE65A02ED_htm
+            // LocalToParentTransform = T * Roff * Rp * Rpre * R * Rpost^-1 * Rp^-1 * Soff * Sp * S * Sp^-1 
+            const float3 translation_before_scaling = -scaling_pivot;
+            const float3 translation_after_scaling_and_before_rotation = -rotation_pivot + scaling_offset + scaling_pivot;
+            const float3 translation_after_rotation = translation + rotation_offset + rotation_pivot;
+            const float4 total_rotation = qmul(quat_from_euler(pre_rotation), quat_from_euler(rotation), qconj(quat_from_euler(post_rotation)));
+            const float3 total_translation = translation_after_rotation + qrot(total_rotation, translation_after_scaling_and_before_rotation + scaling * translation_before_scaling);
+            return {total_translation, total_rotation, scaling};
+        }
     };
-
-    model::model(const ast::node & node)
-    {
-        id = node.properties[0].get<int64_t>();
-
-        auto & prop70 = find(node.children, "Properties70"); // TODO: Is this version dependant?
-        for(auto & p : prop70.children)
-        {
-            if(p.name != "P") continue;
-            auto & prop_name = p.properties[0].get_string();
-            if(prop_name == "RotationOffset") rotation_offset = read_vector3d_property(p);
-            if(prop_name == "RotationPivot") rotation_pivot = read_vector3d_property(p);
-            if(prop_name == "ScalingOffset") scaling_offset = read_vector3d_property(p);
-            if(prop_name == "ScalingPivot") scaling_pivot = read_vector3d_property(p);
-            if(prop_name == "RotationOrder") rotation_order = static_cast<fbx::rotation_order>(p.properties[4].get<int32_t>()); // Note: Just a guess, need to see one of these in the wild
-            if(prop_name == "PreRotation") pre_rotation = read_vector3d_property(p) * deg_to_rad<float>;
-            if(prop_name == "PostRotation") post_rotation = read_vector3d_property(p) * deg_to_rad<float>;
-            if(prop_name == "Lcl Translation") translation = read_vector3d_property(p);
-            if(prop_name == "Lcl Rotation") rotation = read_vector3d_property(p) * deg_to_rad<float>;
-            if(prop_name == "Lcl Scaling") scaling = read_vector3d_property(p);
-        }
-    }
-
-    float4 quat_from_euler(rotation_order order, const float3 & angles)
-    {
-        const float4 x = rotation_quat(float3{1,0,0}, angles.x), y = rotation_quat(float3{0,1,0}, angles.y), z = rotation_quat(float3{0,0,1}, angles.z);
-        switch(order)
-        {
-        case rotation_order::xyz: return qmul(z, y, x);
-        case rotation_order::xzy: return qmul(y, z, x);
-        case rotation_order::yzx: return qmul(x, z, y);
-        case rotation_order::yxz: return qmul(z, x, y);
-        case rotation_order::zxy: return qmul(y, x, z);
-        case rotation_order::zyx: return qmul(x, y, z);
-        case rotation_order::spheric_xyz: throw std::runtime_error("spheric_xyz rotation order not yet supported");
-        default: throw std::runtime_error("bad rotation_order");
-        }
-    }
-
-    float4x4 model::get_model_matrix() const
-    {
-        // Derived from http://help.autodesk.com/view/FBX/2017/ENU/?guid=__files_GUID_10CDD63C_79C1_4F2D_BB28_AD2BE65A02ED_htm
-        // LocalToParentTransform = T * Roff * Rp * Rpre * R * Rpost^-1 * Rp^-1 * Soff * Sp * S * Sp -1 
-        return mul
-        (
-            translation_matrix(translation + rotation_offset + rotation_pivot),
-            rotation_matrix(qmul
-            (
-                quat_from_euler(rotation_order, pre_rotation), 
-                quat_from_euler(rotation_order, rotation), 
-                qconj(quat_from_euler(rotation_order, post_rotation))
-            )), 
-            translation_matrix(-rotation_pivot + scaling_offset + scaling_pivot),
-            scaling_matrix(scaling), 
-            translation_matrix(-scaling_pivot)
-        );        
-    }
 
     struct object
     {
@@ -530,20 +519,6 @@ namespace fbx
     {
         const auto objects = index(doc);
               
-        // Obtain full set of animation curves, indexed by the AnimationCurve object
-        struct keyframe { int64_t key; float value; };
-        std::map<const object *, std::vector<keyframe>> curves;
-        for(auto & obj : objects)
-        {
-            if(obj.get_type() != "AnimationCurve") continue;
-            
-            auto & keyframes = curves[&obj];
-            const auto & key_time = find(obj.node->children, "KeyTime").properties[0];
-            const auto & key_value = find(obj.node->children, "KeyValueFloat").properties[0];
-            if(key_time.size() != key_value.size()) throw std::runtime_error("Length of KeyTime array does not match length of KeyValueFloat array");
-            for(size_t i=0; i<key_time.size(); ++i) keyframes.push_back({key_time.get<int64_t>(i), key_value.get<float>(i)});
-        }
-
         // Obtain skeletal meshes
         std::vector<mesh> meshes;
         for(auto & obj : objects)
@@ -581,9 +556,9 @@ namespace fbx
 
                     // Obtain initial pose
                     bone_models.push_back(model);
-                    fbx::model m {*model->node};
+                    model_transform m {*model->node};
                     mesh::bone bone {model->get_name()};
-                    bone.initial_pose = m.get_model_matrix();                    
+                    bone.initial_pose = m.get_keyframe();                    
 
                     // Obtain model-to-bone matrix
                     const auto & transform = find(cluster.obj->node->children, "Transform").properties[0];
@@ -615,8 +590,8 @@ namespace fbx
 
                             mesh::bone b;
                             b.name = parent->get_name();
-                            fbx::model m{*parent->node};
-                            b.initial_pose = m.get_model_matrix();
+                            model_transform m{*parent->node};
+                            b.initial_pose = m.get_keyframe();
                             b.model_to_bone_matrix = {{1,0,0,0},{0,1,0,0},{0,0,1,0},{0,0,0,1}};
                             geom.bones.push_back(b);
                         }
@@ -633,58 +608,78 @@ namespace fbx
                     mesh::animation a;
                     a.name = stack.get_name();
 
-                    // Gather complete set of keyframes for this animation
-                    const auto curve_nodes = layer->get_children("AnimationCurveNode");
+                    // Generate transformation state for each bone
+                    std::map<const object *, model_transform> model_transforms;
+                    for(auto * model : bone_models) model_transforms[model] = model_transform(*model->node);
+
+                    // Obtain all animation curves
+                    struct curve_segment { int64_t key0, key1; float value0, value1; };
+                    struct curve_state { float * target; std::vector<curve_segment> segments; size_t current; };
+                    std::vector<curve_state> curves;
                     std::set<int64_t> keys;
-                    
-                    for(auto * curve_node : curve_nodes)
+                    for(auto * curve_node : layer->get_children("AnimationCurveNode"))
                     {
-                        for(auto * curve : curve_node->get_children("AnimationCurve"))
+                        // Determine which property of a Model object this node is targeting
+                        float3 * model_property = nullptr;
+                        for(auto & p : curve_node->parents) if(p.obj->get_type() == "Model" && p.prop)
                         {
-                            for(auto & kf : curves[curve])
+                            if(*p.prop == "Lcl Translation") model_property = &model_transforms[p.obj].translation;
+                            if(*p.prop == "Lcl Rotation") model_property = &model_transforms[p.obj].rotation;
+                            if(*p.prop == "Lcl Scaling") model_property = &model_transforms[p.obj].scaling;
+                        }
+                        if(!model_property) continue;
+
+                        // For each AnimationCurve that is a child of this node
+                        for(auto & c : curve_node->children) if(c.obj->get_type() == "AnimationCurve" && c.prop)
+                        {
+                            // Determine which channel this curve is targeting
+                            curve_state cs {};
+                            if(*c.prop == "d|X") cs.target = &model_property->x;
+                            if(*c.prop == "d|Y") cs.target = &model_property->y;
+                            if(*c.prop == "d|Z") cs.target = &model_property->z;
+                            if(!cs.target) continue;
+
+                            // Read the keyframes and aggregate the total keyframes in use in this stack
+                            const auto & key_time = find(c.obj->node->children, "KeyTime").properties[0];
+                            const auto & key_value = find(c.obj->node->children, "KeyValueFloat").properties[0];
+                            if(key_time.size() != key_value.size()) throw std::runtime_error("Length of KeyTime array does not match length of KeyValueFloat array");
+                            if(key_time.size() == 0) throw std::runtime_error("KeyTime/KeyValueFloat arrays are empty");
+
+                            // Create curve segments
+                            keys.insert(key_time.get<int64_t>(0));
+                            cs.segments.push_back({std::numeric_limits<int64_t>::min(), key_time.get<int64_t>(0), key_value.get<float>(0), key_value.get<float>(0)});
+                            for(size_t i=1; i<key_time.size(); ++i) 
                             {
-                                keys.insert(kf.key);
-                            }                        
+                                const int64_t key0 = key_time.get<int64_t>(i-1), key1 = key_time.get<int64_t>(i);
+                                keys.insert(key1);
+                                cs.segments.push_back({key0, key1, key_value.get<float>(i-1), key_value.get<float>(i)});
+                            }
+                            size_t last = key_time.size()-1;
+                            cs.segments.push_back({key_time.get<int64_t>(last), std::numeric_limits<int64_t>::max(), key_value.get<float>(last), key_value.get<float>(last)});
+                            curves.push_back(std::move(cs));
                         }
                     }
 
-                    // Initialize states of all of our models
-                    std::map<const object *, fbx::model> model_states;
-                    for(auto * model : bone_models) model_states[model] = fbx::model(*model->node);
-
-                    // For each keyframe
+                    // Determine the state of each model at each keyframe
                     for(auto key : keys)
                     {   
-                        // Apply animation state (TODO: Interpolation)
-                        for(auto * curve_node : curve_nodes)
+                        // Interpolate between keyframes
+                        for(auto & curve : curves)
                         {
-                            for(auto & p : curve_node->parents)
+                            while(key > curve.segments[curve.current].key1) ++curve.current;
+                            const auto & seg = curve.segments[curve.current];
+                            if(seg.value0 == seg.value1) *curve.target = seg.value0;
+                            else 
                             {
-                                if(p.obj->get_type() != "Model" || !p.prop) continue;
-                                float3 * prop = nullptr;
-                                float scale = 1;
-                                if(*p.prop == "Lcl Translation") prop = &model_states[p.obj].translation;
-                                else if(*p.prop == "Lcl Rotation") { prop = &model_states[p.obj].rotation; scale = deg_to_rad<float>; }
-                                else if(*p.prop == "Lcl Scaling") prop = &model_states[p.obj].scaling;
-                                else continue;
-
-                                for(auto & c : curve_node->children)
-                                {
-                                    if(c.obj->get_type() != "AnimationCurve" || !c.prop) continue;
-                                    auto it = std::find_if(begin(curves[c.obj]), end(curves[c.obj]), [key](const keyframe & kf) { return kf.key == key; });
-                                    if(it != end(curves[c.obj]))
-                                    {
-                                        if(*c.prop == "d|X") prop->x = it->value * scale;
-                                        if(*c.prop == "d|Y") prop->y = it->value * scale;
-                                        if(*c.prop == "d|Z") prop->z = it->value * scale;
-                                    }
-                                }
+                                // TODO: Apply nonlinear mappings
+                                float t = (float)(key - seg.key0)/(seg.key1 - seg.key0);
+                                *curve.target = seg.value0*(1-t) + seg.value1*t;
                             }
                         }
 
                         // Compute local matrices
                         mesh::keyframe anim_kf {key};
-                        for(auto * model : bone_models) anim_kf.local_transforms.push_back(model_states[model].get_model_matrix());
+                        for(auto * model : bone_models) anim_kf.local_transforms.push_back({model_transforms[model].get_keyframe()});
                         a.keyframes.push_back(anim_kf);
                     }
 
