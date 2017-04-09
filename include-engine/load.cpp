@@ -79,6 +79,11 @@ std::vector<mesh> load_meshes_from_fbx(const char * filename)
             {
                 mesh.vertices.push_back({mul(model_matrix, float4{v.position,1}).xyz(), mul(normal_matrix, float4{v.normal,0}).xyz(), v.texcoord});
             }
+            for(size_t i=0; i<g.weights.size(); ++i)
+            {
+                mesh.vertices[i].bone_indices = g.weights[i].indices;
+                mesh.vertices[i].bone_weights = g.weights[i].weights;
+            }
             mesh.triangles = g.triangles;
             meshes.push_back(compute_tangent_basis(std::move(mesh)));
         }

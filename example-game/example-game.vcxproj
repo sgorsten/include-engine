@@ -167,10 +167,10 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="assets\shader.frag" />
-    <None Include="assets\static.vert" />
+    <None Include="assets\skinned.vert" />
     <None Include="assets\skybox.frag" />
     <None Include="assets\skybox.vert" />
-	<None Include="assets\scene.glsl" />
+    <None Include="assets\scene.glsl" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

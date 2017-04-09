@@ -1,4 +1,4 @@
-#include "fbx.h"
+﻿#include "fbx.h"
 #include <optional>
 #include <sstream>
 #include <map>
@@ -386,49 +386,6 @@ namespace fbx
         
     }
 
-    geometry::geometry(const ast::node & node)
-    {
-        id = node.properties[0].get<int64_t>();
-
-        // Obtain vertices
-        auto & vertices_node = find(node.children, "Vertices");
-        if(vertices_node.properties.size() != 1) throw std::runtime_error("malformed Vertices");
-        auto & vertices_array = vertices_node.properties[0];
-        std::vector<float3> vertex_positions;
-        for(size_t i=0; i<vertices_array.size(); i+=3) vertex_positions.push_back({vertices_array.get<float>(i), vertices_array.get<float>(i+1), vertices_array.get<float>(i+2)});
-
-        // Obtain polygons
-        auto & indices_node = find(node.children, "PolygonVertexIndex");
-        if(indices_node.properties.size() != 1) throw std::runtime_error("malformed PolygonVertexIndex");
-
-        size_t polygon_start = 0;
-        for(size_t j=0, n=indices_node.properties[0].size(); j<n; ++j)
-        {
-            auto i = indices_node.properties[0].get<int32_t>(j);
-
-            // Detect end-of-polygon, indicated by a negative index
-            const bool end_of_polygon = i < 0;
-            if(end_of_polygon) i = ~i;
-
-            // Store a polygon vertex
-            vertices.push_back({vertex_positions[i]});
-
-            // Generate triangles if necessary
-            if(end_of_polygon)
-            {
-                for(size_t j=polygon_start+2; j<vertices.size(); ++j)
-                {
-                    triangles.push_back(uint3{linalg::vec<size_t,3>{polygon_start, j-1, j}});
-                }
-                polygon_start = vertices.size();
-            }
-        }
-
-        // Obtain normals
-        decode_layer(vertices, &vertex::normal, find(node.children, "LayerElementNormal"), "Normals");
-        decode_layer(vertices, &vertex::texcoord, find(node.children, "LayerElementUV"), "UV");
-    }
-
     float3 read_vector3d_property(const ast::node & prop)
     {
         return {prop.properties[4].get<float>(), prop.properties[5].get<float>(), prop.properties[6].get<float>()};
@@ -491,9 +448,39 @@ namespace fbx
         );        
     }
 
+    struct connection { int64_t from, to; std::optional<std::string> prop; };
+    auto enumerate_connections(const ast::document & doc)
+    {        
+        std::vector<connection> connections;
+        for(auto & n : find(doc.nodes, "Connections").children)
+        {
+            if(n.properties[0].get_string() == "OO") connections.push_back({n.properties[1].get<int64_t>(), n.properties[2].get<int64_t>(), std::nullopt});
+            if(n.properties[0].get_string() == "OP") connections.push_back({n.properties[1].get<int64_t>(), n.properties[2].get<int64_t>(), n.properties[3].get_string()});
+        }
+        return connections;
+    }
+    void visit_for_topological_sort(std::vector<int64_t> & sorted_sequence, std::map<int64_t, int> & marks, int64_t id, const std::vector<connection> & connections)
+    {
+        if(marks[id] == 1) throw std::runtime_error("not a DAG");
+        if(marks[id] == 2) return;
+        marks[id] = 1;
+        for(auto & c : connections) if(c.to == id) visit_for_topological_sort(sorted_sequence, marks, c.from, connections);
+        marks[id] = 2;
+        sorted_sequence.push_back(id);
+    }
+    std::vector<int64_t> topological_sort(const std::vector<int64_t> & unsorted, const std::vector<connection> & connections)
+    {
+        std::vector<int64_t> sorted_sequence;
+        std::map<int64_t, int> marks;
+        for(auto id : unsorted) if(marks[id] == 0) visit_for_topological_sort(sorted_sequence, marks, id, connections);
+        std::reverse(begin(sorted_sequence), end(sorted_sequence));
+        return sorted_sequence;
+    }
+
     struct object
     {
         const ast::node * node;
+        size_t index;
         std::vector<const object *> object_children; // Objects which were attached to us via an OO connection
         std::map<std::string, std::vector<const object *>> property_children; // Objects which were attached to us via an OP connection
         
@@ -504,69 +491,217 @@ namespace fbx
 
         const object * get_first_child(std::string_view type) const { for(auto * obj : object_children) if(obj->get_type() == type) return obj; return nullptr; }
     };
-
     std::vector<object> index(const ast::document & doc)
     {
-        // Obtain a reference to all AST nodes which describe objects
+        // Obtain list of objects
         std::vector<object> objects;
-        for(auto & n : find(doc.nodes, "Objects").children) 
-        {
-            objects.push_back({&n});
-        }
+        for(auto & node : find(doc.nodes, "Objects").children) objects.push_back({&node});
+        
+        // Perform a topological sort of the list of object IDs based on object-object and object-object property connections
+        std::vector<int64_t> object_ids;
+        for(auto & obj : objects) object_ids.push_back(obj.get_id());
+        const auto connections = enumerate_connections(doc);
+        object_ids = topological_sort(object_ids, connections);
+
+        // Sort the list of objects to match the topological ordering
+        for(size_t i=0; i<object_ids.size(); ++i) for(auto & obj : objects) if(obj.get_id() == object_ids[i]) obj.index = i;
+        std::sort(begin(objects), end(objects), [](const object & a, const object & b) { return a.index < b.index; });
 
         // Capture all connections between objects
         auto find_object_by_id = [&objects](int64_t id) -> object & 
         { 
-            for(auto & obj : objects) 
-            {
-                if(obj.get_id() == id) 
-                {
-                    return obj; 
-                }
-            }
+            for(auto & obj : objects) if(obj.get_id() == id) return obj; 
             throw std::runtime_error("invalid object ID"); 
         };
-        for(auto & n : find(doc.nodes, "Connections").children)
+        for(auto & c : connections)
         {
-            if(n.properties[0].get_string() == "OO")
-            {
-                const auto id_a = n.properties[1].get<int64_t>(), id_b = n.properties[2].get<int64_t>();
-                if(id_b) find_object_by_id(id_b).object_children.push_back(&find_object_by_id(id_a));
-            }
-            if(n.properties[0].get_string() == "OP")
-            {
-                const auto id_a = n.properties[1].get<int64_t>(), id_b = n.properties[2].get<int64_t>();
-                if(id_b) find_object_by_id(id_b).property_children[n.properties[3].get_string()].push_back(&find_object_by_id(id_a));
-            }
+            if(!c.to) continue;
+            if(c.prop) find_object_by_id(c.to).property_children[*c.prop].push_back(&find_object_by_id(c.from));
+            else find_object_by_id(c.to).object_children.push_back(&find_object_by_id(c.from));
+        }
+
+        // Sort all connections to reflect the topological ordering
+        for(auto & obj : objects)
+        {
+            std::sort(begin(obj.object_children), end(obj.object_children), [](const object * a, const object * b) { return a->index < b->index; });
+            for(auto & p : obj.property_children) std::sort(begin(p.second), end(p.second), [](const object * a, const object * b) { return a->index < b->index; });
         }
 
         // NOTE: We are relying on move semantics (or copy ellision) to ensure that the addresses of individual object structs do not change
         return objects;
     }
 
+    void add_bone_weight(geometry::bone_weights & w, uint32_t index, float weight)
+    {
+        if(weight > w.weights[3])
+        {
+            w.indices[3] = index;
+            w.weights[3] = weight;
+        }
+        for(int i=3; i>0; --i) if(w.weights[i] > w.weights[i-1])
+        {
+            std::swap(w.indices[i-1], w.indices[i]);
+            std::swap(w.weights[i-1], w.weights[i]);
+        }
+    }
+
     document load(const ast::document & doc)
     {
         const auto objects = index(doc);
+
+        //for(auto & obj : objects) std::cout << obj.index << ' ' << obj.get_type() << ' ' << obj.get_subtype() << ' ' << obj.get_name() << std::endl;
+
+        // Enumerate all models
+        struct model_desc { const object * model; int parent_index; };
+        std::vector<model_desc> models;
+        for(auto & obj : objects)
+        {
+            if(obj.get_type() != "Model") continue;
+            models.push_back({&obj, -1});
+        }
+        
+        // Obtain skeletal meshes
+        struct bone_desc { const object * cluster, * model; float4x4 transform, transform_link; };
+        struct geometry_metadata { std::vector<bone_desc> bones; };
+
+        std::vector<geometry> geometries;
+        std::vector<geometry_metadata> geometry_metadatas;
+        for(auto & obj : objects)
+        {
+            if(obj.get_type() != "Geometry") continue;
+
+            
+            geometry_metadata meta;
+
+            fbx::geometry geom;
+            geom.id = obj.get_id();
+
+            // Obtain vertices
+            auto & vertices_node = find(obj.node->children, "Vertices");
+            if(vertices_node.properties.size() != 1) throw std::runtime_error("malformed Vertices");
+            auto & vertices_array = vertices_node.properties[0];
+            std::vector<float3> vertex_positions;
+            for(size_t i=0; i<vertices_array.size(); i+=3) vertex_positions.push_back({vertices_array.get<float>(i), vertices_array.get<float>(i+1), vertices_array.get<float>(i+2)});
+
+            // Obtain bone weights and indices
+            std::vector<geometry::bone_weights> vertex_position_bone_weights;
+            auto * skin = obj.get_first_child("Deformer");
+            if(skin && skin->get_subtype() == "Skin")
+            {
+                vertex_position_bone_weights.resize(vertex_positions.size());
+                for(auto * cluster : skin->object_children)
+                {
+                    if(cluster->get_type() != "Deformer" || cluster->get_subtype() != "Cluster") continue;
+
+                    auto * model = cluster->get_first_child("Model");
+                    if(!model) throw std::runtime_error("No Model affiliated with Cluster");
+
+                    uint32_t bone_index = meta.bones.size();
+                    const auto & indices = find(cluster->node->children, "Indexes").properties[0];
+                    const auto & weights = find(cluster->node->children, "Weights").properties[0];
+                    const auto & transform = find(cluster->node->children, "Transform").properties[0];
+                    const auto & transform_link = find(cluster->node->children, "TransformLink").properties[0];
+                    
+                    if(indices.size() != weights.size()) throw std::runtime_error("Length of Indexes array does not match length of Weights array");
+                    for(size_t i=0; i<indices.size(); ++i)
+                    {
+                        add_bone_weight(vertex_position_bone_weights[indices.get<size_t>(i)], bone_index, weights.get<float>(i));
+                    }
+                    bone_desc bone {cluster, model};
+                    if(transform.size() != 16) throw std::runtime_error("Length of Transform array is not 16");
+                    if(transform_link.size() != 16) throw std::runtime_error("Length of TransformLink array is not 16");
+                    for(int j=0; j<4; ++j)
+                    {
+                        for(int i=0; i<4; ++i)
+                        {
+                            // TODO: Verify column major storage in FBX files
+                            bone.transform[j][i] = transform.get<float>(j*4+i);
+                            bone.transform_link[j][i] = transform_link.get<float>(j*4+i);
+                        }
+                    }
+                    meta.bones.push_back(bone);
+                    std::cout << bone_index << ' ' << cluster->get_name() << ' ' << model->get_name() << std::endl;
+                }
+
+                // Renormalize weights
+                for(auto & w : vertex_position_bone_weights) w.weights /= sum(w.weights);
+            }
+
+            // Obtain polygons
+            auto & indices_node = find(obj.node->children, "PolygonVertexIndex");
+            if(indices_node.properties.size() != 1) throw std::runtime_error("malformed PolygonVertexIndex");
+
+            size_t polygon_start = 0;
+            for(size_t j=0, n=indices_node.properties[0].size(); j<n; ++j)
+            {
+                auto i = indices_node.properties[0].get<int32_t>(j);
+
+                // Detect end-of-polygon, indicated by a negative index
+                const bool end_of_polygon = i < 0;
+                if(end_of_polygon) i = ~i;
+
+                // Store a polygon vertex
+                geom.vertices.push_back({vertex_positions[i]});
+                if(!vertex_position_bone_weights.empty()) geom.weights.push_back(vertex_position_bone_weights[i]);
+
+                // Generate triangles if necessary
+                if(end_of_polygon)
+                {
+                    for(size_t j=polygon_start+2; j<geom.vertices.size(); ++j)
+                    {
+                        geom.triangles.push_back(uint3{linalg::vec<size_t,3>{polygon_start, j-1, j}});
+                    }
+                    polygon_start = geom.vertices.size();
+                }
+            }
+
+            // Obtain normals
+            decode_layer(geom.vertices, &geometry::vertex::normal, find(obj.node->children, "LayerElementNormal"), "Normals");
+            decode_layer(geom.vertices, &geometry::vertex::texcoord, find(obj.node->children, "LayerElementUV"), "UV");
+
+            geometries.push_back(geom);
+            geometry_metadatas.push_back(meta);
+        }
+        for(size_t i=0; i<geometries.size(); ++i)
+        {
+            std::cout << "Geometry with " << geometries[i].vertices.size() << " vertices and " << geometry_metadatas[i].bones.size() << std::endl;
+        }
+
+        // Obtain full set of animation curves, indexed by the AnimationCurve index
+        struct keyframe { int64_t key; float value; };
+        std::vector<std::vector<keyframe>> curves(objects.size());
+        for(auto & obj : objects)
+        {
+            if(obj.get_type() != "AnimationCurve") continue;
+            
+            auto & keyframes = curves[obj.index];
+            const auto & key_time = find(obj.node->children, "KeyTime").properties[0];
+            const auto & key_value = find(obj.node->children, "KeyValueFloat").properties[0];
+            if(key_time.size() != key_value.size()) throw std::runtime_error("Length of KeyTime array does not match length of KeyValueFloat array");
+            for(size_t i=0; i<key_time.size(); ++i) keyframes.push_back({key_time.get<int64_t>(i), key_value.get<float>(i)});
+        }
+
+        // For each stack, save an animation
+        for(auto & stack : objects)
+        {
+            if(stack.get_type() != "AnimationStack") continue;
+            if(stack.object_children.size() != 1 || stack.object_children[0]->get_type() != "AnimationLayer") throw std::runtime_error("We only support single AnimationLayer AnimationStacks at the moment");
+            auto & layer = *stack.object_children[0];
+
+            std::vector<std::optional<float3>> evaluated_values(objects.size());
+            for(auto * curve_node : layer.object_children)
+            {
+                if(curve_node->get_type() != "AnimationCurveNode") continue;
+                auto dx = curve_node->property_children.find("d|X");
+                auto dy = curve_node->property_children.find("d|Y");
+                auto dz = curve_node->property_children.find("d|Z");
+            }
+        }
 
         // Load all objects
         document d;
         for(auto & obj : objects)
         {
-            if(obj.get_type() == "Geometry")
-            {
-                auto * skin = obj.get_first_child("Deformer");
-                if(skin && skin->get_subtype() == "Skin")
-                {
-                    std::cout << "Geometry " << obj.get_id() << " is deformed by Skin " << skin->get_id() << ":" << std::endl;
-                    for(auto * cluster : skin->object_children)
-                    {
-                        if(cluster->get_type() != "Deformer" || cluster->get_subtype() != "Cluster") continue;
-                        auto * model = cluster->get_first_child("Model");
-                        std::cout << "  Cluster " << cluster->get_id() << " is driven by Model " << model->get_id() << std::endl;
-                    }
-                }
-            }
-
             if(obj.get_type() == "AnimationStack")
             {
                 std::cout << "AnimationStack " << obj.get_id() << " is named " << obj.get_name() << ":" << std::endl;
@@ -591,9 +726,7 @@ namespace fbx
                 }
             }
         }
-
-        std::vector<geometry> geoms;
-
+        
         std::map<int64_t, std::vector<animation_keyframe>> animation_curves;
         std::map<int64_t, cluster> clusters;
 
@@ -604,10 +737,6 @@ namespace fbx
             if(n.name == "Model")
             {
                 d.models.push_back(fbx::model{n});
-            }
-            if(n.name == "Geometry")
-            {
-                geoms.push_back(fbx::geometry{n});
             }
             if(n.name == "AnimationCurve")
             {
@@ -657,7 +786,7 @@ namespace fbx
             }
         }
 
-        for(auto & g : geoms)
+        for(auto & g : geometries)
         {
             for(auto & v : g.vertices)
             {
@@ -696,7 +825,7 @@ namespace fbx
                 {
                     if(m.id == b)
                     {
-                        for(auto & g : geoms)
+                        for(auto & g : geometries)
                         {
                             if(g.id == a)
                             {

@@ -53,6 +53,8 @@ struct mesh
         float3 position, normal;
         float2 texcoord;
         float3 tangent, bitangent; // Gradient of texcoord.x and texcoord.y relative to position
+        uint4 bone_indices;
+        float4 bone_weights;
     };
     std::vector<vertex> vertices;
     std::vector<uint3> triangles;

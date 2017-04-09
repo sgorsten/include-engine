@@ -20,6 +20,11 @@ struct per_view_uniforms
 	alignas(16) float3 eye_position;
 };
 
+struct per_skinned_object
+{
+    alignas(16) float4x4 bone_matrices[64];
+};
+
 VkAttachmentDescription make_attachment_description(VkFormat format, VkSampleCountFlagBits samples, VkAttachmentLoadOp load_op, VkImageLayout initial_layout=VK_IMAGE_LAYOUT_UNDEFINED, VkAttachmentStoreOp store_op=VK_ATTACHMENT_STORE_OP_DONT_CARE, VkImageLayout final_layout=VK_IMAGE_LAYOUT_UNDEFINED)
 {
     return {0, format, samples, load_op, store_op, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE, initial_layout, final_layout};
@@ -106,7 +111,7 @@ int main() try
 
     // Set up our shader pipeline
     shader_compiler compiler;
-    VkShaderModule vert_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_VERTEX_BIT, "assets/static.vert"));
+    VkShaderModule vert_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_VERTEX_BIT, "assets/skinned.vert"));
     VkShaderModule frag_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/shader.frag"));
     VkShaderModule skybox_vert_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_VERTEX_BIT, "assets/skybox.vert"));
     VkShaderModule skybox_frag_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/skybox.frag"));
@@ -118,7 +123,9 @@ int main() try
         {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, normal)},
         {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(mesh::vertex, texcoord)},
         {3, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, tangent)},
-        {4, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, bitangent)}
+        {4, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, bitangent)},
+        {5, 0, VK_FORMAT_R32G32B32A32_UINT, offsetof(mesh::vertex, bone_indices)},
+        {6, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(mesh::vertex, bone_weights)}
     };
     const VkVertexInputAttributeDescription skybox_attributes[] 
     {
@@ -152,6 +159,7 @@ int main() try
     float3 camera_position {0,0,-20};
     float camera_yaw {0}, camera_pitch {0};
     float2 last_cursor;
+    float total_time = 0;
     auto t0 = std::chrono::high_resolution_clock::now();
     while(!win.should_close())
     {
@@ -161,6 +169,7 @@ int main() try
         const auto t1 = std::chrono::high_resolution_clock::now();
         const auto timestep = std::chrono::duration<float>(t1 - t0).count();
         t0 = t1;
+        total_time += timestep;
 
         // Handle mouselook
         auto cursor = win.get_cursor_pos();
@@ -224,16 +233,19 @@ int main() try
         cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         for(auto & m : meshes)
         {
-            const float4x4 model_matrix = translation_matrix(float3{0,0,0});
+            per_skinned_object po;
+            for(int i=0; i<64; ++i) po.bone_matrices[i] = translation_matrix(float3{0,0,0});
+            po.bone_matrices[10] = translation_matrix(float3{0,-4*std::sin(total_time),0});
+            po.bone_matrices[24] = translation_matrix(float3{0,+4*std::sin(total_time),0});
+
             auto per_object = pool.allocate_descriptor_set(per_object_layout);
-            per_object.write_uniform_buffer(0, 0, model_matrix);
+            per_object.write_uniform_buffer(0, 0, po);
             per_object.write_combined_image_sampler(1, 0, sampler, albedo_tex);
             per_object.write_combined_image_sampler(2, 0, sampler, normal_tex);
             per_object.write_combined_image_sampler(3, 0, sampler, metallic_tex);
             cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
             m.draw(cmd);
         }
-
 
         const float4x4 identity_matrix = translation_matrix(float3{0,0,0});
         auto per_object = pool.allocate_descriptor_set(per_object_layout);

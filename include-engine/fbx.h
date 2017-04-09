@@ -95,12 +95,16 @@ namespace fbx
             float3 normal;
             float2 texcoord;
         };
+        struct bone_weights 
+        { 
+            uint4 indices; 
+            float4 weights; 
+        };
 
         int64_t id;
         std::vector<vertex> vertices; // Corresponds to polygon vertices
+        std::vector<bone_weights> weights;
         std::vector<uint3> triangles;
-
-        geometry(const ast::node & node);
     };
 
     struct model
@@ -145,6 +149,7 @@ namespace fbx
 
     struct document
     {
+        std::vector<geometry> geoms;
         std::vector<model> models;
         std::vector<animation_curve_node> curve_nodes;
         std::vector<skin> skins;
