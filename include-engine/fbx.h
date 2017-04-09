@@ -1,10 +1,8 @@
 #ifndef FBX_H
 #define FBX_H
 
-#include "linalg.h"
-
+#include "data-types.h"
 #include <string>
-#include <vector>
 #include <variant>
 #include <optional>
 
@@ -83,74 +81,8 @@ namespace fbx
     /////////////////////
     // FBX Scene Graph //
     /////////////////////
-
-    using namespace linalg::aliases;
-
-    enum class rotation_order { xyz, xzy, yzx, yxz, zxy, zyx, spheric_xyz };
-
-    struct bone
-    {
-        std::string name;
-        std::optional<size_t> parent_index;
-        float4x4 initial_pose;
-        float4x4 transform, transform_link;
-    };
-
-    struct animation_keyframe
-    {
-        int64_t key;
-        std::vector<float4x4> local_transforms;
-    };
-    struct animation
-    {
-        std::string name;
-        std::vector<animation_keyframe> keyframes;
-    };
-
-    struct geometry
-    {
-        struct vertex
-        {
-            float3 position;
-            float3 normal;
-            float2 texcoord;
-        };
-        struct bone_weights 
-        { 
-            uint4 indices; 
-            float4 weights; 
-        };
-
-        int64_t id;
-        std::vector<vertex> vertices; // Corresponds to polygon vertices
-        std::vector<bone_weights> weights;
-        std::vector<uint3> triangles;
-        std::vector<bone> bones;
-        std::vector<animation> animations;
-    };
-
-    struct model
-    {
-        int64_t id;
-        rotation_order rotation_order {rotation_order::xyz};
-        float3 translation, rotation_offset, rotation_pivot; // Translation vectors
-        float3 pre_rotation, rotation, post_rotation; // Euler angles in radians
-        float3 scaling_offset, scaling_pivot; // Translation vectors
-        float3 scaling; // Scaling factors
-
-        std::vector<geometry> geoms;
-
-        model() {};
-        model(const ast::node & node);
-        float4x4 get_model_matrix() const;
-    };
-
-    struct document
-    {
-        std::vector<model> models;
-    };
-
-    document load(const ast::document & doc);
+    
+    std::vector<mesh> load_meshes(const ast::document & doc);
 }
 
 std::ostream & operator << (std::ostream & out, const fbx::ast::boolean & b);

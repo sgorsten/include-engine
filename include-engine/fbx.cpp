@@ -392,6 +392,21 @@ namespace fbx
         return {prop.properties[4].get<float>(), prop.properties[5].get<float>(), prop.properties[6].get<float>()};
     }
 
+    enum class rotation_order { xyz, xzy, yzx, yxz, zxy, zyx, spheric_xyz };
+    struct model
+    {
+        int64_t id;
+        rotation_order rotation_order {rotation_order::xyz};
+        float3 translation, rotation_offset, rotation_pivot; // Translation vectors
+        float3 pre_rotation, rotation, post_rotation; // Euler angles in radians
+        float3 scaling_offset, scaling_pivot; // Translation vectors
+        float3 scaling; // Scaling factors
+
+        model() {};
+        model(const ast::node & node);
+        float4x4 get_model_matrix() const;
+    };
+
     model::model(const ast::node & node)
     {
         id = node.properties[0].get<int64_t>();
@@ -498,30 +513,23 @@ namespace fbx
         return objects;
     }
 
-    void add_bone_weight(geometry::bone_weights & w, uint32_t index, float weight)
+    void add_bone_weight(mesh::vertex & v, uint32_t index, float weight)
     {
-        if(weight > w.weights[3])
+        if(weight > v.bone_weights[3])
         {
-            w.indices[3] = index;
-            w.weights[3] = weight;
+            v.bone_indices[3] = index;
+            v.bone_weights[3] = weight;
         }
-        for(int i=3; i>0; --i) if(w.weights[i] > w.weights[i-1])
+        for(int i=3; i>0; --i) if(v.bone_weights[i] > v.bone_weights[i-1])
         {
-            std::swap(w.indices[i-1], w.indices[i]);
-            std::swap(w.weights[i-1], w.weights[i]);
+            std::swap(v.bone_indices[i-1], v.bone_indices[i]);
+            std::swap(v.bone_weights[i-1], v.bone_weights[i]);
         }
     }
 
-    document load(const ast::document & doc)
+    std::vector<mesh> load_meshes(const ast::document & doc)
     {
         const auto objects = index(doc);
-
-        // Load the unit scale factor
-        float unit_scale_factor = 1.0f;
-        for(auto & prop : find(find(doc.nodes, "GlobalSettings").children, "Properties70").children)
-        {
-            if(prop.name == "P" && prop.properties[0].get_string() == "UnitScaleFactor") unit_scale_factor = prop.properties[4].get<float>();
-        }
               
         // Obtain full set of animation curves, indexed by the AnimationCurve object
         struct keyframe { int64_t key; float value; };
@@ -538,69 +546,55 @@ namespace fbx
         }
 
         // Obtain skeletal meshes
-        std::vector<geometry> geometries;
+        std::vector<mesh> meshes;
         for(auto & obj : objects)
         {
             if(obj.get_type() != "Geometry") continue;            
 
-            fbx::geometry geom;
-            geom.id = obj.get_id();
+            mesh geom;
 
             // Obtain vertices
             auto & vertices_node = find(obj.node->children, "Vertices");
             if(vertices_node.properties.size() != 1) throw std::runtime_error("malformed Vertices");
             auto & vertices_array = vertices_node.properties[0];
-            std::vector<float3> vertex_positions;
-            for(size_t i=0; i<vertices_array.size(); i+=3) vertex_positions.push_back(float3{vertices_array.get<float>(i), vertices_array.get<float>(i+1), vertices_array.get<float>(i+2)} * unit_scale_factor);
+            std::vector<mesh::vertex> geom_vertices;
+            for(size_t i=0; i<vertices_array.size(); i+=3) geom_vertices.push_back({{vertices_array.get<float>(i), vertices_array.get<float>(i+1), vertices_array.get<float>(i+2)}});
 
             // Obtain bone weights and indices
-            std::vector<geometry::bone_weights> vertex_position_bone_weights;
             auto * skin = obj.get_first_child("Deformer");
             if(skin && skin->get_subtype() == "Skin")
             {
-                vertex_position_bone_weights.resize(vertex_positions.size());
                 std::vector<const object *> bone_models;
                 for(auto & cluster : skin->children)
                 {
                     if(cluster.obj->get_type() != "Deformer" || cluster.obj->get_subtype() != "Cluster") continue;
-
                     auto * model = cluster.obj->get_first_child("Model");
                     if(!model) throw std::runtime_error("No Model affiliated with Cluster");
 
-                    uint32_t bone_index = bone_models.size();
-                    bone_models.push_back(model);                    
-
+                    // Factor in bone weights for this bone
                     const auto & indices = find(cluster.obj->node->children, "Indexes").properties[0];
                     const auto & weights = find(cluster.obj->node->children, "Weights").properties[0];
-                    const auto & transform = find(cluster.obj->node->children, "Transform").properties[0];
-                    const auto & transform_link = find(cluster.obj->node->children, "TransformLink").properties[0];
-                    
                     if(indices.size() != weights.size()) throw std::runtime_error("Length of Indexes array does not match length of Weights array");
                     for(size_t i=0; i<indices.size(); ++i)
                     {
-                        add_bone_weight(vertex_position_bone_weights[indices.get<size_t>(i)], bone_index, weights.get<float>(i));
+                        add_bone_weight(geom_vertices[indices.get<size_t>(i)], bone_models.size(), weights.get<float>(i));
                     }
 
+                    // Obtain initial pose
+                    bone_models.push_back(model);
                     fbx::model m {*model->node};
-                    bone bone {model->get_name()};
+                    mesh::bone bone {model->get_name()};
                     bone.initial_pose = m.get_model_matrix();                    
 
+                    // Obtain model-to-bone matrix
+                    const auto & transform = find(cluster.obj->node->children, "Transform").properties[0];
                     if(transform.size() != 16) throw std::runtime_error("Length of Transform array is not 16");
-                    if(transform_link.size() != 16) throw std::runtime_error("Length of TransformLink array is not 16");
-                    for(int j=0; j<4; ++j)
-                    {
-                        for(int i=0; i<4; ++i)
-                        {
-                            // TODO: Verify column major storage in FBX files
-                            bone.transform[j][i] = transform.get<float>(j*4+i);
-                            bone.transform_link[j][i] = transform_link.get<float>(j*4+i);
-                        }
-                    }
+                    for(int j=0; j<4; ++j) for(int i=0; i<4; ++i) bone.model_to_bone_matrix[j][i] = transform.get<float>(j*4+i);
                     geom.bones.push_back(bone);
                 }
 
                 // Renormalize weights
-                for(auto & w : vertex_position_bone_weights) w.weights /= sum(w.weights);
+                for(auto & v : geom_vertices) v.bone_weights /= sum(v.bone_weights);
 
                 // Make connections
                 for(size_t i=0; i<bone_models.size(); ++i)
@@ -620,10 +614,11 @@ namespace fbx
                             geom.bones[i].parent_index = bone_models.size();
                             bone_models.push_back(parent);
 
-                            bone b;
+                            mesh::bone b;
                             b.name = parent->get_name();
                             fbx::model m{*parent->node};
                             b.initial_pose = m.get_model_matrix();
+                            b.model_to_bone_matrix = {{1,0,0,0},{0,1,0,0},{0,0,1,0},{0,0,0,1}};
                             geom.bones.push_back(b);
                         }
                     }
@@ -636,7 +631,7 @@ namespace fbx
                     auto * layer = stack.get_first_child("AnimationLayer");
                     if(!layer) continue;
 
-                    animation a;
+                    mesh::animation a;
                     a.name = stack.get_name();
 
                     // Gather complete set of keyframes for this animation
@@ -689,7 +684,7 @@ namespace fbx
                         }
 
                         // Compute local matrices
-                        animation_keyframe anim_kf {key};
+                        mesh::keyframe anim_kf {key};
                         for(auto * model : bone_models) anim_kf.local_transforms.push_back(model_states[model].get_model_matrix());
                         a.keyframes.push_back(anim_kf);
                     }
@@ -712,8 +707,7 @@ namespace fbx
                 if(end_of_polygon) i = ~i;
 
                 // Store a polygon vertex
-                geom.vertices.push_back({vertex_positions[i]});
-                if(!vertex_position_bone_weights.empty()) geom.weights.push_back(vertex_position_bone_weights[i]);
+                geom.vertices.push_back(geom_vertices[i]);
 
                 // Generate triangles if necessary
                 if(end_of_polygon)
@@ -726,77 +720,14 @@ namespace fbx
                 }
             }
 
-            // Obtain normals
-            decode_layer(geom.vertices, &geometry::vertex::normal, find(obj.node->children, "LayerElementNormal"), "Normals");
-            decode_layer(geom.vertices, &geometry::vertex::texcoord, find(obj.node->children, "LayerElementUV"), "UV");
-
-            geometries.push_back(geom);
+            // Obtain normals and UVs
+            decode_layer(geom.vertices, &mesh::vertex::normal, find(obj.node->children, "LayerElementNormal"), "Normals");
+            decode_layer(geom.vertices, &mesh::vertex::texcoord, find(obj.node->children, "LayerElementUV"), "UV");
+            for(auto & v : geom.vertices) v.texcoord.y = 1 - v.texcoord.y;
+            meshes.push_back(geom);
         }
         
-        // Load all objects
-        document d;        
-        std::map<int64_t, std::vector<animation_keyframe>> animation_curves;
-        for(auto & n : find(doc.nodes, "Objects").children)
-        {
-            if(n.name == "Model")
-            {
-                d.models.push_back(fbx::model{n});
-            }
-        }
-
-        for(auto & g : geometries)
-        {
-            for(auto & v : g.vertices)
-            {
-                v.texcoord.y = 1 - v.texcoord.y;
-            }
-        }
-
-        // Connect objects
-        for(auto & n : find(doc.nodes, "Connections").children)
-        {
-            if(n.name != "C") continue;
-            auto a = n.properties[1].get<int64_t>(), b = n.properties[2].get<int64_t>();
-
-            // Object-to-property connection
-            if(n.properties[0].get_string() == "OP")
-            {
-                auto & prop = n.properties[3].get_string();
-                /*for(auto & c : d.curve_nodes)
-                {
-                    if(c.id == b)
-                    {
-                        auto it = animation_curves.find(a);
-                        if(it == end(animation_curves)) throw std::runtime_error("no object with ID " + a);
-                    
-                        if(prop == "d|X") c.x = std::move(it->second);
-                        else if(prop == "d|Y") c.y = std::move(it->second);
-                        else if(prop == "d|Z") c.z = std::move(it->second);
-                        else throw std::runtime_error("unknown property " + prop);
-                        animation_curves.erase(it);
-                    }
-                }*/
-            }
-            else if(n.properties[0].get_string() == "OO") // Object-to-object connection
-            {
-                for(auto & m : d.models)
-                {
-                    if(m.id == b)
-                    {
-                        for(auto & g : geometries)
-                        {
-                            if(g.id == a)
-                            {
-                                m.geoms.push_back(g);
-                            }
-                        }
-                    }
-                }
-            }
-            else throw std::runtime_error("Unknown connection type " + n.properties[0].get_string());
-        }
-
-        return d;
+        return meshes;
     }
 }
 

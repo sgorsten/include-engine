@@ -59,42 +59,8 @@ mesh generate_box_mesh(const float3 & a, const float3 & b)
 std::vector<mesh> load_meshes_from_fbx(const char * filename)
 {
     std::ifstream in(filename, std::ifstream::binary);
-    auto doc = fbx::ast::load(in); 
-
-    /*std::ofstream out("mesh.txt");
-    out << "FBX Version " << doc.version << std::endl;
-    for(auto & node : doc.nodes) out << node << std::endl;*/
-    auto d = fbx::load(doc);
-
-    std::vector<mesh> meshes;
-    for(auto & m : d.models) 
-    {
-        auto model_matrix = m.get_model_matrix();
-        auto normal_matrix = inverse(transpose(model_matrix));
-        for(auto & g : m.geoms)
-        {
-            // Produce mesh by transforming FbxGeometry by FbxModel transform
-            mesh mesh;
-            for(auto & v : g.vertices)
-            {
-                mesh.vertices.push_back({mul(model_matrix, float4{v.position,1}).xyz(), mul(normal_matrix, float4{v.normal,0}).xyz(), v.texcoord});
-            }
-            for(size_t i=0; i<g.weights.size(); ++i)
-            {
-                mesh.vertices[i].bone_indices = g.weights[i].indices;
-                mesh.vertices[i].bone_weights = g.weights[i].weights;
-            }
-            for(auto & b : g.bones) mesh.bones.push_back({b.name, b.parent_index, b.initial_pose, b.transform});
-            for(auto & a : g.animations)
-            {
-                mesh::animation anim {a.name};
-                for(auto & kf : a.keyframes) anim.keyframes.push_back({kf.key, kf.local_transforms});
-                mesh.animations.push_back(anim);
-            }
-            mesh.triangles = g.triangles;
-            meshes.push_back(compute_tangent_basis(std::move(mesh)));
-        }
-    }
+    auto meshes = fbx::load_meshes(fbx::ast::load(in));
+    for(auto & m : meshes) m = compute_tangent_basis(std::move(m));
     return meshes;
 }
 
