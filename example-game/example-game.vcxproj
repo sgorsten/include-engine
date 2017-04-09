@@ -172,6 +172,7 @@
     <None Include="assets\skybox.frag" />
     <None Include="assets\skybox.vert" />
     <None Include="assets\scene.glsl" />
+    <None Include="assets\static.vert" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

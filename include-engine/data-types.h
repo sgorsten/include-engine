@@ -64,7 +64,7 @@ struct mesh
     };
     struct vertex
     {
-        float3 position, normal;
+        float3 position, color, normal;
         float2 texcoord;
         float3 tangent, bitangent; // Gradient of texcoord.x and texcoord.y relative to position
         uint4 bone_indices;

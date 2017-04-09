@@ -94,7 +94,7 @@ int main() try
     gfx_mesh mutant_mesh {ctx, load_meshes_from_fbx("assets/mutant-mesh.fbx")[0]};
     gfx_mesh skybox_mesh {ctx, generate_box_mesh({-10,-10,-10}, {10,10,10})};
     gfx_mesh ground_mesh {ctx, generate_box_mesh({-80,8,-80}, {80,10,80})};
-    //gfx_mesh box_mesh {ctx, load_meshes_from_fbx("assets/cube-mesh.fbx")[0]};
+    gfx_mesh box_mesh {ctx, load_meshes_from_fbx("assets/cube-mesh.fbx")[0]};
 
     // Set up our layouts
     auto per_scene_layout = ctx.create_descriptor_set_layout({
@@ -132,12 +132,13 @@ int main() try
     const VkVertexInputAttributeDescription attributes[] 
     {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, position)}, 
-        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, normal)},
-        {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(mesh::vertex, texcoord)},
-        {3, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, tangent)},
-        {4, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, bitangent)},
-        {5, 0, VK_FORMAT_R32G32B32A32_UINT, offsetof(mesh::vertex, bone_indices)},
-        {6, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(mesh::vertex, bone_weights)}
+        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, color)},
+        {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, normal)},
+        {3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(mesh::vertex, texcoord)},
+        {4, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, tangent)},
+        {5, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, bitangent)},
+        {6, 0, VK_FORMAT_R32G32B32A32_UINT, offsetof(mesh::vertex, bone_indices)},
+        {7, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(mesh::vertex, bone_weights)}
     };
     const VkVertexInputAttributeDescription skybox_attributes[] 
     {
@@ -288,9 +289,9 @@ int main() try
             mutant_mesh.draw(cmd, 2);
         }
 
-        /*{
+        {
             cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, static_pipeline);
-            const float4x4 model_matrix = translation_matrix(float3{-30,-20,0});
+            const float4x4 model_matrix = mul(translation_matrix(float3{-30,-20,0}), scaling_matrix(float3{4,4,4}));
             auto per_object = pool.allocate_descriptor_set(per_object_layout);
             per_object.write_uniform_buffer(0, 0, model_matrix);
             per_object.write_combined_image_sampler(1, 0, sampler, gray_tex);
@@ -298,7 +299,7 @@ int main() try
             per_object.write_combined_image_sampler(3, 0, sampler, black_tex);
             cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
             box_mesh.draw(cmd);
-        }*/
+        }
 
         cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, static_pipeline);
         const float4x4 identity_matrix = translation_matrix(float3{0,0,0});

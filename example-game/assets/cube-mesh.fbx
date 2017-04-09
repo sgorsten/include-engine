@@ -214,6 +214,17 @@ Objects:  {
 		
 		GeometryVersion: 124
 		
+		; We define one color per vertex
+		LayerElementColor: 0 {
+			Version: 101
+			Name: "Col"
+			MappingInformationType: "ByVertex"
+			ReferenceInformationType: "Direct"
+			Colors: *24 {
+				a: 0,0,0, 255,0,0, 0,255,0, 255,255,0, 0,0,255, 255,0,255, 0,255,255, 0,255,255
+			}
+		}
+		
 		; We define one normal per cube face
 		LayerElementNormal: 0 {
 			Version: 102

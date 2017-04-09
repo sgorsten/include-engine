@@ -8,17 +8,18 @@ layout(set=2, binding=2) uniform sampler2D u_normal;
 layout(set=2, binding=3) uniform sampler2D u_metallic;
 
 layout(location = 0) in vec3 position;
-layout(location = 1) in vec3 normal;
-layout(location = 2) in vec2 texcoord;
-layout(location = 3) in vec3 tangent;
-layout(location = 4) in vec3 bitangent;
+layout(location = 1) in vec3 color;
+layout(location = 2) in vec3 normal;
+layout(location = 3) in vec2 texcoord;
+layout(location = 4) in vec3 tangent;
+layout(location = 5) in vec3 bitangent;
 
 layout(location = 0) out vec4 f_color;
 
 void main() 
 {
 	vec3 eye_vec = normalize(u_eye_position - position);
-	vec3 albedo = texture(u_albedo, texcoord).rgb;
+	vec3 albedo = texture(u_albedo, texcoord).rgb * color;
 	vec3 tan_normal = normalize(texture(u_normal, texcoord).xyz*2-1);
 	vec3 normal_vec = normalize(normalize(tangent)*tan_normal.x + normalize(bitangent)*tan_normal.y + normalize(normal)*tan_normal.z);
 	vec3 refl_vec = normal_vec*(dot(eye_vec, normal_vec)*2) - eye_vec;

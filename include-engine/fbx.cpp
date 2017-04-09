@@ -351,11 +351,6 @@ namespace fbx
         }
     }
 
-    template<class T, int M> void decode_attribute(linalg::vec<T,M> & attribute, const ast::property & array, size_t index) 
-    {
-        for(int j=0; j<M; ++j) attribute[j] = array.get<T>(index*M+j);
-    }
-
     template<class T> constexpr T rad_to_deg = static_cast<T>(57.295779513082320876798154814105);
     template<class T> constexpr T deg_to_rad = static_cast<T>(0.0174532925199432957692369076848);
 
@@ -370,27 +365,61 @@ namespace fbx
         return nullptr;
     }
 
-    
-    template<class T, int M> void decode_layer(linalg::vec<T,M> & attribute, const ast::node & node, std::string_view array_name, size_t polygon_vertex_id) 
+    class layer_info
     {
-        auto & array = find(node.children, array_name).properties[0];
-        auto mapping_information_type = find(node.children, "MappingInformationType").properties[0].get_string();
-        auto reference_information_type = find(node.children, "ReferenceInformationType").properties[0].get_string();
-        if(mapping_information_type == "ByPolygonVertex") 
+        enum mapping_information_type { by_vertex, by_polygon_vertex, by_polygon, by_edge, all_same };
+        enum reference_information_type { direct, index_to_direct };
+
+        const ast::property * array, * index_array = 0;
+        mapping_information_type mapping;
+        reference_information_type reference;
+
+        size_t get_value_index(size_t mapping_index) const
         {
-            if(reference_information_type == "Direct")
-            {
-                decode_attribute(attribute, array, polygon_vertex_id);
-            }
-            else if(reference_information_type == "IndexToDirect")
-            {
-                auto & index_array = find(node.children, std::string(array_name) + "Index").properties[0];
-                decode_attribute(attribute, array, index_array.get<size_t>(polygon_vertex_id));
-            }
-            else throw std::runtime_error("unsupported ReferenceInformationType: " + reference_information_type);    
+            if(reference == direct) return mapping_index;
+            if(reference == index_to_direct) return index_array->get<size_t>(mapping_index);
+            throw std::logic_error("bad reference_information_type");
         }
-        else throw std::runtime_error("unsupported MappingInformationType: " + mapping_information_type);
-    }
+    public:
+        layer_info(const ast::node & node, std::string_view array_name, std::string_view index_array_name)
+        {
+            array = &find(node.children, array_name).properties[0];
+
+            auto mapping_type = find(node.children, "MappingInformationType").properties[0].get_string();
+            if(mapping_type == "ByVertex" || mapping_type == "ByVertice") mapping = by_vertex;
+            else if(mapping_type == "ByPolygon") mapping = by_polygon;
+            else if(mapping_type == "ByPolygonVertex") mapping = by_polygon_vertex;
+            else if(mapping_type == "ByEdge") mapping = by_edge;
+            else if(mapping_type == "AllSame") mapping = all_same;
+            else throw std::runtime_error("unsupported MappingInformationType: " + mapping_type);
+
+            auto reference_type = find(node.children, "ReferenceInformationType").properties[0].get_string();
+            if(reference_type == "Direct") reference = direct;
+            else if(reference_type == "IndexToDirect")
+            {
+                reference = index_to_direct;
+                index_array = &find(node.children, index_array_name).properties[0];
+            }
+            else throw std::runtime_error("unsupported ReferenceInformationType: " + reference_type);
+        }
+
+        size_t get_vertex_index(size_t geometric_vertex_id, size_t polygon_id, size_t polygon_vertex_id) const
+        {
+            switch(mapping)
+            {
+            case by_vertex: return get_value_index(geometric_vertex_id);
+            case by_polygon: return get_value_index(polygon_id);
+            case by_polygon_vertex: return get_value_index(polygon_vertex_id);
+            case all_same: return 0;
+            default: throw std::logic_error("bad mapping_information_type for vertices");
+            }
+        }
+
+        template<class T, int M> void decode_attribute(linalg::vec<T,M> & attribute, size_t index) const
+        {
+            for(int j=0; j<M; ++j) attribute[j] = array->get<T>(index*M+j);
+        }
+    };
 
     float3 read_vector3d_property(const ast::node & prop)
     {
@@ -538,7 +567,7 @@ namespace fbx
             if(vertices_node.properties.size() != 1) throw std::runtime_error("malformed Vertices");
             auto & vertices_array = vertices_node.properties[0];
             std::vector<mesh::vertex> geom_vertices;
-            for(size_t i=0; i<vertices_array.size(); i+=3) geom_vertices.push_back({{vertices_array.get<float>(i), vertices_array.get<float>(i+1), vertices_array.get<float>(i+2)}});
+            for(size_t i=0; i<vertices_array.size(); i+=3) geom_vertices.push_back({{vertices_array.get<float>(i), vertices_array.get<float>(i+1), vertices_array.get<float>(i+2)}, {255,255,255}});
 
             // Obtain bone weights and indices
             auto * skin = obj.get_first_child("Deformer");
@@ -572,9 +601,6 @@ namespace fbx
                     for(int j=0; j<4; ++j) for(int i=0; i<4; ++i) bone.model_to_bone_matrix[j][i] = transform.get<float>(j*4+i);
                     geom.bones.push_back(bone);
                 }
-
-                // Renormalize weights
-                for(auto & v : geom_vertices) v.bone_weights /= sum(v.bone_weights);
 
                 // Make connections
                 for(size_t i=0; i<bone_models.size(); ++i)
@@ -712,6 +738,11 @@ namespace fbx
             }
             size_t polygon_index = 0;
 
+            std::optional<layer_info> colors, normals, uvs;
+            if(auto * node = find_maybe(obj.node->children, "LayerElementColor")) colors = layer_info{*node, "Colors", "ColorIndex"};
+            if(auto * node = find_maybe(obj.node->children, "LayerElementNormal")) normals = layer_info{*node, "Normals", "NormalIndex"};
+            if(auto * node = find_maybe(obj.node->children, "LayerElementUV")) uvs = layer_info{*node, "UV", "UVIndex"};            
+
             // Obtain polygons
             auto & indices_node = find(obj.node->children, "PolygonVertexIndex");
             if(indices_node.properties.size() != 1) throw std::runtime_error("malformed PolygonVertexIndex");
@@ -729,8 +760,9 @@ namespace fbx
 
                 // Store a polygon vertex
                 auto vertex = geom_vertices[i];
-                decode_layer(vertex.normal, find(obj.node->children, "LayerElementNormal"), "Normals", polygon_vertex_id);
-                decode_layer(vertex.texcoord, find(obj.node->children, "LayerElementUV"), "UV", polygon_vertex_id);
+                if(colors) colors->decode_attribute(vertex.color, colors->get_vertex_index(i, polygon_index, polygon_vertex_id));
+                if(normals) normals->decode_attribute(vertex.normal, normals->get_vertex_index(i, polygon_index, polygon_vertex_id));
+                if(uvs) uvs->decode_attribute(vertex.texcoord, uvs->get_vertex_index(i, polygon_index, polygon_vertex_id));
                 geom.vertices.push_back(vertex);
 
                 // Generate triangles if necessary
@@ -748,8 +780,13 @@ namespace fbx
                 }
             }
 
-            // Obtain normals and UVs
-            for(auto & v : geom.vertices) v.texcoord.y = 1 - v.texcoord.y;
+            // Finalize vertices
+            for(auto & v : geom.vertices) 
+            {
+                v.color /= 255.0f;
+                v.texcoord.y = 1 - v.texcoord.y;
+                v.bone_weights /= sum(v.bone_weights);
+            }
 
             for(auto & tris : material_triangles)
             {
