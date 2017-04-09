@@ -364,6 +364,12 @@ namespace fbx
         for(auto & n : nodes) if(n.name == name) return n;
         throw std::runtime_error("missing node " + std::string(name));
     }
+    const ast::node * find_maybe(const std::vector<ast::node> & nodes, std::string_view name)
+    {
+        for(auto & n : nodes) if(n.name == name) return &n;
+        return nullptr;
+    }
+
     
     template<class V, class T, int M> void decode_layer(std::vector<V> & vertices, linalg::vec<T,M> V::*attribute, const ast::node & node, std::string_view array_name) 
     {
@@ -476,24 +482,24 @@ namespace fbx
         for(auto & node : find(doc.nodes, "Objects").children) objects.push_back({&node});
 
         // Capture all connections between objects
-        auto find_object_by_id = [&objects](int64_t id) -> object & 
+        auto find_object_by_id = [&objects](int64_t id) -> object * 
         { 
-            for(auto & obj : objects) if(obj.get_id() == id) return obj; 
-            throw std::runtime_error("invalid object ID"); 
+            for(auto & obj : objects) if(obj.get_id() == id) return &obj;
+            return nullptr;
         };
         for(auto & n : find(doc.nodes, "Connections").children)
         {
-            const uint64_t from = n.properties[1].get<int64_t>(), to = n.properties[2].get<int64_t>();
-            if(!to) continue;
+            auto * from = find_object_by_id(n.properties[1].get<int64_t>()), * to = find_object_by_id(n.properties[2].get<int64_t>());
+            if(!from || !to) continue;
             if(n.properties[0].get_string() == "OO")
             {
-                find_object_by_id(to).children.push_back({&find_object_by_id(from), std::nullopt});
-                find_object_by_id(from).parents.push_back({&find_object_by_id(to), std::nullopt});
+                to->children.push_back({from, std::nullopt});
+                from->parents.push_back({to, std::nullopt});
             }
             if(n.properties[0].get_string() == "OP")
             {
-                find_object_by_id(to).children.push_back({&find_object_by_id(from), n.properties[3].get_string()});
-                find_object_by_id(from).parents.push_back({&find_object_by_id(to), n.properties[3].get_string()});
+                to->children.push_back({from, n.properties[3].get_string()});
+                from->parents.push_back({to, n.properties[3].get_string()});
             }
         }
 
@@ -686,14 +692,24 @@ namespace fbx
                     geom.animations.push_back(a);
                 }
             }
-
-            std::vector<std::vector<uint3>> material_triangles;
-
-            auto layer_material = find(obj.node->children, "LayerElementMaterial");
-            auto mapping_information_type = find(layer_material.children, "MappingInformationType").properties[0].get_string();
-            auto reference_information_type = find(layer_material.children, "ReferenceInformationType").properties[0].get_string();
-            if(mapping_information_type != "ByPolygon" || reference_information_type != "IndexToDirect") throw std::runtime_error("Unsupported LayerElementMaterial mapping");
-            auto & materials = find(layer_material.children, "Materials").properties[0];
+            else if(auto parent = obj.get_first_parent("Model"))
+            {
+                model_transform mt {*parent->node};
+                mesh::bone bone;
+                bone.name = parent->get_name();
+                bone.initial_pose = mt.get_keyframe();
+                bone.model_to_bone_matrix = {{1,0,0,0},{0,1,0,0},{0,0,1,0},{0,0,0,1}};
+                geom.bones.push_back(bone);
+            }
+            
+            const ast::property * material_list = nullptr;
+            if(auto * layer_material = find_maybe(obj.node->children, "LayerElementMaterial"))
+            {
+                auto mapping_information_type = find(layer_material->children, "MappingInformationType").properties[0].get_string();
+                auto reference_information_type = find(layer_material->children, "ReferenceInformationType").properties[0].get_string();
+                if(mapping_information_type != "ByPolygon" || reference_information_type != "IndexToDirect") throw std::runtime_error("Unsupported LayerElementMaterial mapping");
+                material_list = &find(layer_material->children, "Materials").properties[0];
+            }
             size_t polygon_index = 0;
 
             // Obtain polygons
@@ -701,6 +717,7 @@ namespace fbx
             if(indices_node.properties.size() != 1) throw std::runtime_error("malformed PolygonVertexIndex");
 
             size_t polygon_start = 0;
+            std::vector<std::vector<uint3>> material_triangles;
             for(size_t j=0, n=indices_node.properties[0].size(); j<n; ++j)
             {
                 auto i = indices_node.properties[0].get<int32_t>(j);
@@ -715,7 +732,7 @@ namespace fbx
                 // Generate triangles if necessary
                 if(end_of_polygon)
                 {
-                    auto material_index = materials.get<size_t>(polygon_index);
+                    auto material_index = material_list ? material_list->get<size_t>(polygon_index) : 0;
                     if(material_index >= material_triangles.size()) material_triangles.resize(material_index+1);
 
                     for(size_t j=polygon_start+2; j<geom.vertices.size(); ++j)

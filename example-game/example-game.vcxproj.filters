@@ -24,5 +24,8 @@
     <None Include="assets\skinned.vert">
       <Filter>shaders</Filter>
     </None>
+    <None Include="assets\metal.frag">
+      <Filter>shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

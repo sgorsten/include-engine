@@ -166,6 +166,7 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
+    <None Include="assets\metal.frag" />
     <None Include="assets\shader.frag" />
     <None Include="assets\skinned.vert" />
     <None Include="assets\skybox.frag" />

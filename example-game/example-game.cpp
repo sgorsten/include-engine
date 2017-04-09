@@ -38,11 +38,13 @@ int main() try
     texture_2d black_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({0,0,0,255}));
     texture_2d gray_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({128,128,128,255}));
     texture_2d flat_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({128,128,255,255}));
-    texture_2d mutant_albedo(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/mutant-albedo.jpg")); //"assets/helmet-albedo.jpg"));
-    texture_2d mutant_normal(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/mutant-normal.jpg")); //helmet-normal.jpg"));
-    texture_2d akai_albedo(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/akai-albedo.jpg")); //"assets/helmet-albedo.jpg"));
-    texture_2d akai_normal(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/akai-normal.jpg")); //helmet-normal.jpg"));
-    texture_2d metallic_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-metallic.jpg"));
+    texture_2d helmet_albedo(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-albedo.jpg"));
+    texture_2d helmet_normal(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-normal.jpg"));
+    texture_2d helmet_metallic(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-metallic.jpg"));
+    texture_2d mutant_albedo(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/mutant-albedo.jpg"));
+    texture_2d mutant_normal(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/mutant-normal.jpg"));
+    texture_2d akai_albedo(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/akai-albedo.jpg"));
+    texture_2d akai_normal(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/akai-normal.jpg"));
     texture_cube env_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, 
         load_image("assets/posx.jpg"), load_image("assets/negx.jpg"), 
         load_image("assets/posy.jpg"), load_image("assets/negy.jpg"),
@@ -88,11 +90,8 @@ int main() try
             vkCmdDrawIndexed(cmd, m.materials[mtl].num_triangles*3, 1, m.materials[mtl].first_triangle*3, 0, 0);
         }
     };
-    std::vector<gfx_mesh> meshes;
-    for(auto & m : load_meshes_from_fbx("assets/mutant-mesh.fbx"))
-    {
-        meshes.push_back({ctx, m});
-    }
+    gfx_mesh helmet_mesh {ctx, load_meshes_from_fbx("assets/helmet-mesh.fbx")[0]};
+    gfx_mesh mutant_mesh {ctx, load_meshes_from_fbx("assets/mutant-mesh.fbx")[0]};
     gfx_mesh skybox_mesh {ctx, generate_box_mesh({-10,-10,-10}, {10,10,10})};
     gfx_mesh ground_mesh {ctx, generate_box_mesh({-80,8,-80}, {80,10,80})};
     gfx_mesh box_mesh {ctx, generate_box_mesh({-1,-1,-1}, {1,1,1})};
@@ -125,6 +124,7 @@ int main() try
     VkShaderModule static_vert_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_VERTEX_BIT, "assets/static.vert"));
     VkShaderModule skinned_vert_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_VERTEX_BIT, "assets/skinned.vert"));
     VkShaderModule frag_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/shader.frag"));
+    VkShaderModule metal_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/metal.frag"));
     VkShaderModule skybox_vert_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_VERTEX_BIT, "assets/skybox.vert"));
     VkShaderModule skybox_frag_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/skybox.frag"));
 
@@ -143,6 +143,7 @@ int main() try
     {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, position)}
     };
+    VkPipeline helmet_pipeline = make_pipeline(ctx.device, render_pass, pipeline_layout, bindings, attributes, static_vert_shader, metal_shader, true, true);
     VkPipeline static_pipeline = make_pipeline(ctx.device, render_pass, pipeline_layout, bindings, attributes, static_vert_shader, frag_shader, true, true);
     VkPipeline skinned_pipeline = make_pipeline(ctx.device, render_pass, pipeline_layout, bindings, attributes, skinned_vert_shader, frag_shader, true, true);
     VkPipeline skybox_pipeline = make_pipeline(ctx.device, render_pass, skybox_pipeline_layout, bindings, skybox_attributes, skybox_vert_shader, skybox_frag_shader, false, false);
@@ -245,35 +246,46 @@ int main() try
         skybox_mesh.draw(cmd);
 
         // Draw meshes
-        cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, skinned_pipeline);
-        for(auto & m : meshes)
         {
-            if(++anim_frame >= m.m.animations[0].keyframes.size()) anim_frame = 0;
-            auto & kf = m.m.animations[0].keyframes[anim_frame];
+            cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, helmet_pipeline);
+            const float4x4 model_matrix = mul(translation_matrix(float3{30, -20, 0}), scaling_matrix(float3{1,-1,-1}), helmet_mesh.m.bones[0].initial_pose.get_local_transform(), helmet_mesh.m.bones[0].model_to_bone_matrix);
+            auto per_object = pool.allocate_descriptor_set(per_object_layout);
+            per_object.write_uniform_buffer(0, 0, model_matrix);
+            per_object.write_combined_image_sampler(1, 0, sampler, helmet_albedo);
+            per_object.write_combined_image_sampler(2, 0, sampler, helmet_normal);
+            per_object.write_combined_image_sampler(3, 0, sampler, helmet_metallic);
+            cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
+            helmet_mesh.draw(cmd);
+        }
+
+        cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, skinned_pipeline);
+        {
+            if(++anim_frame >= mutant_mesh.m.animations[0].keyframes.size()) anim_frame = 0;
+            auto & kf = mutant_mesh.m.animations[0].keyframes[anim_frame];
 
             per_skinned_object po {};
-            for(size_t i=0; i<m.m.bones.size(); ++i)
+            for(size_t i=0; i<mutant_mesh.m.bones.size(); ++i)
             {   
-                po.bone_matrices[i] = mul(scaling_matrix(float3{1,-1,-1}), m.m.get_bone_pose(kf.local_transforms, i), m.m.bones[i].model_to_bone_matrix);
+                po.bone_matrices[i] = mul(scaling_matrix(float3{1,-1,-1}), mutant_mesh.m.get_bone_pose(kf.local_transforms, i), mutant_mesh.m.bones[i].model_to_bone_matrix);
             }
 
             auto per_object = pool.allocate_descriptor_set(per_object_layout);
             per_object.write_uniform_buffer(0, 0, po);
             per_object.write_combined_image_sampler(1, 0, sampler, mutant_albedo);
             per_object.write_combined_image_sampler(2, 0, sampler, mutant_normal);
-            per_object.write_combined_image_sampler(3, 0, sampler, metallic_tex);
+            per_object.write_combined_image_sampler(3, 0, sampler, black_tex);
             cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
-            m.draw(cmd, 0);
-            m.draw(cmd, 1);
-            m.draw(cmd, 3);
+            mutant_mesh.draw(cmd, 0);
+            mutant_mesh.draw(cmd, 1);
+            mutant_mesh.draw(cmd, 3);
 
             auto per_object_2 = pool.allocate_descriptor_set(per_object_layout);
             per_object_2.write_uniform_buffer(0, 0, po);
             per_object_2.write_combined_image_sampler(1, 0, sampler, akai_albedo);
             per_object_2.write_combined_image_sampler(2, 0, sampler, akai_normal);
-            per_object_2.write_combined_image_sampler(3, 0, sampler, metallic_tex);   
+            per_object_2.write_combined_image_sampler(3, 0, sampler, black_tex);   
             cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object_2, {});
-            m.draw(cmd, 2);
+            mutant_mesh.draw(cmd, 2);
         }
 
         cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, static_pipeline);
@@ -296,6 +308,7 @@ int main() try
 
     vkDeviceWaitIdle(ctx.device);
     vkDestroySampler(ctx.device, sampler, nullptr);
+    vkDestroyPipeline(ctx.device, helmet_pipeline, nullptr);
     vkDestroyPipeline(ctx.device, static_pipeline, nullptr);
     vkDestroyPipeline(ctx.device, skinned_pipeline, nullptr);
     vkDestroyPipeline(ctx.device, skybox_pipeline, nullptr);
@@ -307,6 +320,7 @@ int main() try
     vkDestroyShaderModule(ctx.device, static_vert_shader, nullptr);
     vkDestroyShaderModule(ctx.device, skinned_vert_shader, nullptr);
     vkDestroyShaderModule(ctx.device, frag_shader, nullptr);
+    vkDestroyShaderModule(ctx.device, metal_shader, nullptr);
     vkDestroyShaderModule(ctx.device, skybox_vert_shader, nullptr);
     vkDestroyShaderModule(ctx.device, skybox_frag_shader, nullptr);
     for(auto framebuffer : swapchain_framebuffers) vkDestroyFramebuffer(ctx.device, framebuffer, nullptr);

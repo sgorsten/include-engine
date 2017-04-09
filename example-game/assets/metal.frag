@@ -21,6 +21,8 @@ void main()
 	vec3 albedo = texture(u_albedo, texcoord).rgb;
 	vec3 tan_normal = normalize(texture(u_normal, texcoord).xyz*2-1);
 	vec3 normal_vec = normalize(normalize(tangent)*tan_normal.x + normalize(bitangent)*tan_normal.y + normalize(normal)*tan_normal.z);
+	vec3 refl_vec = normal_vec*(dot(eye_vec, normal_vec)*2) - eye_vec;
+	vec3 refl_light = albedo * sample_environment(refl_vec)*2;
 
 	vec3 light = u_ambient_light;
 
@@ -28,6 +30,7 @@ void main()
 	light += albedo * u_light_color * max(dot(normal_vec, light_vec), 0);
 	vec3 half_vec = normalize(light_vec + eye_vec);                
 	light += u_light_color * pow(max(dot(normal_vec, half_vec), 0), 128);
-
-	f_color = vec4(light,1);
+	
+	float metallic = texture(u_metallic, texcoord).r;
+	f_color = vec4(light*(1-metallic) + refl_light*metallic, 1);
 }
