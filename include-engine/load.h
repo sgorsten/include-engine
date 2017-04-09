@@ -4,6 +4,8 @@
 #include "data-types.h"
 #include <vulkan/vulkan.h>
 
+#include "fbx.h"
+
 image generate_single_color_image(const byte4 & color);
 image load_image(const char * filename);
 

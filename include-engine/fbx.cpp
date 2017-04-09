@@ -48,9 +48,9 @@ namespace fbx
             
                 z_stream strm {};
                 strm.next_in = compressed.data();
-                strm.avail_in = compressed.size();
+                strm.avail_in = static_cast<uInt>(compressed.size());
                 strm.next_out = reinterpret_cast<Bytef *>(elements.data());
-                strm.avail_out = elements.size() * sizeof(T);
+                strm.avail_out = static_cast<uInt>(elements.size() * sizeof(T));
                 if(inflateInit(&strm) != Z_OK) throw std::runtime_error("inflateInit(...) failed");
                 if(inflate(&strm, Z_NO_FLUSH) == Z_STREAM_ERROR) throw std::runtime_error("inflate(...) failed");
                 if(inflateEnd(&strm) != Z_OK) throw std::runtime_error("inflateEnd(...) failed");
@@ -448,64 +448,28 @@ namespace fbx
         );        
     }
 
-    struct connection { int64_t from, to; std::optional<std::string> prop; };
-    auto enumerate_connections(const ast::document & doc)
-    {        
-        std::vector<connection> connections;
-        for(auto & n : find(doc.nodes, "Connections").children)
-        {
-            if(n.properties[0].get_string() == "OO") connections.push_back({n.properties[1].get<int64_t>(), n.properties[2].get<int64_t>(), std::nullopt});
-            if(n.properties[0].get_string() == "OP") connections.push_back({n.properties[1].get<int64_t>(), n.properties[2].get<int64_t>(), n.properties[3].get_string()});
-        }
-        return connections;
-    }
-    void visit_for_topological_sort(std::vector<int64_t> & sorted_sequence, std::map<int64_t, int> & marks, int64_t id, const std::vector<connection> & connections)
-    {
-        if(marks[id] == 1) throw std::runtime_error("not a DAG");
-        if(marks[id] == 2) return;
-        marks[id] = 1;
-        for(auto & c : connections) if(c.to == id) visit_for_topological_sort(sorted_sequence, marks, c.from, connections);
-        marks[id] = 2;
-        sorted_sequence.push_back(id);
-    }
-    std::vector<int64_t> topological_sort(const std::vector<int64_t> & unsorted, const std::vector<connection> & connections)
-    {
-        std::vector<int64_t> sorted_sequence;
-        std::map<int64_t, int> marks;
-        for(auto id : unsorted) if(marks[id] == 0) visit_for_topological_sort(sorted_sequence, marks, id, connections);
-        std::reverse(begin(sorted_sequence), end(sorted_sequence));
-        return sorted_sequence;
-    }
-
     struct object
     {
+        struct connection { const object * obj; std::optional<std::string> prop; };
+
         const ast::node * node;
-        size_t index;
-        std::vector<const object *> object_children; // Objects which were attached to us via an OO connection
-        std::map<std::string, std::vector<const object *>> property_children; // Objects which were attached to us via an OP connection
+        std::vector<connection> parents; // Objects which we were attached to via an OO or OP connection
+        std::vector<connection> children; // Objects which were attached to us via an OO or OP connection
         
         int64_t get_id() const { return node->properties[0].get<int64_t>(); }
         const std::string & get_name() const { return node->properties[1].get_string(); }
         const std::string & get_type() const { return node->name; }
         const std::string & get_subtype() const { return node->properties[2].get_string(); }        
 
-        const object * get_first_child(std::string_view type) const { for(auto * obj : object_children) if(obj->get_type() == type) return obj; return nullptr; }
+        const object * get_first_parent(std::string_view type) const { for(auto & c : parents) if(c.obj->get_type() == type) return c.obj; return nullptr; }
+        const object * get_first_child(std::string_view type) const { for(auto & c : children) if(c.obj->get_type() == type) return c.obj; return nullptr; }
+        auto get_children(std::string_view type) { std::vector<const object *> objects; for(auto & c : children) if(c.obj->get_type() == type) objects.push_back(c.obj); return objects; }
     };
     std::vector<object> index(const ast::document & doc)
     {
         // Obtain list of objects
         std::vector<object> objects;
         for(auto & node : find(doc.nodes, "Objects").children) objects.push_back({&node});
-        
-        // Perform a topological sort of the list of object IDs based on object-object and object-object property connections
-        std::vector<int64_t> object_ids;
-        for(auto & obj : objects) object_ids.push_back(obj.get_id());
-        const auto connections = enumerate_connections(doc);
-        object_ids = topological_sort(object_ids, connections);
-
-        // Sort the list of objects to match the topological ordering
-        for(size_t i=0; i<object_ids.size(); ++i) for(auto & obj : objects) if(obj.get_id() == object_ids[i]) obj.index = i;
-        std::sort(begin(objects), end(objects), [](const object & a, const object & b) { return a.index < b.index; });
 
         // Capture all connections between objects
         auto find_object_by_id = [&objects](int64_t id) -> object & 
@@ -513,18 +477,20 @@ namespace fbx
             for(auto & obj : objects) if(obj.get_id() == id) return obj; 
             throw std::runtime_error("invalid object ID"); 
         };
-        for(auto & c : connections)
+        for(auto & n : find(doc.nodes, "Connections").children)
         {
-            if(!c.to) continue;
-            if(c.prop) find_object_by_id(c.to).property_children[*c.prop].push_back(&find_object_by_id(c.from));
-            else find_object_by_id(c.to).object_children.push_back(&find_object_by_id(c.from));
-        }
-
-        // Sort all connections to reflect the topological ordering
-        for(auto & obj : objects)
-        {
-            std::sort(begin(obj.object_children), end(obj.object_children), [](const object * a, const object * b) { return a->index < b->index; });
-            for(auto & p : obj.property_children) std::sort(begin(p.second), end(p.second), [](const object * a, const object * b) { return a->index < b->index; });
+            const uint64_t from = n.properties[1].get<int64_t>(), to = n.properties[2].get<int64_t>();
+            if(!to) continue;
+            if(n.properties[0].get_string() == "OO")
+            {
+                find_object_by_id(to).children.push_back({&find_object_by_id(from), std::nullopt});
+                find_object_by_id(from).parents.push_back({&find_object_by_id(to), std::nullopt});
+            }
+            if(n.properties[0].get_string() == "OP")
+            {
+                find_object_by_id(to).children.push_back({&find_object_by_id(from), n.properties[3].get_string()});
+                find_object_by_id(from).parents.push_back({&find_object_by_id(to), n.properties[3].get_string()});
+            }
         }
 
         // NOTE: We are relying on move semantics (or copy ellision) to ensure that the addresses of individual object structs do not change
@@ -549,29 +515,18 @@ namespace fbx
     {
         const auto objects = index(doc);
 
-        //for(auto & obj : objects) std::cout << obj.index << ' ' << obj.get_type() << ' ' << obj.get_subtype() << ' ' << obj.get_name() << std::endl;
-
-        // Enumerate all models
-        struct model_desc { const object * model; int parent_index; };
-        std::vector<model_desc> models;
-        for(auto & obj : objects)
+        // Load the unit scale factor
+        float unit_scale_factor = 1.0f;
+        for(auto & prop : find(find(doc.nodes, "GlobalSettings").children, "Properties70").children)
         {
-            if(obj.get_type() != "Model") continue;
-            models.push_back({&obj, -1});
+            if(prop.name == "P" && prop.properties[0].get_string() == "UnitScaleFactor") unit_scale_factor = prop.properties[4].get<float>();
         }
-        
+               
         // Obtain skeletal meshes
-        struct bone_desc { const object * cluster, * model; float4x4 transform, transform_link; };
-        struct geometry_metadata { std::vector<bone_desc> bones; };
-
         std::vector<geometry> geometries;
-        std::vector<geometry_metadata> geometry_metadatas;
         for(auto & obj : objects)
         {
-            if(obj.get_type() != "Geometry") continue;
-
-            
-            geometry_metadata meta;
+            if(obj.get_type() != "Geometry") continue;            
 
             fbx::geometry geom;
             geom.id = obj.get_id();
@@ -581,7 +536,7 @@ namespace fbx
             if(vertices_node.properties.size() != 1) throw std::runtime_error("malformed Vertices");
             auto & vertices_array = vertices_node.properties[0];
             std::vector<float3> vertex_positions;
-            for(size_t i=0; i<vertices_array.size(); i+=3) vertex_positions.push_back({vertices_array.get<float>(i), vertices_array.get<float>(i+1), vertices_array.get<float>(i+2)});
+            for(size_t i=0; i<vertices_array.size(); i+=3) vertex_positions.push_back(float3{vertices_array.get<float>(i), vertices_array.get<float>(i+1), vertices_array.get<float>(i+2)} * unit_scale_factor);
 
             // Obtain bone weights and indices
             std::vector<geometry::bone_weights> vertex_position_bone_weights;
@@ -589,25 +544,32 @@ namespace fbx
             if(skin && skin->get_subtype() == "Skin")
             {
                 vertex_position_bone_weights.resize(vertex_positions.size());
-                for(auto * cluster : skin->object_children)
+                std::vector<const object *> bone_models;
+                for(auto & cluster : skin->children)
                 {
-                    if(cluster->get_type() != "Deformer" || cluster->get_subtype() != "Cluster") continue;
+                    if(cluster.obj->get_type() != "Deformer" || cluster.obj->get_subtype() != "Cluster") continue;
 
-                    auto * model = cluster->get_first_child("Model");
+                    auto * model = cluster.obj->get_first_child("Model");
                     if(!model) throw std::runtime_error("No Model affiliated with Cluster");
 
-                    uint32_t bone_index = meta.bones.size();
-                    const auto & indices = find(cluster->node->children, "Indexes").properties[0];
-                    const auto & weights = find(cluster->node->children, "Weights").properties[0];
-                    const auto & transform = find(cluster->node->children, "Transform").properties[0];
-                    const auto & transform_link = find(cluster->node->children, "TransformLink").properties[0];
+                    uint32_t bone_index = bone_models.size();
+                    bone_models.push_back(model);                    
+
+                    const auto & indices = find(cluster.obj->node->children, "Indexes").properties[0];
+                    const auto & weights = find(cluster.obj->node->children, "Weights").properties[0];
+                    const auto & transform = find(cluster.obj->node->children, "Transform").properties[0];
+                    const auto & transform_link = find(cluster.obj->node->children, "TransformLink").properties[0];
                     
                     if(indices.size() != weights.size()) throw std::runtime_error("Length of Indexes array does not match length of Weights array");
                     for(size_t i=0; i<indices.size(); ++i)
                     {
                         add_bone_weight(vertex_position_bone_weights[indices.get<size_t>(i)], bone_index, weights.get<float>(i));
                     }
-                    bone_desc bone {cluster, model};
+
+                    fbx::model m {*model->node};
+                    bone bone {model->get_name()};
+                    bone.initial_pose = m.get_model_matrix();                    
+
                     if(transform.size() != 16) throw std::runtime_error("Length of Transform array is not 16");
                     if(transform_link.size() != 16) throw std::runtime_error("Length of TransformLink array is not 16");
                     for(int j=0; j<4; ++j)
@@ -619,12 +581,38 @@ namespace fbx
                             bone.transform_link[j][i] = transform_link.get<float>(j*4+i);
                         }
                     }
-                    meta.bones.push_back(bone);
-                    std::cout << bone_index << ' ' << cluster->get_name() << ' ' << model->get_name() << std::endl;
+                    geom.bones.push_back(bone);
                 }
 
                 // Renormalize weights
                 for(auto & w : vertex_position_bone_weights) w.weights /= sum(w.weights);
+
+                // Make connections
+                for(size_t i=0; i<bone_models.size(); ++i)
+                {
+                    if(auto parent = bone_models[i]->get_first_parent("Model"))
+                    {
+                        for(size_t j=0; j<bone_models.size(); ++j)
+                        {
+                            if(bone_models[j] == parent)
+                            {
+                                geom.bones[i].parent_index = j;
+                                break;
+                            }
+                        }
+                        if(!geom.bones[i].parent_index) 
+                        {
+                            geom.bones[i].parent_index = bone_models.size();
+                            bone_models.push_back(parent);
+
+                            bone b;
+                            b.name = parent->get_name();
+                            fbx::model m{*parent->node};
+                            b.initial_pose = m.get_model_matrix();
+                            geom.bones.push_back(b);
+                        }
+                    }
+                }
             }
 
             // Obtain polygons
@@ -660,15 +648,10 @@ namespace fbx
             decode_layer(geom.vertices, &geometry::vertex::texcoord, find(obj.node->children, "LayerElementUV"), "UV");
 
             geometries.push_back(geom);
-            geometry_metadatas.push_back(meta);
-        }
-        for(size_t i=0; i<geometries.size(); ++i)
-        {
-            std::cout << "Geometry with " << geometries[i].vertices.size() << " vertices and " << geometry_metadatas[i].bones.size() << std::endl;
         }
 
         // Obtain full set of animation curves, indexed by the AnimationCurve index
-        struct keyframe { int64_t key; float value; };
+        /*struct keyframe { int64_t key; float value; };
         std::vector<std::vector<keyframe>> curves(objects.size());
         for(auto & obj : objects)
         {
@@ -679,10 +662,10 @@ namespace fbx
             const auto & key_value = find(obj.node->children, "KeyValueFloat").properties[0];
             if(key_time.size() != key_value.size()) throw std::runtime_error("Length of KeyTime array does not match length of KeyValueFloat array");
             for(size_t i=0; i<key_time.size(); ++i) keyframes.push_back({key_time.get<int64_t>(i), key_value.get<float>(i)});
-        }
+        }*/
 
         // For each stack, save an animation
-        for(auto & stack : objects)
+        /*for(auto & stack : objects)
         {
             if(stack.get_type() != "AnimationStack") continue;
             if(stack.object_children.size() != 1 || stack.object_children[0]->get_type() != "AnimationLayer") throw std::runtime_error("We only support single AnimationLayer AnimationStacks at the moment");
@@ -696,11 +679,11 @@ namespace fbx
                 auto dy = curve_node->property_children.find("d|Y");
                 auto dz = curve_node->property_children.find("d|Z");
             }
-        }
+        }*/
 
         // Load all objects
         document d;
-        for(auto & obj : objects)
+        /*for(auto & obj : objects)
         {
             if(obj.get_type() == "AnimationStack")
             {
@@ -725,13 +708,9 @@ namespace fbx
                     }
                 }
             }
-        }
+        }*/
         
         std::map<int64_t, std::vector<animation_keyframe>> animation_curves;
-        std::map<int64_t, cluster> clusters;
-
-        
-
         for(auto & n : find(doc.nodes, "Objects").children)
         {
             if(n.name == "Model")
@@ -745,44 +724,6 @@ namespace fbx
                 const auto & key_value = find(n.children, "KeyValueFloat").properties[0];
                 if(key_time.size() != key_value.size()) throw std::runtime_error("Length of KeyTime array does not match length of KeyValueFloat array");
                 for(size_t i=0; i<key_time.size(); ++i) keyframes.push_back({key_time.get<int64_t>(i), key_value.get<float>(i)});
-            }
-            if(n.name == "AnimationCurveNode")
-            {
-                animation_curve_node c { n.properties[0].get<int64_t>() };
-                d.curve_nodes.push_back(std::move(c));
-            }
-            if(n.name == "Deformer")
-            {
-                if(n.properties[2].get_string() == "Cluster")
-                {
-                    auto & c = clusters[n.properties[0].get<int64_t>()];
-                    const auto & indices = find(n.children, "Indexes").properties[0];
-                    const auto & weights = find(n.children, "Weights").properties[0];
-                    const auto & transform = find(n.children, "Transform").properties[0];
-                    const auto & transform_link = find(n.children, "TransformLink").properties[0];
-                    
-                    if(indices.size() != weights.size()) throw std::runtime_error("Length of Indexes array does not match length of Weights array");
-                    for(size_t i=0; i<indices.size(); ++i)
-                    {
-                        c.indices.push_back(indices.get<int64_t>(i));
-                        c.weights.push_back(weights.get<float>(i));
-                    }
-                    if(transform.size() != 16) throw std::runtime_error("Length of Transform array is not 16");
-                    if(transform_link.size() != 16) throw std::runtime_error("Length of TransformLink array is not 16");
-                    for(int j=0; j<4; ++j)
-                    {
-                        for(int i=0; i<4; ++i)
-                        {
-                            // TODO: Verify column major storage in FBX files
-                            c.transform[j][i] = transform.get<float>(j*4+i);
-                            c.transform_link[j][i] = transform_link.get<float>(j*4+i);
-                        }
-                    }
-                }
-            }
-            if(n.properties[2].get_string() == "Skin")
-            {
-                d.skins.push_back({n.properties[0].get<int64_t>()});
             }
         }
 
@@ -804,7 +745,7 @@ namespace fbx
             if(n.properties[0].get_string() == "OP")
             {
                 auto & prop = n.properties[3].get_string();
-                for(auto & c : d.curve_nodes)
+                /*for(auto & c : d.curve_nodes)
                 {
                     if(c.id == b)
                     {
@@ -817,7 +758,7 @@ namespace fbx
                         else throw std::runtime_error("unknown property " + prop);
                         animation_curves.erase(it);
                     }
-                }
+                }*/
             }
             else if(n.properties[0].get_string() == "OO") // Object-to-object connection
             {
@@ -832,18 +773,6 @@ namespace fbx
                                 m.geoms.push_back(g);
                             }
                         }
-                    }
-                }
-
-                for(auto & s : d.skins)
-                {
-                    if(s.id == b)
-                    {
-                        auto it = clusters.find(a);
-                        if(it == end(clusters)) continue;
-
-                        s.clusters.push_back(std::move(it->second));
-                        clusters.erase(it);
                     }
                 }
             }

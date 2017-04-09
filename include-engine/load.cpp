@@ -54,7 +54,7 @@ mesh generate_box_mesh(const float3 & a, const float3 & b)
 }
 
 #include "fbx.h"
-//#include <iostream>
+#include <iostream>
 
 std::vector<mesh> load_meshes_from_fbx(const char * filename)
 {
@@ -69,7 +69,7 @@ std::vector<mesh> load_meshes_from_fbx(const char * filename)
     std::vector<mesh> meshes;
     for(auto & m : d.models) 
     {
-        auto model_matrix = mul(scaling_matrix(float3{1,-1,-1}), m.get_model_matrix());
+        auto model_matrix = m.get_model_matrix();
         auto normal_matrix = inverse(transpose(model_matrix));
         for(auto & g : m.geoms)
         {
@@ -84,6 +84,7 @@ std::vector<mesh> load_meshes_from_fbx(const char * filename)
                 mesh.vertices[i].bone_indices = g.weights[i].indices;
                 mesh.vertices[i].bone_weights = g.weights[i].weights;
             }
+            for(auto & b : g.bones) mesh.bones.push_back({b.name, b.parent_index, b.initial_pose, b.transform});
             mesh.triangles = g.triangles;
             meshes.push_back(compute_tangent_basis(std::move(mesh)));
         }

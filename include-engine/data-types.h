@@ -48,6 +48,13 @@ public:
 // Value type which holds mesh information
 struct mesh
 {
+    struct bone
+    {
+        std::string name;
+        std::optional<size_t> parent_index;
+        float4x4 initial_pose;
+        float4x4 model_to_bone_matrix;
+    };
     struct vertex
     {
         float3 position, normal;
@@ -58,6 +65,13 @@ struct mesh
     };
     std::vector<vertex> vertices;
     std::vector<uint3> triangles;
+    std::vector<bone> bones;
+
+    float4x4 get_bone_pose(size_t index) const
+    {
+        auto & b = bones[index];
+        return b.parent_index ? mul(get_bone_pose(*b.parent_index), b.initial_pose) : b.initial_pose;
+    }
 };
 
 #endif

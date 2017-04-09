@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <variant>
+#include <optional>
 
 namespace fbx
 {
@@ -87,6 +88,45 @@ namespace fbx
 
     enum class rotation_order { xyz, xzy, yzx, yxz, zxy, zyx, spheric_xyz };
 
+    struct animation_keyframe
+    {
+        int64_t key;
+        float value;
+    };
+    inline float evaluate_curve(const std::vector<animation_keyframe> & keyframes, int64_t key, float def_value)
+    {
+        if(keyframes.empty()) return def_value;
+        if(key <= keyframes.front().key) return keyframes.front().value;
+        for(size_t i=1; i<keyframes.size(); ++i) if(key <= keyframes[i].key)
+        {
+            const float t = (float)(key - keyframes[i-1].key)/(keyframes[i].key - keyframes[i-1].key);
+            return keyframes[i-1].value*(1-t) + keyframes[i].value*t;
+        }
+        return keyframes.back().value;
+    }
+
+    struct vector_animation
+    {
+        std::vector<animation_keyframe> x,y,z;
+        float3 evaluate(int64_t key, const float3 & def_value) { return {evaluate_curve(x,key,def_value.x), evaluate_curve(y,key,def_value.y), evaluate_curve(z,key,def_value.z)}; }
+    };
+    struct bone_animation
+    {
+        vector_animation lcl_position, lcl_rotation, lcl_scale;
+    };
+    struct animation
+    {
+        std::vector<bone_animation> bones;    
+    };
+
+    struct bone
+    {
+        std::string name;
+        std::optional<size_t> parent_index;
+        float4x4 initial_pose;
+        float4x4 transform, transform_link;
+    };
+
     struct geometry
     {
         struct vertex
@@ -105,6 +145,7 @@ namespace fbx
         std::vector<vertex> vertices; // Corresponds to polygon vertices
         std::vector<bone_weights> weights;
         std::vector<uint3> triangles;
+        std::vector<bone> bones;
     };
 
     struct model
@@ -122,37 +163,9 @@ namespace fbx
         float4x4 get_model_matrix() const;
     };
 
-    struct animation_keyframe
-    {
-        int64_t key;
-        float value;
-    };
-
-    struct animation_curve_node
-    {
-        int64_t id;
-        std::vector<animation_keyframe> x, y, z;
-	};
-
-    struct cluster
-    {
-        std::vector<uint32_t> indices;
-        std::vector<float> weights;
-        float4x4 transform, transform_link;
-    };
-
-    struct skin
-    {
-        int64_t id;
-        std::vector<cluster> clusters;
-    };
-
     struct document
     {
-        std::vector<geometry> geoms;
         std::vector<model> models;
-        std::vector<animation_curve_node> curve_nodes;
-        std::vector<skin> skins;
     };
 
     document load(const ast::document & doc);
