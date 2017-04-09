@@ -38,8 +38,10 @@ int main() try
     texture_2d black_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({0,0,0,255}));
     texture_2d gray_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({128,128,128,255}));
     texture_2d flat_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({128,128,255,255}));
-    texture_2d albedo_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/mutant-albedo.jpg")); //"assets/helmet-albedo.jpg"));
-    texture_2d normal_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/mutant-normal.jpg")); //helmet-normal.jpg"));
+    texture_2d mutant_albedo(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/mutant-albedo.jpg")); //"assets/helmet-albedo.jpg"));
+    texture_2d mutant_normal(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/mutant-normal.jpg")); //helmet-normal.jpg"));
+    texture_2d akai_albedo(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/akai-albedo.jpg")); //"assets/helmet-albedo.jpg"));
+    texture_2d akai_normal(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/akai-normal.jpg")); //helmet-normal.jpg"));
     texture_2d metallic_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-metallic.jpg"));
     texture_cube env_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, 
         load_image("assets/posx.jpg"), load_image("assets/negx.jpg"), 
@@ -77,6 +79,13 @@ int main() try
             cmd.bind_vertex_buffer(0, *vertex_buffer, 0);
             cmd.bind_index_buffer(*index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
             cmd.draw_indexed(index_count);
+        }
+
+        void draw(command_buffer & cmd, size_t mtl) const
+        {
+            cmd.bind_vertex_buffer(0, *vertex_buffer, 0);
+            cmd.bind_index_buffer(*index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, m.materials[mtl].num_triangles*3, 1, m.materials[mtl].first_triangle*3, 0, 0);
         }
     };
     std::vector<gfx_mesh> meshes;
@@ -250,25 +259,21 @@ int main() try
 
             auto per_object = pool.allocate_descriptor_set(per_object_layout);
             per_object.write_uniform_buffer(0, 0, po);
-            per_object.write_combined_image_sampler(1, 0, sampler, albedo_tex);
-            per_object.write_combined_image_sampler(2, 0, sampler, normal_tex);
+            per_object.write_combined_image_sampler(1, 0, sampler, mutant_albedo);
+            per_object.write_combined_image_sampler(2, 0, sampler, mutant_normal);
             per_object.write_combined_image_sampler(3, 0, sampler, metallic_tex);
             cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
-            m.draw(cmd);
+            m.draw(cmd, 0);
+            m.draw(cmd, 1);
+            m.draw(cmd, 3);
 
-            // Visualize skeleton
-            /*for(size_t i=0; i<m.m.bones.size(); ++i)
-            {
-                cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, static_pipeline);
-                const float4x4 pose_matrix = mul(scaling_matrix(float3{1,-1,-1}), m.m.get_bone_pose(i));
-                auto per_object = pool.allocate_descriptor_set(per_object_layout);
-                per_object.write_uniform_buffer(0, 0, pose_matrix);
-                per_object.write_combined_image_sampler(1, 0, sampler, flat_tex);
-                per_object.write_combined_image_sampler(2, 0, sampler, flat_tex);
-                per_object.write_combined_image_sampler(3, 0, sampler, black_tex);
-                cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
-                box_mesh.draw(cmd);
-            }*/
+            auto per_object_2 = pool.allocate_descriptor_set(per_object_layout);
+            per_object_2.write_uniform_buffer(0, 0, po);
+            per_object_2.write_combined_image_sampler(1, 0, sampler, akai_albedo);
+            per_object_2.write_combined_image_sampler(2, 0, sampler, akai_normal);
+            per_object_2.write_combined_image_sampler(3, 0, sampler, metallic_tex);   
+            cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object_2, {});
+            m.draw(cmd, 2);
         }
 
         cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, static_pipeline);

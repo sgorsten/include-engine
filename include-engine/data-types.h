@@ -73,10 +73,15 @@ struct mesh
         std::string name;
         std::vector<keyframe> keyframes;
     };
+    struct material
+    {
+        size_t first_triangle, num_triangles;
+    };
     std::vector<vertex> vertices;
     std::vector<uint3> triangles;
     std::vector<bone> bones;
     std::vector<animation> animations;
+    std::vector<material> materials;
 
     float4x4 get_bone_pose(const std::vector<float4x4> & local_transforms, size_t index) const
     {

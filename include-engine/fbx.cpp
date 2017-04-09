@@ -364,7 +364,7 @@ namespace fbx
         for(auto & n : nodes) if(n.name == name) return n;
         throw std::runtime_error("missing node " + std::string(name));
     }
-
+    
     template<class V, class T, int M> void decode_layer(std::vector<V> & vertices, linalg::vec<T,M> V::*attribute, const ast::node & node, std::string_view array_name) 
     {
         auto & array = find(node.children, array_name).properties[0];
@@ -384,7 +384,6 @@ namespace fbx
             else throw std::runtime_error("unsupported ReferenceInformationType: " + reference_information_type);    
         }
         else throw std::runtime_error("unsupported MappingInformationType: " + mapping_information_type);
-        
     }
 
     float3 read_vector3d_property(const ast::node & prop)
@@ -693,6 +692,15 @@ namespace fbx
                 }
             }
 
+            std::vector<std::vector<uint3>> material_triangles;
+
+            auto layer_material = find(obj.node->children, "LayerElementMaterial");
+            auto mapping_information_type = find(layer_material.children, "MappingInformationType").properties[0].get_string();
+            auto reference_information_type = find(layer_material.children, "ReferenceInformationType").properties[0].get_string();
+            if(mapping_information_type != "ByPolygon" || reference_information_type != "IndexToDirect") throw std::runtime_error("Unsupported LayerElementMaterial mapping");
+            auto & materials = find(layer_material.children, "Materials").properties[0];
+            size_t polygon_index = 0;
+
             // Obtain polygons
             auto & indices_node = find(obj.node->children, "PolygonVertexIndex");
             if(indices_node.properties.size() != 1) throw std::runtime_error("malformed PolygonVertexIndex");
@@ -712,10 +720,14 @@ namespace fbx
                 // Generate triangles if necessary
                 if(end_of_polygon)
                 {
+                    auto material_index = materials.get<size_t>(polygon_index);
+                    if(material_index >= material_triangles.size()) material_triangles.resize(material_index+1);
+
                     for(size_t j=polygon_start+2; j<geom.vertices.size(); ++j)
                     {
-                        geom.triangles.push_back(uint3{linalg::vec<size_t,3>{polygon_start, j-1, j}});
+                        material_triangles[material_index].push_back(uint3{linalg::vec<size_t,3>{polygon_start, j-1, j}});
                     }
+                    ++polygon_index;
                     polygon_start = geom.vertices.size();
                 }
             }
@@ -724,6 +736,13 @@ namespace fbx
             decode_layer(geom.vertices, &mesh::vertex::normal, find(obj.node->children, "LayerElementNormal"), "Normals");
             decode_layer(geom.vertices, &mesh::vertex::texcoord, find(obj.node->children, "LayerElementUV"), "UV");
             for(auto & v : geom.vertices) v.texcoord.y = 1 - v.texcoord.y;
+
+            for(auto & tris : material_triangles)
+            {
+                geom.materials.push_back({geom.triangles.size(), tris.size()});
+                geom.triangles.insert(end(geom.triangles), begin(tris), end(tris));
+            }
+
             meshes.push_back(geom);
         }
         
