@@ -30,6 +30,134 @@ VkAttachmentDescription make_attachment_description(VkFormat format, VkSampleCou
     return {0, format, samples, load_op, store_op, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE, initial_layout, final_layout};
 }
 
+class scene_contract
+{
+    friend class scene_pipeline_layout;
+    context & ctx;
+    VkDescriptorSetLayout per_scene_layout; // Descriptors which are shared by the entire scene
+    VkDescriptorSetLayout per_view_layout; // Descriptors which vary per unique view into the scene
+public:
+    scene_contract(context & ctx, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings) : 
+        ctx{ctx}, per_scene_layout{ctx.create_descriptor_set_layout(per_scene_bindings)}, per_view_layout{ctx.create_descriptor_set_layout(per_view_bindings)} {}
+
+    ~scene_contract()
+    {
+        vkDestroyDescriptorSetLayout(ctx.device, per_view_layout, nullptr);
+        vkDestroyDescriptorSetLayout(ctx.device, per_scene_layout, nullptr);
+    }
+
+    VkDescriptorSetLayout get_per_scene_layout() const { return per_scene_layout; }
+    VkDescriptorSetLayout get_per_view_layout() const { return per_view_layout; }
+};
+
+class scene_pipeline_layout
+{
+    scene_contract & contract;
+    VkDescriptorSetLayout per_object_layout;
+    VkPipelineLayout pipeline_layout;
+public:
+    scene_pipeline_layout(scene_contract & contract, array_view<VkDescriptorSetLayoutBinding> per_object_bindings) :
+        contract{contract}, per_object_layout{contract.ctx.create_descriptor_set_layout(per_object_bindings)},
+        pipeline_layout{contract.ctx.create_pipeline_layout({contract.per_scene_layout, contract.per_view_layout, per_object_layout})} {}
+
+    ~scene_pipeline_layout()
+    {
+        vkDestroyPipelineLayout(contract.ctx.device, pipeline_layout, nullptr);
+        vkDestroyDescriptorSetLayout(contract.ctx.device, per_object_layout, nullptr);
+    }
+
+    VkDevice get_device() const { return contract.ctx.device; }
+    VkDescriptorSetLayout get_per_object_descriptor_set_layout() const { return per_object_layout; }
+    VkPipelineLayout get_pipeline_layout() const { return pipeline_layout; }
+};
+
+class scene_pipeline
+{
+    scene_pipeline_layout & layout;
+    VkPipeline pipeline;
+public:
+    scene_pipeline(scene_pipeline_layout & layout, VkRenderPass render_pass,  array_view<VkVertexInputBindingDescription> vertex_bindings, array_view<VkVertexInputAttributeDescription> vertex_attributes, VkShaderModule vert_shader, VkShaderModule frag_shader, bool depth_write, bool depth_test) : 
+        layout{layout}, pipeline{make_pipeline(layout.get_device(), render_pass, layout.get_pipeline_layout(), vertex_bindings, vertex_attributes, vert_shader, frag_shader, depth_write, depth_test)} {}
+    
+    ~scene_pipeline()
+    {
+        vkDestroyPipeline(layout.get_device(), pipeline, nullptr);
+    }
+
+    VkPipeline get_pipeline() const { return pipeline; }
+    VkPipelineLayout get_pipeline_layout() const { return layout.get_pipeline_layout(); }
+    VkDescriptorSetLayout get_per_object_descriptor_set_layout() const { return layout.get_per_object_descriptor_set_layout(); }
+};
+
+struct gfx_mesh
+{
+    std::unique_ptr<static_buffer> vertex_buffer;
+    std::unique_ptr<static_buffer> index_buffer;
+    uint32_t index_count;
+    mesh m;
+
+    gfx_mesh(context & ctx, const mesh & m) :
+        vertex_buffer{std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.vertices.size() * sizeof(mesh::vertex), m.vertices.data())},
+        index_buffer{std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.triangles.size() * sizeof(uint3), m.triangles.data())},
+        index_count{static_cast<uint32_t>(m.triangles.size() * 3)}, m{m}
+    {
+        
+    }
+
+    void draw(command_buffer & cmd) const
+    {
+        cmd.bind_vertex_buffer(0, *vertex_buffer, 0);
+        cmd.bind_index_buffer(*index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
+        cmd.draw_indexed(index_count);
+    }
+
+    void draw(command_buffer & cmd, size_t mtl) const
+    {
+        cmd.bind_vertex_buffer(0, *vertex_buffer, 0);
+        cmd.bind_index_buffer(*index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, m.materials[mtl].num_triangles*3, 1, m.materials[mtl].first_triangle*3, 0, 0);
+    }
+};
+
+struct draw_item 
+{
+    const scene_pipeline * pipeline;
+    VkDescriptorSet set;
+    const gfx_mesh * mesh;
+    std::vector<size_t> mtls;
+};
+struct draw_list
+{
+    transient_resource_pool & pool;
+    std::vector<draw_item> items;
+    
+    draw_list(transient_resource_pool & pool) : pool{pool} {}
+
+    descriptor_set draw(const scene_pipeline & pipeline, const gfx_mesh & mesh, std::vector<size_t> mtls)
+    {
+        descriptor_set set = pool.allocate_descriptor_set(pipeline.get_per_object_descriptor_set_layout());
+        items.push_back({&pipeline, set, &mesh, mtls});
+        return set;
+    }
+
+    descriptor_set draw(const scene_pipeline & pipeline, const gfx_mesh & mesh)
+    {
+        std::vector<size_t> mtls;
+        for(size_t i=0; i<mesh.m.materials.size(); ++i) mtls.push_back(i);
+        return draw(pipeline, mesh, mtls);
+    }
+
+    void write_commands(command_buffer & cmd)
+    {
+        for(auto & item : items)
+        {
+            cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, item.pipeline->get_pipeline());
+            cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, item.pipeline->get_pipeline_layout(), 2, item.set, {});
+            for(auto mtl : item.mtls) item.mesh->draw(cmd, mtl);
+        }
+    }
+};
+
 int main() try
 {
     context ctx;
@@ -64,35 +192,6 @@ int main() try
     check(vkCreateSampler(ctx.device, &sampler_info, nullptr, &sampler));
 
     // Create our meshes
-    struct gfx_mesh
-    {
-        std::unique_ptr<static_buffer> vertex_buffer;
-        std::unique_ptr<static_buffer> index_buffer;
-        uint32_t index_count;
-        mesh m;
-
-        gfx_mesh(context & ctx, const mesh & m) :
-            vertex_buffer{std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.vertices.size() * sizeof(mesh::vertex), m.vertices.data())},
-            index_buffer{std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.triangles.size() * sizeof(uint3), m.triangles.data())},
-            index_count{static_cast<uint32_t>(m.triangles.size() * 3)}, m{m}
-        {
-        
-        }
-
-        void draw(command_buffer & cmd) const
-        {
-            cmd.bind_vertex_buffer(0, *vertex_buffer, 0);
-            cmd.bind_index_buffer(*index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
-            cmd.draw_indexed(index_count);
-        }
-
-        void draw(command_buffer & cmd, size_t mtl) const
-        {
-            cmd.bind_vertex_buffer(0, *vertex_buffer, 0);
-            cmd.bind_index_buffer(*index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd, m.materials[mtl].num_triangles*3, 1, m.materials[mtl].first_triangle*3, 0, 0);
-        }
-    };
     gfx_mesh helmet_mesh {ctx, load_meshes_from_fbx("assets/helmet-mesh.fbx")[0]};
     gfx_mesh mutant_mesh {ctx, load_meshes_from_fbx("assets/mutant-mesh.fbx")[0]};
     gfx_mesh skybox_mesh {ctx, generate_box_mesh({-10,-10,-10}, {10,10,10})};
@@ -101,21 +200,22 @@ int main() try
     gfx_mesh sands_mesh {ctx, load_mesh_from_obj("assets/sands location.obj")};
 
     // Set up our layouts
-    auto per_scene_layout = ctx.create_descriptor_set_layout({
+
+    scene_contract contract {ctx, {
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
-    });
-    auto per_view_layout = ctx.create_descriptor_set_layout({
+    }, {
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}
-    });
-    auto per_object_layout = ctx.create_descriptor_set_layout({
+    }};
+
+    scene_pipeline_layout metallic_layout {contract, {
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
-    });
-    auto pipeline_layout = ctx.create_pipeline_layout({per_scene_layout, per_view_layout, per_object_layout});
-    auto skybox_pipeline_layout = ctx.create_pipeline_layout({per_scene_layout, per_view_layout});
+    }};
+
+    scene_pipeline_layout skybox_layout {contract, {}};
 
     // Set up a render pass
     auto render_pass = ctx.create_render_pass(
@@ -148,10 +248,10 @@ int main() try
     {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, position)}
     };
-    VkPipeline helmet_pipeline = make_pipeline(ctx.device, render_pass, pipeline_layout, bindings, attributes, static_vert_shader, metal_shader, true, true);
-    VkPipeline static_pipeline = make_pipeline(ctx.device, render_pass, pipeline_layout, bindings, attributes, static_vert_shader, frag_shader, true, true);
-    VkPipeline skinned_pipeline = make_pipeline(ctx.device, render_pass, pipeline_layout, bindings, attributes, skinned_vert_shader, frag_shader, true, true);
-    VkPipeline skybox_pipeline = make_pipeline(ctx.device, render_pass, skybox_pipeline_layout, bindings, skybox_attributes, skybox_vert_shader, skybox_frag_shader, false, false);
+    scene_pipeline helmet_pipeline  {metallic_layout, render_pass, bindings, attributes, static_vert_shader, metal_shader, true, true};
+    scene_pipeline static_pipeline  {metallic_layout, render_pass, bindings, attributes, static_vert_shader, frag_shader, true, true};
+    scene_pipeline skinned_pipeline {metallic_layout, render_pass, bindings, attributes, skinned_vert_shader, frag_shader, true, true};
+    scene_pipeline skybox_pipeline  {skybox_layout,   render_pass, bindings, skybox_attributes, skybox_vert_shader, skybox_frag_shader, false, false};
 
     // Set up a window with swapchain framebuffers
     window win {ctx, {1280, 720}, "Example Game"};
@@ -217,6 +317,58 @@ int main() try
         frame_index = (frame_index+1)%3;
         pool.reset();
 
+        // Generate a draw list for the scene
+        draw_list list {pool};
+        {
+            list.draw(skybox_pipeline, skybox_mesh);
+
+            auto helmet = list.draw(helmet_pipeline, helmet_mesh);
+            helmet.write_uniform_buffer(0, 0, mul(translation_matrix(float3{30, -20, 0}), scaling_matrix(float3{1,-1,-1}), helmet_mesh.m.bones[0].initial_pose.get_local_transform(), helmet_mesh.m.bones[0].model_to_bone_matrix));
+            helmet.write_combined_image_sampler(1, 0, sampler, helmet_albedo);
+            helmet.write_combined_image_sampler(2, 0, sampler, helmet_normal);
+            helmet.write_combined_image_sampler(3, 0, sampler, helmet_metallic);
+
+            if(++anim_frame >= mutant_mesh.m.animations[0].keyframes.size()) anim_frame = 0;
+            auto & kf = mutant_mesh.m.animations[0].keyframes[anim_frame];
+
+            per_skinned_object po {};
+            for(size_t i=0; i<mutant_mesh.m.bones.size(); ++i)
+            {   
+                po.bone_matrices[i] = mul(scaling_matrix(float3{1,-1,-1}), mutant_mesh.m.get_bone_pose(kf.local_transforms, i), mutant_mesh.m.bones[i].model_to_bone_matrix);
+            }
+
+            auto mutant = list.draw(skinned_pipeline, mutant_mesh, {0,1,3});
+            mutant.write_uniform_buffer(0, 0, po);
+            mutant.write_combined_image_sampler(1, 0, sampler, mutant_albedo);
+            mutant.write_combined_image_sampler(2, 0, sampler, mutant_normal);
+            mutant.write_combined_image_sampler(3, 0, sampler, black_tex);
+
+            auto akai = list.draw(skinned_pipeline, mutant_mesh, {2});
+            akai.write_uniform_buffer(0, 0, po);
+            akai.write_combined_image_sampler(1, 0, sampler, akai_albedo);
+            akai.write_combined_image_sampler(2, 0, sampler, akai_normal);
+            akai.write_combined_image_sampler(3, 0, sampler, black_tex);
+       
+            auto box = list.draw(static_pipeline, box_mesh);
+            box.write_uniform_buffer(0, 0, mul(translation_matrix(float3{-30,-20,0}), scaling_matrix(float3{4,4,4})));
+            box.write_combined_image_sampler(1, 0, sampler, gray_tex);
+            box.write_combined_image_sampler(2, 0, sampler, flat_tex);
+            box.write_combined_image_sampler(3, 0, sampler, black_tex);
+        
+            for(size_t i=0; i<sands_mesh.m.materials.size(); ++i)
+            {
+                auto sands = list.draw(static_pipeline, sands_mesh, {i});
+
+                sands.write_uniform_buffer(0, 0, mul(translation_matrix(float3{0,64,27}), scaling_matrix(float3{10,-10,-10})));
+                if(sands_mesh.m.materials[i].name == "map_2_island1") sands.write_combined_image_sampler(1, 0, sampler, map_2_island);
+                else if(sands_mesh.m.materials[i].name == "map_2_object1") sands.write_combined_image_sampler(1, 0, sampler, map_2_objects);
+                else if(sands_mesh.m.materials[i].name == "map_2_terrain1") sands.write_combined_image_sampler(1, 0, sampler, map_2_terrain);
+                else sands.write_combined_image_sampler(1, 0, sampler, gray_tex);
+                sands.write_combined_image_sampler(2, 0, sampler, flat_tex);
+                sands.write_combined_image_sampler(3, 0, sampler, black_tex);
+            }
+        }
+
         command_buffer cmd = pool.allocate_command_buffer();
 
         cmd.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
@@ -227,10 +379,10 @@ int main() try
         ps.light_direction = normalize(float3{1,-5,-2});
         ps.light_color = {0.8f,0.7f,0.5f};
 
-        auto per_scene = pool.allocate_descriptor_set(per_scene_layout);
+        auto per_scene = pool.allocate_descriptor_set(contract.get_per_scene_layout());
         per_scene.write_uniform_buffer(0, 0, ps);      
         per_scene.write_combined_image_sampler(1, 0, sampler, env_tex);
-        cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, per_scene, {});
+        cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, skybox_layout.get_pipeline_layout(), 0, per_scene, {});
 
         // Bind per-view uniforms
         per_view_uniforms pv;
@@ -238,88 +390,15 @@ int main() try
         pv.rotation_only_view_proj_matrix = mul(proj_matrix, inverse(pose_matrix(camera_orientation, float3{0,0,0})));
         pv.eye_position = camera_position;
 
-        auto per_view = pool.allocate_descriptor_set(per_view_layout);
+        auto per_view = pool.allocate_descriptor_set(contract.get_per_view_layout());
         per_view.write_uniform_buffer(0, 0, pv);      
-        cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, per_view, {});
+        cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, skybox_layout.get_pipeline_layout(), 1, per_view, {});
 
         // Begin render pass
         const uint32_t index = win.begin();
         cmd.begin_render_pass(render_pass, swapchain_framebuffers[index], win.get_dims(), {{0, 0, 0, 1}, {1.0f, 0}});
 
-        // Draw skybox
-        cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, skybox_pipeline);
-        skybox_mesh.draw(cmd);
-
-        // Draw meshes
-        {
-            cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, helmet_pipeline);
-            const float4x4 model_matrix = mul(translation_matrix(float3{30, -20, 0}), scaling_matrix(float3{1,-1,-1}), helmet_mesh.m.bones[0].initial_pose.get_local_transform(), helmet_mesh.m.bones[0].model_to_bone_matrix);
-            auto per_object = pool.allocate_descriptor_set(per_object_layout);
-            per_object.write_uniform_buffer(0, 0, model_matrix);
-            per_object.write_combined_image_sampler(1, 0, sampler, helmet_albedo);
-            per_object.write_combined_image_sampler(2, 0, sampler, helmet_normal);
-            per_object.write_combined_image_sampler(3, 0, sampler, helmet_metallic);
-            cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
-            helmet_mesh.draw(cmd);
-        }
-
-        cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, skinned_pipeline);
-        {
-            if(++anim_frame >= mutant_mesh.m.animations[0].keyframes.size()) anim_frame = 0;
-            auto & kf = mutant_mesh.m.animations[0].keyframes[anim_frame];
-
-            per_skinned_object po {};
-            for(size_t i=0; i<mutant_mesh.m.bones.size(); ++i)
-            {   
-                po.bone_matrices[i] = mul(scaling_matrix(float3{1,-1,-1}), mutant_mesh.m.get_bone_pose(kf.local_transforms, i), mutant_mesh.m.bones[i].model_to_bone_matrix);
-            }
-
-            auto per_object = pool.allocate_descriptor_set(per_object_layout);
-            per_object.write_uniform_buffer(0, 0, po);
-            per_object.write_combined_image_sampler(1, 0, sampler, mutant_albedo);
-            per_object.write_combined_image_sampler(2, 0, sampler, mutant_normal);
-            per_object.write_combined_image_sampler(3, 0, sampler, black_tex);
-            cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
-            mutant_mesh.draw(cmd, 0);
-            mutant_mesh.draw(cmd, 1);
-            mutant_mesh.draw(cmd, 3);
-
-            auto per_object_2 = pool.allocate_descriptor_set(per_object_layout);
-            per_object_2.write_uniform_buffer(0, 0, po);
-            per_object_2.write_combined_image_sampler(1, 0, sampler, akai_albedo);
-            per_object_2.write_combined_image_sampler(2, 0, sampler, akai_normal);
-            per_object_2.write_combined_image_sampler(3, 0, sampler, black_tex);   
-            cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object_2, {});
-            mutant_mesh.draw(cmd, 2);
-        }
-
-        {
-            cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, static_pipeline);
-            const float4x4 model_matrix = mul(translation_matrix(float3{-30,-20,0}), scaling_matrix(float3{4,4,4}));
-            auto per_object = pool.allocate_descriptor_set(per_object_layout);
-            per_object.write_uniform_buffer(0, 0, model_matrix);
-            per_object.write_combined_image_sampler(1, 0, sampler, gray_tex);
-            per_object.write_combined_image_sampler(2, 0, sampler, flat_tex);
-            per_object.write_combined_image_sampler(3, 0, sampler, black_tex);
-            cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
-            box_mesh.draw(cmd);
-        }
-
-        cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, static_pipeline);
-        const float4x4 identity_matrix = mul(translation_matrix(float3{0,64,27}), scaling_matrix(float3{10,-10,-10}));
-        for(size_t i=0; i<sands_mesh.m.materials.size(); ++i)
-        {
-            auto per_object = pool.allocate_descriptor_set(per_object_layout);
-            per_object.write_uniform_buffer(0, 0, identity_matrix);
-            if(sands_mesh.m.materials[i].name == "map_2_island1") per_object.write_combined_image_sampler(1, 0, sampler, map_2_island);
-            else if(sands_mesh.m.materials[i].name == "map_2_object1") per_object.write_combined_image_sampler(1, 0, sampler, map_2_objects);
-            else if(sands_mesh.m.materials[i].name == "map_2_terrain1") per_object.write_combined_image_sampler(1, 0, sampler, map_2_terrain);
-            else per_object.write_combined_image_sampler(1, 0, sampler, gray_tex);
-            per_object.write_combined_image_sampler(2, 0, sampler, flat_tex);
-            per_object.write_combined_image_sampler(3, 0, sampler, black_tex);
-            cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
-            sands_mesh.draw(cmd, i);
-        }
+        list.write_commands(cmd);
 
         cmd.end_render_pass();
         cmd.end();
@@ -331,15 +410,6 @@ int main() try
 
     vkDeviceWaitIdle(ctx.device);
     vkDestroySampler(ctx.device, sampler, nullptr);
-    vkDestroyPipeline(ctx.device, helmet_pipeline, nullptr);
-    vkDestroyPipeline(ctx.device, static_pipeline, nullptr);
-    vkDestroyPipeline(ctx.device, skinned_pipeline, nullptr);
-    vkDestroyPipeline(ctx.device, skybox_pipeline, nullptr);
-    vkDestroyPipelineLayout(ctx.device, pipeline_layout, nullptr);
-    vkDestroyPipelineLayout(ctx.device, skybox_pipeline_layout, nullptr);
-    vkDestroyDescriptorSetLayout(ctx.device, per_object_layout, nullptr);
-    vkDestroyDescriptorSetLayout(ctx.device, per_view_layout, nullptr);
-    vkDestroyDescriptorSetLayout(ctx.device, per_scene_layout, nullptr);
     vkDestroyShaderModule(ctx.device, static_vert_shader, nullptr);
     vkDestroyShaderModule(ctx.device, skinned_vert_shader, nullptr);
     vkDestroyShaderModule(ctx.device, frag_shader, nullptr);
