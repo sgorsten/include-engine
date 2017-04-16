@@ -20,6 +20,11 @@ struct per_view_uniforms
 	alignas(16) float3 eye_position;
 };
 
+struct per_static_object
+{
+    alignas(16) float4x4 model_matrix;
+};
+
 struct per_skinned_object
 {
     alignas(16) float4x4 bone_matrices[64];
@@ -29,134 +34,6 @@ VkAttachmentDescription make_attachment_description(VkFormat format, VkSampleCou
 {
     return {0, format, samples, load_op, store_op, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE, initial_layout, final_layout};
 }
-
-class scene_contract
-{
-    friend class scene_pipeline_layout;
-    context & ctx;
-    VkDescriptorSetLayout per_scene_layout; // Descriptors which are shared by the entire scene
-    VkDescriptorSetLayout per_view_layout; // Descriptors which vary per unique view into the scene
-public:
-    scene_contract(context & ctx, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings) : 
-        ctx{ctx}, per_scene_layout{ctx.create_descriptor_set_layout(per_scene_bindings)}, per_view_layout{ctx.create_descriptor_set_layout(per_view_bindings)} {}
-
-    ~scene_contract()
-    {
-        vkDestroyDescriptorSetLayout(ctx.device, per_view_layout, nullptr);
-        vkDestroyDescriptorSetLayout(ctx.device, per_scene_layout, nullptr);
-    }
-
-    VkDescriptorSetLayout get_per_scene_layout() const { return per_scene_layout; }
-    VkDescriptorSetLayout get_per_view_layout() const { return per_view_layout; }
-};
-
-class scene_pipeline_layout
-{
-    scene_contract & contract;
-    VkDescriptorSetLayout per_object_layout;
-    VkPipelineLayout pipeline_layout;
-public:
-    scene_pipeline_layout(scene_contract & contract, array_view<VkDescriptorSetLayoutBinding> per_object_bindings) :
-        contract{contract}, per_object_layout{contract.ctx.create_descriptor_set_layout(per_object_bindings)},
-        pipeline_layout{contract.ctx.create_pipeline_layout({contract.per_scene_layout, contract.per_view_layout, per_object_layout})} {}
-
-    ~scene_pipeline_layout()
-    {
-        vkDestroyPipelineLayout(contract.ctx.device, pipeline_layout, nullptr);
-        vkDestroyDescriptorSetLayout(contract.ctx.device, per_object_layout, nullptr);
-    }
-
-    VkDevice get_device() const { return contract.ctx.device; }
-    VkDescriptorSetLayout get_per_object_descriptor_set_layout() const { return per_object_layout; }
-    VkPipelineLayout get_pipeline_layout() const { return pipeline_layout; }
-};
-
-class scene_pipeline
-{
-    scene_pipeline_layout & layout;
-    VkPipeline pipeline;
-public:
-    scene_pipeline(scene_pipeline_layout & layout, VkRenderPass render_pass,  array_view<VkVertexInputBindingDescription> vertex_bindings, array_view<VkVertexInputAttributeDescription> vertex_attributes, VkShaderModule vert_shader, VkShaderModule frag_shader, bool depth_write, bool depth_test) : 
-        layout{layout}, pipeline{make_pipeline(layout.get_device(), render_pass, layout.get_pipeline_layout(), vertex_bindings, vertex_attributes, vert_shader, frag_shader, depth_write, depth_test)} {}
-    
-    ~scene_pipeline()
-    {
-        vkDestroyPipeline(layout.get_device(), pipeline, nullptr);
-    }
-
-    VkPipeline get_pipeline() const { return pipeline; }
-    VkPipelineLayout get_pipeline_layout() const { return layout.get_pipeline_layout(); }
-    VkDescriptorSetLayout get_per_object_descriptor_set_layout() const { return layout.get_per_object_descriptor_set_layout(); }
-};
-
-struct gfx_mesh
-{
-    std::unique_ptr<static_buffer> vertex_buffer;
-    std::unique_ptr<static_buffer> index_buffer;
-    uint32_t index_count;
-    mesh m;
-
-    gfx_mesh(context & ctx, const mesh & m) :
-        vertex_buffer{std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.vertices.size() * sizeof(mesh::vertex), m.vertices.data())},
-        index_buffer{std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.triangles.size() * sizeof(uint3), m.triangles.data())},
-        index_count{static_cast<uint32_t>(m.triangles.size() * 3)}, m{m}
-    {
-        
-    }
-
-    void draw(command_buffer & cmd) const
-    {
-        cmd.bind_vertex_buffer(0, *vertex_buffer, 0);
-        cmd.bind_index_buffer(*index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
-        cmd.draw_indexed(index_count);
-    }
-
-    void draw(command_buffer & cmd, size_t mtl) const
-    {
-        cmd.bind_vertex_buffer(0, *vertex_buffer, 0);
-        cmd.bind_index_buffer(*index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd, m.materials[mtl].num_triangles*3, 1, m.materials[mtl].first_triangle*3, 0, 0);
-    }
-};
-
-struct draw_item 
-{
-    const scene_pipeline * pipeline;
-    VkDescriptorSet set;
-    const gfx_mesh * mesh;
-    std::vector<size_t> mtls;
-};
-struct draw_list
-{
-    transient_resource_pool & pool;
-    std::vector<draw_item> items;
-    
-    draw_list(transient_resource_pool & pool) : pool{pool} {}
-
-    descriptor_set draw(const scene_pipeline & pipeline, const gfx_mesh & mesh, std::vector<size_t> mtls)
-    {
-        descriptor_set set = pool.allocate_descriptor_set(pipeline.get_per_object_descriptor_set_layout());
-        items.push_back({&pipeline, set, &mesh, mtls});
-        return set;
-    }
-
-    descriptor_set draw(const scene_pipeline & pipeline, const gfx_mesh & mesh)
-    {
-        std::vector<size_t> mtls;
-        for(size_t i=0; i<mesh.m.materials.size(); ++i) mtls.push_back(i);
-        return draw(pipeline, mesh, mtls);
-    }
-
-    void write_commands(command_buffer & cmd)
-    {
-        for(auto & item : items)
-        {
-            cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, item.pipeline->get_pipeline());
-            cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, item.pipeline->get_pipeline_layout(), 2, item.set, {});
-            for(auto mtl : item.mtls) item.mesh->draw(cmd, mtl);
-        }
-    }
-};
 
 int main() try
 {
@@ -323,7 +200,7 @@ int main() try
             list.draw(skybox_pipeline, skybox_mesh);
 
             auto helmet = list.draw(helmet_pipeline, helmet_mesh);
-            helmet.write_uniform_buffer(0, 0, mul(translation_matrix(float3{30, -20, 0}), scaling_matrix(float3{1,-1,-1}), helmet_mesh.m.bones[0].initial_pose.get_local_transform(), helmet_mesh.m.bones[0].model_to_bone_matrix));
+            helmet.write_uniform_buffer(0, 0, per_static_object{mul(translation_matrix(float3{30, -20, 0}), scaling_matrix(float3{1,-1,-1}), helmet_mesh.m.bones[0].initial_pose.get_local_transform(), helmet_mesh.m.bones[0].model_to_bone_matrix)});
             helmet.write_combined_image_sampler(1, 0, sampler, helmet_albedo);
             helmet.write_combined_image_sampler(2, 0, sampler, helmet_normal);
             helmet.write_combined_image_sampler(3, 0, sampler, helmet_metallic);
@@ -350,7 +227,7 @@ int main() try
             akai.write_combined_image_sampler(3, 0, sampler, black_tex);
        
             auto box = list.draw(static_pipeline, box_mesh);
-            box.write_uniform_buffer(0, 0, mul(translation_matrix(float3{-30,-20,0}), scaling_matrix(float3{4,4,4})));
+            box.write_uniform_buffer(0, 0, per_static_object{mul(translation_matrix(float3{-30,-20,0}), scaling_matrix(float3{4,4,4}))});
             box.write_combined_image_sampler(1, 0, sampler, gray_tex);
             box.write_combined_image_sampler(2, 0, sampler, flat_tex);
             box.write_combined_image_sampler(3, 0, sampler, black_tex);
@@ -359,7 +236,7 @@ int main() try
             {
                 auto sands = list.draw(static_pipeline, sands_mesh, {i});
 
-                sands.write_uniform_buffer(0, 0, mul(translation_matrix(float3{0,64,27}), scaling_matrix(float3{10,-10,-10})));
+                sands.write_uniform_buffer(0, 0, per_static_object{mul(translation_matrix(float3{0,64,27}), scaling_matrix(float3{10,-10,-10}))});
                 if(sands_mesh.m.materials[i].name == "map_2_island1") sands.write_combined_image_sampler(1, 0, sampler, map_2_island);
                 else if(sands_mesh.m.materials[i].name == "map_2_object1") sands.write_combined_image_sampler(1, 0, sampler, map_2_objects);
                 else if(sands_mesh.m.materials[i].name == "map_2_terrain1") sands.write_combined_image_sampler(1, 0, sampler, map_2_terrain);

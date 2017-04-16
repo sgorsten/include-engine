@@ -210,4 +210,121 @@ VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLa
     array_view<VkVertexInputBindingDescription> vertex_bindings, array_view<VkVertexInputAttributeDescription> vertex_attributes, 
     VkShaderModule vert_shader, VkShaderModule frag_shader, bool depth_write, bool depth_test);
 
+// Scene rendering support
+class scene_contract
+{
+    friend class scene_pipeline_layout;
+    context & ctx;
+    VkDescriptorSetLayout per_scene_layout; // Descriptors which are shared by the entire scene
+    VkDescriptorSetLayout per_view_layout; // Descriptors which vary per unique view into the scene
+public:
+    scene_contract(context & ctx, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings) : 
+        ctx{ctx}, per_scene_layout{ctx.create_descriptor_set_layout(per_scene_bindings)}, per_view_layout{ctx.create_descriptor_set_layout(per_view_bindings)} {}
+
+    ~scene_contract()
+    {
+        vkDestroyDescriptorSetLayout(ctx.device, per_view_layout, nullptr);
+        vkDestroyDescriptorSetLayout(ctx.device, per_scene_layout, nullptr);
+    }
+
+    VkDescriptorSetLayout get_per_scene_layout() const { return per_scene_layout; }
+    VkDescriptorSetLayout get_per_view_layout() const { return per_view_layout; }
+};
+
+class scene_pipeline_layout
+{
+    scene_contract & contract;
+    VkDescriptorSetLayout per_object_layout;
+    VkPipelineLayout pipeline_layout;
+public:
+    scene_pipeline_layout(scene_contract & contract, array_view<VkDescriptorSetLayoutBinding> per_object_bindings) :
+        contract{contract}, per_object_layout{contract.ctx.create_descriptor_set_layout(per_object_bindings)},
+        pipeline_layout{contract.ctx.create_pipeline_layout({contract.per_scene_layout, contract.per_view_layout, per_object_layout})} {}
+
+    ~scene_pipeline_layout()
+    {
+        vkDestroyPipelineLayout(contract.ctx.device, pipeline_layout, nullptr);
+        vkDestroyDescriptorSetLayout(contract.ctx.device, per_object_layout, nullptr);
+    }
+
+    VkDevice get_device() const { return contract.ctx.device; }
+    VkDescriptorSetLayout get_per_object_descriptor_set_layout() const { return per_object_layout; }
+    VkPipelineLayout get_pipeline_layout() const { return pipeline_layout; }
+};
+
+class scene_pipeline
+{
+    scene_pipeline_layout & layout;
+    VkPipeline pipeline;
+public:
+    scene_pipeline(scene_pipeline_layout & layout, VkRenderPass render_pass,  array_view<VkVertexInputBindingDescription> vertex_bindings, array_view<VkVertexInputAttributeDescription> vertex_attributes, VkShaderModule vert_shader, VkShaderModule frag_shader, bool depth_write, bool depth_test) : 
+        layout{layout}, pipeline{make_pipeline(layout.get_device(), render_pass, layout.get_pipeline_layout(), vertex_bindings, vertex_attributes, vert_shader, frag_shader, depth_write, depth_test)} {}
+    
+    ~scene_pipeline()
+    {
+        vkDestroyPipeline(layout.get_device(), pipeline, nullptr);
+    }
+
+    VkPipeline get_pipeline() const { return pipeline; }
+    VkPipelineLayout get_pipeline_layout() const { return layout.get_pipeline_layout(); }
+    VkDescriptorSetLayout get_per_object_descriptor_set_layout() const { return layout.get_per_object_descriptor_set_layout(); }
+};
+
+struct gfx_mesh
+{
+    std::unique_ptr<static_buffer> vertex_buffer;
+    std::unique_ptr<static_buffer> index_buffer;
+    uint32_t index_count;
+    mesh m;
+
+    gfx_mesh(context & ctx, const mesh & m) :
+        vertex_buffer{std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.vertices.size() * sizeof(mesh::vertex), m.vertices.data())},
+        index_buffer{std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.triangles.size() * sizeof(uint3), m.triangles.data())},
+        index_count{static_cast<uint32_t>(m.triangles.size() * 3)}, m{m}
+    {
+        
+    }
+};
+
+struct draw_item 
+{
+    const scene_pipeline * pipeline;
+    VkDescriptorSet set;
+    const gfx_mesh * mesh;
+    std::vector<size_t> mtls;
+};
+struct draw_list
+{
+    transient_resource_pool & pool;
+    std::vector<draw_item> items;
+    
+    draw_list(transient_resource_pool & pool) : pool{pool} {}
+
+    descriptor_set draw(const scene_pipeline & pipeline, const gfx_mesh & mesh, std::vector<size_t> mtls)
+    {
+        descriptor_set set = pool.allocate_descriptor_set(pipeline.get_per_object_descriptor_set_layout());
+        items.push_back({&pipeline, set, &mesh, mtls});
+        return set;
+    }
+
+    descriptor_set draw(const scene_pipeline & pipeline, const gfx_mesh & mesh)
+    {
+        std::vector<size_t> mtls;
+        for(size_t i=0; i<mesh.m.materials.size(); ++i) mtls.push_back(i);
+        return draw(pipeline, mesh, mtls);
+    }
+
+    void write_commands(command_buffer & cmd)
+    {
+        for(auto & item : items)
+        {
+            cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, item.pipeline->get_pipeline());
+            cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, item.pipeline->get_pipeline_layout(), 2, item.set, {});
+            cmd.bind_vertex_buffer(0, *item.mesh->vertex_buffer, 0);
+            cmd.bind_index_buffer(*item.mesh->index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
+            for(auto mtl : item.mtls) vkCmdDrawIndexed(cmd, item.mesh->m.materials[mtl].num_triangles*3, 1, item.mesh->m.materials[mtl].first_triangle*3, 0, 0);
+        }
+    }
+};
+
 #endif
