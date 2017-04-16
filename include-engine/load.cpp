@@ -1,5 +1,6 @@
 #include "load.h"
 #include <fstream>
+#include <sstream>
 #include <algorithm>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -174,4 +175,79 @@ std::vector<uint32_t> shader_compiler::compile_glsl(VkShaderStageFlagBits stage,
     std::vector<uint32_t> spirv;
     glslang::GlslangToSpv(*program.getIntermediate(shader.getStage()), spirv, nullptr);
     return spirv;
+}
+
+mesh load_mesh_from_obj(const char * filename)
+{
+    mesh m;
+    std::map<std::string, uint32_t> vertex_map;
+    std::vector<float3> vertices;
+    std::vector<float2> texcoords;
+    std::vector<float3> normals;
+    auto find_vertex = [&](std::string && indices)
+    {
+        auto it = vertex_map.find(indices);
+        if(it != vertex_map.end()) return it->second;
+
+        const uint32_t index = vertex_map[indices] = m.vertices.size();
+        const bool no_texcoords = indices.find("//") != std::string::npos;
+        for(auto & ch : indices) if(ch == '/') ch = ' ';
+        int v {}, vt {}, vn {};
+        std::istringstream ss(indices);
+        ss >> v >> vt >> vn;
+        if(no_texcoords) std::swap(vt, vn);
+        mesh::vertex vertex {};
+        if(v) vertex.position = vertices[v-1];
+        if(vt) vertex.texcoord = texcoords[vt-1];
+        if(vn) vertex.normal = normals[vn-1];
+        vertex.color = {1,1,1};
+        m.vertices.push_back(vertex);
+        return index;
+    };
+
+    std::ifstream in(filename);
+    std::string line, token;
+    while(true)
+    {
+        if(!std::getline(in, line)) break;
+        if(line.empty() || line.front() == '#') continue;
+        std::istringstream ss(line);
+        if(!(ss >> token)) continue;
+        if(token == "v")
+        {
+            float3 vertex;
+            if(!(ss >> vertex.x >> vertex.y >> vertex.z)) throw std::runtime_error("malformed vertex");
+            vertices.push_back(vertex);
+        }
+        else if(token == "vt")
+        {
+            float2 texcoord;
+            if(!(ss >> texcoord.x >> texcoord.y)) throw std::runtime_error("malformed vertex texture coords");
+            texcoords.push_back({texcoord.x, 1-texcoord.y});
+        }
+        else if(token == "vn")
+        {
+            float3 normal;
+            if(!(ss >> normal.x >> normal.y >> normal.z)) throw std::runtime_error("malformed vertex normal");
+            normals.push_back(normal);
+        }
+        else if(token == "f")
+        {
+            std::vector<uint32_t> indices;
+            while(true)
+            {
+                if(ss >> token) indices.push_back(find_vertex(std::move(token)));
+                else break;
+            }
+            for(size_t i=2; i<indices.size(); ++i) m.triangles.push_back({indices[0], indices[i-1], indices[i]});
+        }
+        else if(token == "usemtl")
+        {
+            if(!m.materials.empty()) m.materials.back().num_triangles = m.triangles.size() - m.materials.back().first_triangle;
+            ss >> token;
+            m.materials.push_back({token, m.triangles.size(), 0});
+        }
+    }
+    if(!m.materials.empty()) m.materials.back().num_triangles = m.triangles.size() - m.materials.back().first_triangle;
+    return m;
 }

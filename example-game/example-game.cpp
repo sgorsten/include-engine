@@ -45,6 +45,9 @@ int main() try
     texture_2d mutant_normal(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/mutant-normal.jpg"));
     texture_2d akai_albedo(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/akai-albedo.jpg"));
     texture_2d akai_normal(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/akai-normal.jpg"));
+    texture_2d map_2_island(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/map_2_island.jpg"));
+    texture_2d map_2_objects(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/map_2_objects.jpg"));
+    texture_2d map_2_terrain(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/map_2_terrain.jpg"));
     texture_cube env_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, 
         load_image("assets/posx.jpg"), load_image("assets/negx.jpg"), 
         load_image("assets/posy.jpg"), load_image("assets/negy.jpg"),
@@ -95,6 +98,7 @@ int main() try
     gfx_mesh skybox_mesh {ctx, generate_box_mesh({-10,-10,-10}, {10,10,10})};
     gfx_mesh ground_mesh {ctx, generate_box_mesh({-80,8,-80}, {80,10,80})};
     gfx_mesh box_mesh {ctx, load_meshes_from_fbx("assets/cube-mesh.fbx")[0]};
+    gfx_mesh sands_mesh {ctx, load_mesh_from_obj("assets/sands location.obj")};
 
     // Set up our layouts
     auto per_scene_layout = ctx.create_descriptor_set_layout({
@@ -150,7 +154,7 @@ int main() try
     VkPipeline skybox_pipeline = make_pipeline(ctx.device, render_pass, skybox_pipeline_layout, bindings, skybox_attributes, skybox_vert_shader, skybox_frag_shader, false, false);
 
     // Set up a window with swapchain framebuffers
-    window win {ctx, {640, 480}, "Example Game"};
+    window win {ctx, {1280, 720}, "Example Game"};
     depth_buffer depth {ctx, win.get_dims()};
 
     // Create framebuffers
@@ -302,14 +306,20 @@ int main() try
         }
 
         cmd.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, static_pipeline);
-        const float4x4 identity_matrix = translation_matrix(float3{0,0,0});
-        auto per_object = pool.allocate_descriptor_set(per_object_layout);
-        per_object.write_uniform_buffer(0, 0, identity_matrix);
-        per_object.write_combined_image_sampler(1, 0, sampler, gray_tex);
-        per_object.write_combined_image_sampler(2, 0, sampler, flat_tex);
-        per_object.write_combined_image_sampler(3, 0, sampler, black_tex);
-        cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
-        ground_mesh.draw(cmd);
+        const float4x4 identity_matrix = mul(translation_matrix(float3{0,64,27}), scaling_matrix(float3{10,-10,-10}));
+        for(size_t i=0; i<sands_mesh.m.materials.size(); ++i)
+        {
+            auto per_object = pool.allocate_descriptor_set(per_object_layout);
+            per_object.write_uniform_buffer(0, 0, identity_matrix);
+            if(sands_mesh.m.materials[i].name == "map_2_island1") per_object.write_combined_image_sampler(1, 0, sampler, map_2_island);
+            else if(sands_mesh.m.materials[i].name == "map_2_object1") per_object.write_combined_image_sampler(1, 0, sampler, map_2_objects);
+            else if(sands_mesh.m.materials[i].name == "map_2_terrain1") per_object.write_combined_image_sampler(1, 0, sampler, map_2_terrain);
+            else per_object.write_combined_image_sampler(1, 0, sampler, gray_tex);
+            per_object.write_combined_image_sampler(2, 0, sampler, flat_tex);
+            per_object.write_combined_image_sampler(3, 0, sampler, black_tex);
+            cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, per_object, {});
+            sands_mesh.draw(cmd, i);
+        }
 
         cmd.end_render_pass();
         cmd.end();

@@ -82,6 +82,7 @@ struct mesh
     };
     struct material
     {
+        std::string name;
         size_t first_triangle, num_triangles;
     };
     std::vector<vertex> vertices;

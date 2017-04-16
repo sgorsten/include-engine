@@ -790,7 +790,7 @@ namespace fbx
 
             for(auto & tris : material_triangles)
             {
-                geom.materials.push_back({geom.triangles.size(), tris.size()});
+                geom.materials.push_back({"", geom.triangles.size(), tris.size()});
                 geom.triangles.insert(end(geom.triangles), begin(tris), end(tris));
             }
 

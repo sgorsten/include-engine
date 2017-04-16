@@ -8,6 +8,10 @@ helmet-mesh.fbx, helmet-albedo.jpg, helmet-normal.jpg, helmet-metallic.jpg, helm
   Simple Steel Helmet (Game Model) by Michael Makivic is licensed under Creative Commons Attribution
   https://sketchfab.com/models/1603f60804c941cba0ffeacea20a7f32
 
+sands location.obj, sands location.mtl, map_2_island.jpg, map_2_objects.jpg, map_2_terrain.jpg
+  Sands Location by Bocharova is licensed under Creative Commons Attribution - Noncommercial
+  https://sketchfab.com/models/f35b8eb1e72f42699ec34069489ac654
+
 negx.jpg, negy.jpg, negz.jpg, posx.jpg, posy.jpg, posz.jpg
   Maskonaive 2 by Emil Persson, aka Humus
   Creative Commons Attribution 3.0 Unported

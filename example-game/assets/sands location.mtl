@@ -1,0 +1,120 @@
+newmtl initialShadingGroup
+illum 4
+Kd 0.50 0.50 0.50
+Ka 0.00 0.00 0.00
+Tf 1.00 1.00 1.00
+Ni 1.00
+newmtl map_1:lambert3SG
+illum 4
+Kd 0.00 0.00 0.00
+Ka 0.00 0.00 0.00
+Tf 1.00 1.00 1.00
+map_Kd map_1_grass.tga
+Ni 1.00
+newmtl map_1:layeredTexture1SG
+illum 4
+Kd 0.00 0.00 0.00
+Ka 0.44 0.44 0.44
+Tf 1.00 1.00 1.00
+Ni 1.00
+newmtl map_1:map_0001:blinn1SG
+illum 4
+Kd 0.70 0.70 0.70
+Ka 0.00 0.00 0.00
+Tf 1.00 1.00 1.00
+Ni 1.00
+newmtl map_1:map_0001:blinn2SG
+illum 4
+Kd 0.32 0.26 0.06
+Ka 0.00 0.00 0.00
+Tf 1.00 1.00 1.00
+Ni 1.00
+Ks 0.50 0.50 0.50
+newmtl map_1:map_0001:lambert2SG
+illum 4
+Kd 0.19 0.37 0.07
+Ka 0.00 0.00 0.00
+Tf 1.00 1.00 1.00
+Ni 1.00
+newmtl map_1:map_0001:lambert3SG
+illum 4
+Kd 0.23 0.16 0.09
+Ka 0.00 0.00 0.00
+Tf 1.00 1.00 1.00
+Ni 1.00
+newmtl map_1:map_0001:lambert4SG
+illum 4
+Kd 0.47 0.41 0.26
+Ka 0.00 0.00 0.00
+Tf 1.00 1.00 1.00
+Ni 1.00
+newmtl map_1:map_0001:lambert5SG
+illum 4
+Kd 0.05 0.23 0.23
+Ka 0.00 0.00 0.00
+Tf 1.00 1.00 1.00
+Ni 1.00
+newmtl map_1:map_0001:lambert6SG
+illum 4
+Kd 0.15 0.22 0.06
+Ka 0.00 0.00 0.00
+Tf 1.00 1.00 1.00
+Ni 1.00
+newmtl map_1:map_0001:lambert7SG
+illum 4
+Kd 0.50 0.50 0.50
+Ka 0.00 0.00 0.00
+Tf 0.00 1.00 1.00
+Ni 1.00
+newmtl map_2_island1
+illum 4
+Kd 0.00 0.00 0.00
+Ka 0.00 0.00 0.00
+Tf 1.00 1.00 1.00
+map_Kd map_island.tga
+Ni 1.00
+newmtl map_2_object1
+illum 4
+Kd 0.00 0.00 0.00
+Ka 0.00 0.00 0.00
+Tf 1.00 1.00 1.00
+map_Kd map_objects.tga
+Ni 1.00
+newmtl map_2_terrain1
+illum 4
+Kd 0.00 0.00 0.00
+Ka 0.00 0.00 0.00
+Tf 1.00 1.00 1.00
+map_Kd map_terrain.tga
+Ni 1.00
+newmtl map_4:blinn6SG
+illum 4
+Kd 0.00 0.00 0.00
+Ka 0.00 0.00 0.00
+Tf 1.00 1.00 1.00
+map_Kd grass.tga
+Ni 1.00
+Ks 0.50 0.50 0.50
+Ns 0.06
+newmtl map_4:lambert4SG
+illum 4
+Kd 0.00 0.00 0.00
+Ka 0.00 0.00 0.00
+Tf 1.00 1.00 1.00
+Ni 1.00
+newmtl map_4:lambert5SG
+illum 4
+Kd 0.00 0.00 0.00
+Ka 0.00 0.00 0.00
+Tf 1.00 1.00 1.00
+map_Kd map_2_fire.TGA
+Ni 1.00
+newmtl map_4:object
+illum 4
+Kd 0.00 0.00 0.00
+Ka 0.00 0.00 0.00
+Tf 1.00 1.00 1.00
+map_Kd object.tga
+Ni 1.00
+Ks 0.50 0.50 0.50
+Ns 0.06
