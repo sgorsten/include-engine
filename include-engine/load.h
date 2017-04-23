@@ -10,8 +10,8 @@ image generate_single_color_image(const byte4 & color);
 image load_image(const char * filename);
 
 mesh generate_box_mesh(const float3 & bmin, const float3 & bmax);
-std::vector<mesh> load_meshes_from_fbx(const char * filename);
-mesh load_mesh_from_obj(const char * filename);
+std::vector<mesh> load_meshes_from_fbx(coord_system target, const char * filename);
+mesh load_mesh_from_obj(coord_system target, const char * filename);
 
 class shader_compiler
 {

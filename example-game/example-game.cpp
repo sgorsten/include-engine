@@ -8,6 +8,7 @@
 
 struct per_scene_uniforms
 {
+    alignas(16) float4x4 cubemap_xform;
 	alignas(16) float3 ambient_light;
 	alignas(16) float3 light_direction;
 	alignas(16) float3 light_color;
@@ -35,8 +36,14 @@ VkAttachmentDescription make_attachment_description(VkFormat format, VkSampleCou
     return {0, format, samples, load_op, store_op, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE, initial_layout, final_layout};
 }
 
+std::ostream & operator << (std::ostream & out, const float3 & v) { return out << '[' << v.x << ',' << v.y << ',' << v.z << ']'; }
+
 int main() try
 {
+    constexpr coord_system game_coords {coord_axis::right, coord_axis::forward, coord_axis::up};
+    constexpr coord_system vk_coords {coord_axis::right, coord_axis::down, coord_axis::forward};
+    constexpr coord_system cubemap_coords {coord_axis::right, coord_axis::up, coord_axis::back};
+
     context ctx;
 
     // Create our textures
@@ -69,12 +76,11 @@ int main() try
     check(vkCreateSampler(ctx.device, &sampler_info, nullptr, &sampler));
 
     // Create our meshes
-    gfx_mesh helmet_mesh {ctx, load_meshes_from_fbx("assets/helmet-mesh.fbx")[0]};
-    gfx_mesh mutant_mesh {ctx, load_meshes_from_fbx("assets/mutant-mesh.fbx")[0]};
+    gfx_mesh helmet_mesh {ctx, load_meshes_from_fbx(game_coords, "assets/helmet-mesh.fbx")[0]};
+    gfx_mesh mutant_mesh {ctx, load_meshes_from_fbx(game_coords, "assets/mutant-mesh.fbx")[0]};
     gfx_mesh skybox_mesh {ctx, generate_box_mesh({-10,-10,-10}, {10,10,10})};
-    gfx_mesh ground_mesh {ctx, generate_box_mesh({-80,8,-80}, {80,10,80})};
-    gfx_mesh box_mesh {ctx, load_meshes_from_fbx("assets/cube-mesh.fbx")[0]};
-    gfx_mesh sands_mesh {ctx, load_mesh_from_obj("assets/sands location.obj")};
+    gfx_mesh box_mesh {ctx, load_meshes_from_fbx(game_coords, "assets/cube-mesh.fbx")[0]};
+    gfx_mesh sands_mesh {ctx, load_mesh_from_obj(game_coords, "assets/sands location.obj")};
 
     // Set up our layouts
 
@@ -152,7 +158,7 @@ int main() try
     };
     int frame_index = 0;
 
-    float3 camera_position {0,-20,-20};
+    float3 camera_position {0,-20,20};
     float camera_yaw {0}, camera_pitch {0};
     float2 last_cursor;
     float total_time = 0;
@@ -174,20 +180,20 @@ int main() try
         if(win.get_mouse_button(GLFW_MOUSE_BUTTON_LEFT))
         {
             const auto move = float2(cursor - last_cursor);
-            camera_yaw += move.x * 0.01f;
+            camera_yaw -= move.x * 0.01f;
             camera_pitch = std::max(-1.5f, std::min(1.5f, camera_pitch - move.y * 0.01f));
         }
         last_cursor = cursor;
 
         // Handle WASD
-        const float4 camera_orientation = qmul(rotation_quat(float3{0,1,0}, camera_yaw), rotation_quat(float3{1,0,0}, camera_pitch));
-        if(win.get_key(GLFW_KEY_W)) camera_position += qzdir(camera_orientation) * (timestep * 50);
-        if(win.get_key(GLFW_KEY_A)) camera_position -= qxdir(camera_orientation) * (timestep * 50);
-        if(win.get_key(GLFW_KEY_S)) camera_position -= qzdir(camera_orientation) * (timestep * 50);
-        if(win.get_key(GLFW_KEY_D)) camera_position += qxdir(camera_orientation) * (timestep * 50);
+        const float4 camera_orientation = qmul(rotation_quat(game_coords.get_up(), camera_yaw), rotation_quat(game_coords.get_right(), camera_pitch));
+        if(win.get_key(GLFW_KEY_W)) camera_position += qrot(camera_orientation, game_coords.get_forward()) * (timestep * 50);
+        if(win.get_key(GLFW_KEY_A)) camera_position += qrot(camera_orientation, game_coords.get_left()) * (timestep * 50);
+        if(win.get_key(GLFW_KEY_S)) camera_position += qrot(camera_orientation, game_coords.get_back()) * (timestep * 50);
+        if(win.get_key(GLFW_KEY_D)) camera_position += qrot(camera_orientation, game_coords.get_right()) * (timestep * 50);
         
         // Determine matrices
-        const auto proj_matrix = linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one);
+        const auto proj_matrix = mul(linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one), coord_transform{game_coords, vk_coords}.as_4x4());        
 
         // Render a frame
         auto & pool = pools[frame_index];
@@ -200,7 +206,7 @@ int main() try
             list.draw(skybox_pipeline, skybox_mesh);
 
             auto helmet = list.draw(helmet_pipeline, helmet_mesh);
-            helmet.write_uniform_buffer(0, 0, per_static_object{mul(translation_matrix(float3{30, -20, 0}), scaling_matrix(float3{1,-1,-1}), helmet_mesh.m.bones[0].initial_pose.get_local_transform(), helmet_mesh.m.bones[0].model_to_bone_matrix)});
+            helmet.write_uniform_buffer(0, 0, per_static_object{mul(translation_matrix(float3{30, 0, 20}), helmet_mesh.m.bones[0].initial_pose.get_local_transform(), helmet_mesh.m.bones[0].model_to_bone_matrix)});
             helmet.write_combined_image_sampler(1, 0, sampler, helmet_albedo);
             helmet.write_combined_image_sampler(2, 0, sampler, helmet_normal);
             helmet.write_combined_image_sampler(3, 0, sampler, helmet_metallic);
@@ -211,7 +217,7 @@ int main() try
             per_skinned_object po {};
             for(size_t i=0; i<mutant_mesh.m.bones.size(); ++i)
             {   
-                po.bone_matrices[i] = mul(scaling_matrix(float3{1,-1,-1}), mutant_mesh.m.get_bone_pose(kf.local_transforms, i), mutant_mesh.m.bones[i].model_to_bone_matrix);
+                po.bone_matrices[i] = mul(mutant_mesh.m.get_bone_pose(kf.local_transforms, i), mutant_mesh.m.bones[i].model_to_bone_matrix);
             }
 
             auto mutant = list.draw(skinned_pipeline, mutant_mesh, {0,1,3});
@@ -227,7 +233,7 @@ int main() try
             akai.write_combined_image_sampler(3, 0, sampler, black_tex);
        
             auto box = list.draw(static_pipeline, box_mesh);
-            box.write_uniform_buffer(0, 0, per_static_object{mul(translation_matrix(float3{-30,-20,0}), scaling_matrix(float3{4,4,4}))});
+            box.write_uniform_buffer(0, 0, per_static_object{mul(translation_matrix(float3{-30,0,20}), scaling_matrix(float3{4,4,4}))});
             box.write_combined_image_sampler(1, 0, sampler, gray_tex);
             box.write_combined_image_sampler(2, 0, sampler, flat_tex);
             box.write_combined_image_sampler(3, 0, sampler, black_tex);
@@ -236,7 +242,7 @@ int main() try
             {
                 auto sands = list.draw(static_pipeline, sands_mesh, {i});
 
-                sands.write_uniform_buffer(0, 0, per_static_object{mul(translation_matrix(float3{0,64,27}), scaling_matrix(float3{10,-10,-10}))});
+                sands.write_uniform_buffer(0, 0, per_static_object{mul(translation_matrix(float3{0,27,-64}), scaling_matrix(float3{10,10,10}))});
                 if(sands_mesh.m.materials[i].name == "map_2_island1") sands.write_combined_image_sampler(1, 0, sampler, map_2_island);
                 else if(sands_mesh.m.materials[i].name == "map_2_object1") sands.write_combined_image_sampler(1, 0, sampler, map_2_objects);
                 else if(sands_mesh.m.materials[i].name == "map_2_terrain1") sands.write_combined_image_sampler(1, 0, sampler, map_2_terrain);
@@ -252,8 +258,9 @@ int main() try
 
         // Bind per-scene uniforms
         per_scene_uniforms ps;
+        ps.cubemap_xform = coord_transform{game_coords, cubemap_coords}.as_4x4();
         ps.ambient_light = {0.01f,0.01f,0.01f};
-        ps.light_direction = normalize(float3{1,-5,-2});
+        ps.light_direction = normalize(float3{1,-2,5});
         ps.light_color = {0.8f,0.7f,0.5f};
 
         auto per_scene = pool.allocate_descriptor_set(contract.get_per_scene_layout());

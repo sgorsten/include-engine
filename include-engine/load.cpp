@@ -58,11 +58,17 @@ mesh generate_box_mesh(const float3 & a, const float3 & b)
 #include "fbx.h"
 #include <iostream>
 
-std::vector<mesh> load_meshes_from_fbx(const char * filename)
+std::vector<mesh> load_meshes_from_fbx(coord_system target, const char * filename)
 {
+    const coord_system fbx_coords {coord_axis::right, coord_axis::up, coord_axis::back};
+    const coord_transform xform {fbx_coords, target};
     std::ifstream in(filename, std::ifstream::binary);
     auto meshes = fbx::load_meshes(fbx::ast::load(in));
-    for(auto & m : meshes) m = compute_tangent_basis(std::move(m));
+    for(auto & m : meshes)
+    {
+        m = compute_tangent_basis(std::move(m));
+        m.apply(xform);
+    }
     return meshes;
 }
 
@@ -178,7 +184,7 @@ std::vector<uint32_t> shader_compiler::compile_glsl(VkShaderStageFlagBits stage,
     return spirv;
 }
 
-mesh load_mesh_from_obj(const char * filename)
+mesh load_mesh_from_obj(coord_system target, const char * filename)
 {
     mesh m;
     std::map<std::string, uint32_t> vertex_map;
@@ -250,5 +256,7 @@ mesh load_mesh_from_obj(const char * filename)
         }
     }
     if(!m.materials.empty()) m.materials.back().num_triangles = m.triangles.size() - m.materials.back().first_triangle;
+    const coord_system obj_coords {coord_axis::right, coord_axis::up, coord_axis::back};
+    m.apply(coord_transform{obj_coords, target});
     return m;
 }

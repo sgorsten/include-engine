@@ -4,6 +4,7 @@
 
 layout(set=0, binding=0) uniform PerScene
 {
+	mat4 u_cubemap_xform;
 	vec3 u_ambient_light;
 	vec3 u_light_direction;
 	vec3 u_light_color;
@@ -12,7 +13,7 @@ layout(set=0, binding=1) uniform samplerCube u_env;
 
 vec3 sample_environment(vec3 direction)
 {
-	return texture(u_env, direction*vec3(1,-1,-1)).rgb;
+	return texture(u_env, (u_cubemap_xform * vec4(direction,0)).xyz).rgb;
 }
 
 ////////////////////////////////////////////////////////////////////////////
