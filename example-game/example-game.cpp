@@ -38,6 +38,24 @@ VkAttachmentDescription make_attachment_description(VkFormat format, VkSampleCou
 
 std::ostream & operator << (std::ostream & out, const float3 & v) { return out << '[' << v.x << ',' << v.y << ',' << v.z << ']'; }
 
+struct fps_camera
+{
+    float3 position;
+    float yaw {}, pitch {};
+
+    float4 get_orientation(const coord_system & c) const { return qmul(rotation_quat(c.get_up(), yaw), rotation_quat(c.get_right(), pitch)); }
+    float4x4 get_pose_matrix(const coord_system & c) const { return pose_matrix(get_orientation(c), position); }
+    float4x4 get_view_matrix(const coord_system & c) const { return inverse(get_pose_matrix(c)); }
+
+    float3 get_axis(const coord_system & c, coord_axis axis) const { return qrot(get_orientation(c), c.get_axis(axis)); }
+    float3 get_left(const coord_system & c) const { return get_axis(c, coord_axis::left); }
+    float3 get_right(const coord_system & c) const { return get_axis(c, coord_axis::right); }
+    float3 get_up(const coord_system & c) const { return get_axis(c, coord_axis::up); }
+    float3 get_down(const coord_system & c) const { return get_axis(c, coord_axis::down); }
+    float3 get_forward(const coord_system & c) const { return get_axis(c, coord_axis::forward); }
+    float3 get_back(const coord_system & c) const { return get_axis(c, coord_axis::back); }
+};
+
 int main() try
 {
     constexpr coord_system game_coords {coord_axis::right, coord_axis::forward, coord_axis::up};
@@ -158,8 +176,7 @@ int main() try
     };
     int frame_index = 0;
 
-    float3 camera_position {0,-20,20};
-    float camera_yaw {0}, camera_pitch {0};
+    fps_camera camera {{0,-20,20}};
     float2 last_cursor;
     float total_time = 0;
     auto t0 = std::chrono::high_resolution_clock::now();
@@ -180,20 +197,19 @@ int main() try
         if(win.get_mouse_button(GLFW_MOUSE_BUTTON_LEFT))
         {
             const auto move = float2(cursor - last_cursor);
-            camera_yaw -= move.x * 0.01f;
-            camera_pitch = std::max(-1.5f, std::min(1.5f, camera_pitch - move.y * 0.01f));
+            camera.yaw -= move.x * 0.01f;
+            camera.pitch = std::max(-1.5f, std::min(1.5f, camera.pitch - move.y * 0.01f));
         }
         last_cursor = cursor;
 
         // Handle WASD
-        const float4 camera_orientation = qmul(rotation_quat(game_coords.get_up(), camera_yaw), rotation_quat(game_coords.get_right(), camera_pitch));
-        if(win.get_key(GLFW_KEY_W)) camera_position += qrot(camera_orientation, game_coords.get_forward()) * (timestep * 50);
-        if(win.get_key(GLFW_KEY_A)) camera_position += qrot(camera_orientation, game_coords.get_left()) * (timestep * 50);
-        if(win.get_key(GLFW_KEY_S)) camera_position += qrot(camera_orientation, game_coords.get_back()) * (timestep * 50);
-        if(win.get_key(GLFW_KEY_D)) camera_position += qrot(camera_orientation, game_coords.get_right()) * (timestep * 50);
+        if(win.get_key(GLFW_KEY_W)) camera.position += camera.get_forward(game_coords) * (timestep * 50);
+        if(win.get_key(GLFW_KEY_A)) camera.position += camera.get_left(game_coords) * (timestep * 50);
+        if(win.get_key(GLFW_KEY_S)) camera.position += camera.get_back(game_coords) * (timestep * 50);
+        if(win.get_key(GLFW_KEY_D)) camera.position += camera.get_right(game_coords) * (timestep * 50);
         
         // Determine matrices
-        const auto proj_matrix = mul(linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one), coord_transform{game_coords, vk_coords}.as_4x4());        
+        const auto proj_matrix = mul(linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one), make_transform(game_coords, vk_coords));        
 
         // Render a frame
         auto & pool = pools[frame_index];
@@ -258,7 +274,7 @@ int main() try
 
         // Bind per-scene uniforms
         per_scene_uniforms ps;
-        ps.cubemap_xform = coord_transform{game_coords, cubemap_coords}.as_4x4();
+        ps.cubemap_xform = make_transform(game_coords, cubemap_coords);
         ps.ambient_light = {0.01f,0.01f,0.01f};
         ps.light_direction = normalize(float3{1,-2,5});
         ps.light_color = {0.8f,0.7f,0.5f};
@@ -270,9 +286,9 @@ int main() try
 
         // Bind per-view uniforms
         per_view_uniforms pv;
-        pv.view_proj_matrix = mul(proj_matrix, inverse(pose_matrix(camera_orientation, camera_position)));
-        pv.rotation_only_view_proj_matrix = mul(proj_matrix, inverse(pose_matrix(camera_orientation, float3{0,0,0})));
-        pv.eye_position = camera_position;
+        pv.view_proj_matrix = mul(proj_matrix, camera.get_view_matrix(game_coords));
+        pv.rotation_only_view_proj_matrix = mul(proj_matrix, inverse(pose_matrix(camera.get_orientation(game_coords), float3{0,0,0})));
+        pv.eye_position = camera.position;
 
         auto per_view = pool.allocate_descriptor_set(contract.get_per_view_layout());
         per_view.write_uniform_buffer(0, 0, pv);      

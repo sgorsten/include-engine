@@ -24,6 +24,7 @@ image load_image(const char * filename)
 
 mesh compute_tangent_basis(mesh && m)
 {
+    for(auto & v : m.vertices) v.tangent = v.bitangent = {};
     for(auto t : m.triangles)
     {
         auto & v0 = m.vertices[t.x], & v1 = m.vertices[t.y], & v2 = m.vertices[t.z];
@@ -60,15 +61,12 @@ mesh generate_box_mesh(const float3 & a, const float3 & b)
 
 std::vector<mesh> load_meshes_from_fbx(coord_system target, const char * filename)
 {
-    const coord_system fbx_coords {coord_axis::right, coord_axis::up, coord_axis::back};
-    const coord_transform xform {fbx_coords, target};
     std::ifstream in(filename, std::ifstream::binary);
     auto meshes = fbx::load_meshes(fbx::ast::load(in));
-    for(auto & m : meshes)
-    {
-        m = compute_tangent_basis(std::move(m));
-        m.apply(xform);
-    }
+
+    const coord_system fbx_coords {coord_axis::right, coord_axis::up, coord_axis::back};
+    const auto xform = make_transform(fbx_coords, target);
+    for(auto & m : meshes) m = compute_tangent_basis(transform(xform, std::move(m)));
     return meshes;
 }
 
@@ -257,6 +255,5 @@ mesh load_mesh_from_obj(coord_system target, const char * filename)
     }
     if(!m.materials.empty()) m.materials.back().num_triangles = m.triangles.size() - m.materials.back().first_triangle;
     const coord_system obj_coords {coord_axis::right, coord_axis::up, coord_axis::back};
-    m.apply(coord_transform{obj_coords, target});
-    return m;
+    return compute_tangent_basis(transform(make_transform(obj_coords, target), m));
 }

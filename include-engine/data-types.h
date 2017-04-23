@@ -65,30 +65,7 @@ struct coord_system
     constexpr float3 get_forward() const { return get_axis(coord_axis::forward); }
     constexpr float3 get_back() const { return get_axis(coord_axis::back); }
 };
-
-// A transform between two 3D coordinate systems that is able to remap vectors, matrices, and quaternions
-class coord_transform
-{
-    float3x3 matrix;
-    constexpr bool changes_handedness() const { return determinant(matrix) < 0; }
-public:
-    constexpr coord_transform(coord_system from, coord_system to) : matrix{to.get_axis(from.x_axis), to.get_axis(from.y_axis), to.get_axis(from.z_axis)} {}
-
-    // Return this transformation as a 4x4 matrix
-    constexpr float4x4 as_4x4() const { return {{matrix.x,0}, {matrix.y,0}, {matrix.z,0}, {0,0,0,1}}; }
-
-    // Map a vector in the "from" coordinate system to the equivalent vector in the "to" coordinate system
-    constexpr float3 transform_vector(const float3 & v) const { return mul(matrix, v); }
-
-    // Produce quaternion in the "to" coordinate system equivalent to original quaternion in the "from" coordinate system
-    constexpr float4 transform_quat(const float4 & q) const { return {transform_vector(q.xyz()) * (changes_handedness() ? -1.0f : 1.0f), q.w}; }
-
-    // Produce matrix in the "to" coordinate system equivalent to original matrix in the "from" coordinate system
-    constexpr float4x4 transform_matrix(const float4x4 & m) const { return mul(as_4x4(), m, inverse(as_4x4())); }
-
-    // Scaling factors are NOT a vector, they are an efficient representation of a scaling matrix, and must be transformed accordingly
-    constexpr float3 transform_scaling_factors(const float3 & s) const { const auto m = transform_matrix(scaling_matrix(s)); return {m.x.x, m.y.y, m.z.z}; }
-};
+inline float4x4 make_transform(const coord_system & from, const coord_system & to) { return {{to.get_axis(from.x_axis),0}, {to.get_axis(from.y_axis),0}, {to.get_axis(from.z_axis),0}, {0,0,0,1}}; }
 
 // Value type which holds mesh information
 struct mesh
@@ -99,12 +76,6 @@ struct mesh
         float4 rotation;
         float3 scaling;
         float4x4 get_local_transform() const { return mul(translation_matrix(translation), rotation_matrix(rotation), scaling_matrix(scaling)); }
-        void apply(const coord_transform & transform)
-        {
-            translation = transform.transform_vector(translation);
-            rotation = transform.transform_quat(rotation);
-            scaling = transform.transform_scaling_factors(scaling);
-        }
     };
 
     struct bone
@@ -154,26 +125,17 @@ struct mesh
         auto & b = bones[index];
         return b.parent_index ? mul(get_bone_pose(*b.parent_index), b.initial_pose.get_local_transform()) : b.initial_pose.get_local_transform();
     }
-
-    void apply(const coord_transform & transform)
-    {
-        for(auto & v : vertices)
-        {
-            v.position  = transform.transform_vector(v.position);
-            v.normal    = transform.transform_vector(v.normal);
-            v.tangent   = transform.transform_vector(v.tangent);
-            v.bitangent = transform.transform_vector(v.bitangent);
-        }
-        for(auto & b : bones)
-        {
-            b.initial_pose.apply(transform);
-            b.model_to_bone_matrix = transform.transform_matrix(b.model_to_bone_matrix);
-        }
-        for(auto & a : animations)
-        {
-            for(auto & k : a.keyframes) for(auto & t : k.local_transforms) t.apply(transform);
-        }
-    }
 };
+
+// Transformation of a variety of 3D objects by a 4x4 transformation matrix
+inline float3 transform_vector(const float4x4 & transform, const float3 & vector) { auto r=mul(transform, float4{vector,0}); return {r.x,r.y,r.z}; }
+inline float3 transform_direction(const float4x4 & transform, const float3 & direction) { return normalize(transform_vector(transform, direction)); }
+inline float3 transform_normal(const float4x4 & transform, const float3 & normal) { return transform_direction(inverse(transpose(transform)), normal); }
+inline float3 transform_point(const float4x4 & transform, const float3 & point) { auto r=mul(transform, float4{point,1}); return {r.x/r.w, r.y/r.w, r.z/r.w}; }
+inline float4 transform_quat(const float4x4 & transform, const float4 & quat) { return {transform_vector(transform, quat.xyz()) * (determinant(transform) < 0 ? -1.0f : 1.0f), quat.w}; }
+inline float4x4 transform_matrix(const float4x4 & transform, const float4x4 & matrix) { return mul(transform, matrix, inverse(transform)); }
+inline float3 transform_scaling_factors(const float4x4 & transform, const float3 & scaling) { const auto m = transform_matrix(transform, scaling_matrix(scaling)); return {m.x.x, m.y.y, m.z.z}; }
+mesh::bone_keyframe transform(const float4x4 & t, const mesh::bone_keyframe & keyframe);
+mesh transform(const float4x4 & t, mesh mesh);
 
 #endif
