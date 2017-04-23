@@ -6,6 +6,7 @@
     <ClInclude Include="data-types.h" />
     <ClInclude Include="vulkan.h" />
     <ClInclude Include="load.h" />
+    <ClInclude Include="transform.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="fbx.cpp" />

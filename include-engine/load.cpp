@@ -79,11 +79,10 @@ std::vector<char> load_text_file(const char * filename)
     FILE * f = fopen(filename, "r");
     if(!f) throw std::runtime_error(std::string("failed to open ") + filename);
     fseek(f, 0, SEEK_END);
-    auto len = ftell(f);
+    long len = ftell(f);
     fseek(f, 0, SEEK_SET);
     std::vector<char> buffer(len);
-    len = fread(buffer.data(), 1, buffer.size(), f);
-    buffer.resize(len);
+    buffer.resize(fread(buffer.data(), 1, buffer.size(), f));
     return buffer;
 }
 
@@ -162,7 +161,7 @@ std::vector<uint32_t> shader_compiler::compile_glsl(VkShaderStageFlagBits stage,
 
     auto buffer = load_text_file(filename);
     const char * s = buffer.data();
-    int l = buffer.size();
+    int l = static_cast<int>(buffer.size());
     shader.setStringsWithLengthsAndNames(&s, &l, &filename, 1);
 
     if(!shader.parse(&glslang::DefaultTBuiltInResource, 450, ENoProfile, false, false, static_cast<EShMessages>(EShMsgSpvRules|EShMsgVulkanRules), *impl))
@@ -194,7 +193,7 @@ mesh load_mesh_from_obj(coord_system target, const char * filename)
         auto it = vertex_map.find(indices);
         if(it != vertex_map.end()) return it->second;
 
-        const uint32_t index = vertex_map[indices] = m.vertices.size();
+        const auto index = vertex_map[indices] = static_cast<uint32_t>(m.vertices.size());
         const bool no_texcoords = indices.find("//") != std::string::npos;
         for(auto & ch : indices) if(ch == '/') ch = ' ';
         int v {}, vt {}, vn {};

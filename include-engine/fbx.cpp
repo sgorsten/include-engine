@@ -118,7 +118,7 @@ namespace fbx
             if(!in.read(&node.name[0], name_len)) throw std::runtime_error("failed to read name");
        
             // Read property list
-            const uint32_t property_list_start = in.tellg();
+            const std::streamoff property_list_start = in.tellg();
             for(uint32_t i=0; i<num_properties; ++i)
             {
                 node.properties.push_back(read_property(in));
@@ -586,7 +586,7 @@ namespace fbx
                     if(indices.size() != weights.size()) throw std::runtime_error("Length of Indexes array does not match length of Weights array");
                     for(size_t i=0; i<indices.size(); ++i)
                     {
-                        add_bone_weight(geom_vertices[indices.get<size_t>(i)], bone_models.size(), weights.get<float>(i));
+                        add_bone_weight(geom_vertices[indices.get<size_t>(i)], static_cast<uint32_t>(bone_models.size()), weights.get<float>(i));
                     }
 
                     // Obtain initial pose

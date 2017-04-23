@@ -1,8 +1,7 @@
 #ifndef DATA_TYPES_H
 #define DATA_TYPES_H
 
-#include "linalg.h"
-using namespace linalg::aliases;
+#include "transform.h"
 
 #include <memory>
 #include <vector>
@@ -65,7 +64,8 @@ struct coord_system
     constexpr float3 get_forward() const { return get_axis(coord_axis::forward); }
     constexpr float3 get_back() const { return get_axis(coord_axis::back); }
 };
-inline float4x4 make_transform(const coord_system & from, const coord_system & to) { return {{to.get_axis(from.x_axis),0}, {to.get_axis(from.y_axis),0}, {to.get_axis(from.z_axis),0}, {0,0,0,1}}; }
+inline float3x3 make_transform(const coord_system & from, const coord_system & to) { return {to.get_axis(from.x_axis), to.get_axis(from.y_axis), to.get_axis(from.z_axis)}; }
+inline float4x4 make_transform_4x4(const coord_system & from, const coord_system & to) { return {{to.get_axis(from.x_axis),0}, {to.get_axis(from.y_axis),0}, {to.get_axis(from.z_axis),0}, {0,0,0,1}}; }
 
 // Value type which holds mesh information
 struct mesh
@@ -77,7 +77,6 @@ struct mesh
         float3 scaling;
         float4x4 get_local_transform() const { return mul(translation_matrix(translation), rotation_matrix(rotation), scaling_matrix(scaling)); }
     };
-
     struct bone
     {
         std::string name;
@@ -127,15 +126,15 @@ struct mesh
     }
 };
 
-// Transformation of a variety of 3D objects by a 4x4 transformation matrix
-inline float3 transform_vector(const float4x4 & transform, const float3 & vector) { auto r=mul(transform, float4{vector,0}); return {r.x,r.y,r.z}; }
-inline float3 transform_direction(const float4x4 & transform, const float3 & direction) { return normalize(transform_vector(transform, direction)); }
-inline float3 transform_normal(const float4x4 & transform, const float3 & normal) { return transform_direction(inverse(transpose(transform)), normal); }
-inline float3 transform_point(const float4x4 & transform, const float3 & point) { auto r=mul(transform, float4{point,1}); return {r.x/r.w, r.y/r.w, r.z/r.w}; }
-inline float4 transform_quat(const float4x4 & transform, const float4 & quat) { return {transform_vector(transform, quat.xyz()) * (determinant(transform) < 0 ? -1.0f : 1.0f), quat.w}; }
-inline float4x4 transform_matrix(const float4x4 & transform, const float4x4 & matrix) { return mul(transform, matrix, inverse(transform)); }
-inline float3 transform_scaling_factors(const float4x4 & transform, const float3 & scaling) { const auto m = transform_matrix(transform, scaling_matrix(scaling)); return {m.x.x, m.y.y, m.z.z}; }
-mesh::bone_keyframe transform(const float4x4 & t, const mesh::bone_keyframe & keyframe);
-mesh transform(const float4x4 & t, mesh mesh);
+template<class Transform> mesh::bone_keyframe transform(const Transform & t, const mesh::bone_keyframe & kf) { return {transform_vector(t, kf.translation), transform_quat(t, kf.rotation), transform_scaling(t, kf.scaling)}; }
+template<class Transform> mesh::bone transform(const Transform & t, const mesh::bone & b) { return {b.name, b.parent_index, transform(t,b.initial_pose), transform_matrix(t,b.model_to_bone_matrix)}; }
+template<class Transform> mesh::vertex transform(const Transform & t, const mesh::vertex & v) { return {transform_point(t,v.position), v.color, transform_normal(t,v.normal), v.texcoord, transform_tangent(t,v.tangent), transform_tangent(t,v.bitangent), v.bone_indices, v.bone_weights}; }
+template<class Transform> mesh transform(const Transform & t, mesh m)
+{
+    for(auto & v : m.vertices) v = transform(t,v);
+    for(auto & b : m.bones) b = transform(t,b);
+    for(auto & a : m.animations) for(auto & k : a.keyframes) for(auto & lt : k.local_transforms) lt = transform(t, lt);
+    return m;
+}
 
 #endif

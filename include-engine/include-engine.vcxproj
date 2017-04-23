@@ -23,6 +23,7 @@
     <ClInclude Include="fbx.h" />
     <ClInclude Include="linalg.h" />
     <ClInclude Include="load.h" />
+    <ClInclude Include="transform.h" />
     <ClInclude Include="vulkan.h" />
   </ItemGroup>
   <ItemGroup>

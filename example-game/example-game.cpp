@@ -44,8 +44,8 @@ struct fps_camera
     float yaw {}, pitch {};
 
     float4 get_orientation(const coord_system & c) const { return qmul(rotation_quat(c.get_up(), yaw), rotation_quat(c.get_right(), pitch)); }
-    float4x4 get_pose_matrix(const coord_system & c) const { return pose_matrix(get_orientation(c), position); }
-    float4x4 get_view_matrix(const coord_system & c) const { return inverse(get_pose_matrix(c)); }
+    rigid_pose get_pose(const coord_system & c) const { return {position, get_orientation(c)}; }
+    float4x4 get_view_matrix(const coord_system & c) const { return pose_matrix(inverse(get_pose(c))); }
 
     float3 get_axis(const coord_system & c, coord_axis axis) const { return qrot(get_orientation(c), c.get_axis(axis)); }
     float3 get_left(const coord_system & c) const { return get_axis(c, coord_axis::left); }
@@ -209,7 +209,7 @@ int main() try
         if(win.get_key(GLFW_KEY_D)) camera.position += camera.get_right(game_coords) * (timestep * 50);
         
         // Determine matrices
-        const auto proj_matrix = mul(linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one), make_transform(game_coords, vk_coords));        
+        const auto proj_matrix = mul(linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one), make_transform_4x4(game_coords, vk_coords));        
 
         // Render a frame
         auto & pool = pools[frame_index];
@@ -274,7 +274,7 @@ int main() try
 
         // Bind per-scene uniforms
         per_scene_uniforms ps;
-        ps.cubemap_xform = make_transform(game_coords, cubemap_coords);
+        ps.cubemap_xform = make_transform_4x4(game_coords, cubemap_coords);
         ps.ambient_light = {0.01f,0.01f,0.01f};
         ps.light_direction = normalize(float3{1,-2,5});
         ps.light_color = {0.8f,0.7f,0.5f};
