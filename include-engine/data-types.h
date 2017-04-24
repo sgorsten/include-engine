@@ -126,7 +126,14 @@ struct mesh
     }
 };
 
-template<class Transform> mesh::bone_keyframe transform(const Transform & t, const mesh::bone_keyframe & kf) { return {transform_vector(t, kf.translation), transform_quat(t, kf.rotation), transform_scaling(t, kf.scaling)}; }
+template<class Transform> mesh::bone_keyframe transform(const Transform & t, const mesh::bone_keyframe & kf) 
+{ 
+    mesh::bone_keyframe r;
+    r.translation = transform_vector(t, kf.translation);
+    r.rotation = transform_quat(t, kf.rotation);
+    r.scaling = transform_scaling(t, kf.scaling);
+    return r; //return {transform_vector(t, kf.translation), transform_quat(t, kf.rotation), transform_scaling(t, kf.scaling)}; 
+}
 template<class Transform> mesh::bone transform(const Transform & t, const mesh::bone & b) { return {b.name, b.parent_index, transform(t,b.initial_pose), transform_matrix(t,b.model_to_bone_matrix)}; }
 template<class Transform> mesh::vertex transform(const Transform & t, const mesh::vertex & v) { return {transform_point(t,v.position), v.color, transform_normal(t,v.normal), v.texcoord, transform_tangent(t,v.tangent), transform_tangent(t,v.bitangent), v.bone_indices, v.bone_weights}; }
 template<class Transform> mesh transform(const Transform & t, mesh m)

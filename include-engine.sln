@@ -17,6 +17,10 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "glfw", "3rdparty\glfw\glfw.
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "glslang", "3rdparty\glslang\glslang.vcxproj", "{D1BE33DC-7603-4B18-9A36-404BFA8A80FA}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "include-engine-tests", "include-engine-tests\include-engine-tests.vcxproj", "{D7D39D6E-36E6-4005-91CC-8435E82AAF56}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{DBED3486-2A8E-4194-B74D-0DB2A40308F4}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -65,6 +69,14 @@ Global
 		{D1BE33DC-7603-4B18-9A36-404BFA8A80FA}.Release|x64.Build.0 = Release|x64
 		{D1BE33DC-7603-4B18-9A36-404BFA8A80FA}.Release|x86.ActiveCfg = Release|Win32
 		{D1BE33DC-7603-4B18-9A36-404BFA8A80FA}.Release|x86.Build.0 = Release|Win32
+		{D7D39D6E-36E6-4005-91CC-8435E82AAF56}.Debug|x64.ActiveCfg = Debug|x64
+		{D7D39D6E-36E6-4005-91CC-8435E82AAF56}.Debug|x64.Build.0 = Debug|x64
+		{D7D39D6E-36E6-4005-91CC-8435E82AAF56}.Debug|x86.ActiveCfg = Debug|Win32
+		{D7D39D6E-36E6-4005-91CC-8435E82AAF56}.Debug|x86.Build.0 = Debug|Win32
+		{D7D39D6E-36E6-4005-91CC-8435E82AAF56}.Release|x64.ActiveCfg = Release|x64
+		{D7D39D6E-36E6-4005-91CC-8435E82AAF56}.Release|x64.Build.0 = Release|x64
+		{D7D39D6E-36E6-4005-91CC-8435E82AAF56}.Release|x86.ActiveCfg = Release|Win32
+		{D7D39D6E-36E6-4005-91CC-8435E82AAF56}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -74,5 +86,6 @@ Global
 		{9802A059-433F-4DA4-BC72-B7F9580E03C0} = {6A12B7EB-F821-4B72-B76E-4FC1AFBBF3C8}
 		{7952FF0B-0E21-4315-80BB-C408014C1F09} = {6A12B7EB-F821-4B72-B76E-4FC1AFBBF3C8}
 		{D1BE33DC-7603-4B18-9A36-404BFA8A80FA} = {6A12B7EB-F821-4B72-B76E-4FC1AFBBF3C8}
+		{D7D39D6E-36E6-4005-91CC-8435E82AAF56} = {DBED3486-2A8E-4194-B74D-0DB2A40308F4}
 	EndGlobalSection
 EndGlobal
