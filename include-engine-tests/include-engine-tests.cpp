@@ -57,6 +57,19 @@ template<class Transform> void test_rigid_transform(const Transform & t)
     const float4x4 mm = transform_matrix(t, m);
     require_approx_equal(transform_vector(mm, ee1), transform_vector(t, transform_vector(m, e1)));
     require_approx_equal(transform_vector(mm, ee2), transform_vector(t, transform_vector(m, e2)));
+}
+
+template<class Transform> void test_scale_preserving_transform(const Transform & t)
+{
+    test_rigid_transform(t);
+
+    // Start by transforming three points using the supplied transformation
+    const float3 p0 {1,2,3}, p1 {4,-5,2}, p2 {-3,1,-4};
+    const float3 pp0 = transform_point(t, p0);
+    const float3 pp1 = transform_point(t, p1);
+    const float3 pp2 = transform_point(t, p2);
+    const float3 e1 = p1 - p0, e2 = p2 - p0;
+    const float3 ee1 = pp1 - pp0, ee2 = pp2 - pp0;
 
     // Test transform_scaling(...)
     const float3 s {1,1,2};
@@ -72,10 +85,14 @@ TEST_CASE("transform functions", "[transform]")
     test_affine_transform(float3x3{{2,0,0},{0,3,0},{0,0,4}});
     test_affine_transform(float4x4{{-5,0,0,0},{0,1,0,0},{0,0,1,0},{0,0,0,1}});
 
+    // Test rigid transforms
+    test_rigid_transform(mul(rotation_matrix(normalize(float4{1,2,3,4})), translation_matrix(float3{2,5,3})));
+    test_rigid_transform(rigid_pose{{1,2,3}, normalize(float4{8,0,0,6})});
+
     // Test transform which rearranges axes, some of which involve a handedness transform
-    test_rigid_transform(float3x3{{1,0,0},{0,0,-1},{0,1,0}}); // rotation
-    test_rigid_transform(float3x3{{1,0,0},{0,0,1},{0,1,0}}); // mirror
-    test_rigid_transform(float4x4{{0,0,1,0},{0,1,0,0},{-1,0,0,0},{0,0,0,1}}); // rotation
-    test_rigid_transform(float4x4{{0,1,0,0},{0,0,1,0},{1,0,0,0},{0,0,0,1}}); // rotation
-    test_rigid_transform(float4x4{{-1,0,0,0},{0,1,0,0},{0,0,1,0},{0,0,0,1}}); // mirror
+    test_scale_preserving_transform(float3x3{{1,0,0},{0,0,-1},{0,1,0}}); // rotation
+    test_scale_preserving_transform(float3x3{{1,0,0},{0,0,1},{0,1,0}}); // mirror
+    test_scale_preserving_transform(float4x4{{0,0,1,0},{0,1,0,0},{-1,0,0,0},{0,0,0,1}}); // rotation
+    test_scale_preserving_transform(float4x4{{0,1,0,0},{0,0,1,0},{1,0,0,0},{0,0,0,1}}); // rotation
+    test_scale_preserving_transform(float4x4{{-1,0,0,0},{0,1,0,0},{0,0,1,0},{0,0,0,1}}); // mirror
 }

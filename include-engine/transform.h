@@ -35,7 +35,7 @@ inline float3 transform_normal   (const rigid_pose & p, const float3 & normal)  
 // A quaternion can describe both a rotation and a uniform scaling in 3D space
 inline float4 transform_quat     (const float4x4   & m, const float4 & quat)     { return {transform_vector(m, quat.xyz()) * (determinant(m) < 0 ? -1.0f : 1.0f), quat.w}; }
 inline float4 transform_quat     (const float3x3   & m, const float4 & quat)     { return {transform_vector(m, quat.xyz()) * (determinant(m) < 0 ? -1.0f : 1.0f), quat.w}; }
-inline float4 transform_quat     (const rigid_pose & p, const float4 & quat)     { return qmul(p.orientation, quat); }
+inline float4 transform_quat     (const rigid_pose & p, const float4 & quat)     { return {transform_vector(p, quat.xyz()), quat.w}; }
 
 // A matrix can describe a general transformation of homogeneous coordinates in projective space
 inline float4x4 transform_matrix (const float4x4   & m, const float4x4 & matrix) { return mul(m, matrix, inverse(m)); }
