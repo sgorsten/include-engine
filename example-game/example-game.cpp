@@ -44,7 +44,7 @@ struct fps_camera
     float yaw {}, pitch {};
 
     float4 get_orientation(const coord_system & c) const { return qmul(rotation_quat(c.get_up(), yaw), rotation_quat(c.get_right(), pitch)); }
-    rigid_pose get_pose(const coord_system & c) const { return {position, get_orientation(c)}; }
+    float_pose get_pose(const coord_system & c) const { return {get_orientation(c), position}; }
     float4x4 get_view_matrix(const coord_system & c) const { return pose_matrix(inverse(get_pose(c))); }
 
     float3 get_axis(const coord_system & c, coord_axis axis) const { return qrot(get_orientation(c), c.get_axis(axis)); }

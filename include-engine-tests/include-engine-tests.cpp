@@ -1,9 +1,10 @@
-#include "transform.h"
+#include "linalg.h"
+using namespace linalg::aliases;
 
 #define CATCH_CONFIG_MAIN
 #include "catch.hpp"
 
-void require_approx_equal(const float3 & a, const float3 & b)
+template<class T> void require_approx_equal(const linalg::vec<T,3> & a, const linalg::vec<T,3> & b)
 {
     REQUIRE(a.x == Approx(b.x));
     REQUIRE(a.y == Approx(b.y));
@@ -65,7 +66,8 @@ TEST_CASE("transform functions", "[transform]")
 
     // Test rigid transforms
     test_transform(mul(rotation_matrix(normalize(float4{1,2,3,4})), translation_matrix(float3{2,5,3})), true, false);
-    test_transform(rigid_pose{{1,2,3}, normalize(float4{8,0,0,6})}, true, false);
+    test_transform(float_pose{normalize(float4{8,0,0,6}), {1,2,3}}, true, false);
+    test_transform(float_pose{normalize(float4{3,1,4,2}), {4,1,2}}, true, false);
 
     // Test transform which rearranges axes, some of which involve a handedness transform
     test_transform(float3x3{{1,0,0},{0,0,-1},{0,1,0}}, true, true); // rotation

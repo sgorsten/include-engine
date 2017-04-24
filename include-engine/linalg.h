@@ -388,6 +388,14 @@ namespace linalg
                                                                            + a.x.w*(a.y.x*a.w.y*a.z.z + a.z.x*a.y.y*a.w.z + a.w.x*a.z.y*a.y.z - a.y.x*a.z.y*a.w.z - a.w.x*a.y.y*a.z.z - a.z.x*a.w.y*a.y.z); }
     template<class T, int N> constexpr mat<T,N,N> inverse(const mat<T,N,N> & a) { return adjugate(a)/determinant(a); }
 
+    // Support for rigid poses in three dimensions, defined by a rotation quaternion and a translation vector
+    template<class T> struct pose { vec<T,4> orientation {0,0,0,1}; vec<T,3> position {0,0,0}; };
+    template<class T> pose<T> mul            (const pose<T> & a, const pose<T> & b)  { return {qmul(a.orientation, b.orientation), a.position + qrot(a.orientation, b.position)}; }
+    template<class T, class... R> pose<T> mul(const pose<T> & a, R... r)             { return mul(a, mul(r...)); }
+    template<class T> pose<T> inverse(const pose<T> & p)                             { auto q = qconj(p.orientation); return {q, qrot(q,-p.position)}; }
+    template<class T> pose<T> nlerp  (const pose<T> & a, const pose<T> & b, float t) { return {nlerp(a.orientation, b.orientation, t), lerp(a.position, b.position, t)}; }
+    template<class T> pose<T> slerp  (const pose<T> & a, const pose<T> & b, float t) { return {slerp(a.orientation, b.orientation, t), lerp(a.position, b.position, t)}; }
+
     // Vectors and matrices can be used as ranges
     template<class T, int M>       T * begin(      vec<T,M> & a) { return &a[0]; }
     template<class T, int M> const T * begin(const vec<T,M> & a) { return &a[0]; }
@@ -407,27 +415,64 @@ namespace linalg
     template<class T> mat<T,4,4> rotation_matrix   (const vec<T,4> & rotation)              { return {{qxdir(rotation),0}, {qydir(rotation),0}, {qzdir(rotation),0}, {0,0,0,1}}; }
     template<class T> mat<T,4,4> scaling_matrix    (const vec<T,3> & scaling)               { return {{scaling.x,0,0,0}, {0,scaling.y,0,0}, {0,0,scaling.z,0}, {0,0,0,1}}; }
     template<class T> mat<T,4,4> pose_matrix       (const vec<T,4> & q, const vec<T,3> & p) { return {{qxdir(q),0}, {qydir(q),0}, {qzdir(q),0}, {p,1}}; }
+    template<class T> mat<T,4,4> pose_matrix       (const pose<T> & p)                      { return pose_matrix(p.orientation, p.position); }
     template<class T> mat<T,4,4> frustum_matrix    (T x0, T x1, T y0, T y1, T n, T f, fwd_axis a = neg_z, z_range z = neg_one_to_one) { const T s = a == pos_z ? T(1) : T(-1); return z == zero_to_one ? mat<T,4,4>{{2*n/(x1-x0),0,0,0}, {0,2*n/(y1-y0),0,0}, {(x0+x1)/(x1-x0),(y0+y1)/(y1-y0),s*(f+0)/(f-n),s}, {0,0,-1*n*f/(f-n),0}} : mat<T,4,4>{{2*n/(x1-x0),0,0,0}, {0,2*n/(y1-y0),0,0}, {(x0+x1)/(x1-x0),(y0+y1)/(y1-y0),s*(f+n)/(f-n),s}, {0,0,-2*n*f/(f-n),0}}; }
     template<class T> mat<T,4,4> perspective_matrix(T fovy, T aspect, T n, T f, fwd_axis a = neg_z, z_range z = neg_one_to_one) { T y = n*std::tan(fovy / 2), x = y*aspect; return frustum_matrix(-x, x, -y, y, n, f, a, z); }
+
+    // A vector is the difference between two points in 3D space, possessing both direction and magnitude
+    template<class T> vec<T,3> transform_vector  (const mat<T,4,4> & m, const vec<T,3> & vector)   { return mul(m, vec<T,4>{vector,0}).xyz(); }
+    template<class T> vec<T,3> transform_vector  (const mat<T,3,3> & m, const vec<T,3> & vector)   { return mul(m, vector); }
+    template<class T> vec<T,3> transform_vector  (const pose<T>    & p, const vec<T,3> & vector)   { return qrot(p.orientation, vector); }
+
+    // A point is a specific location within a 3D space
+    template<class T> vec<T,3> transform_point   (const mat<T,4,4> & m, const vec<T,3> & point)    { auto r=mul(m, vec<T,4>{point,1}); return r.xyz()/r.w; }
+    template<class T> vec<T,3> transform_point   (const mat<T,3,3> & m, const vec<T,3> & point)    { return transform_vector(m, point); }
+    template<class T> vec<T,3> transform_point   (const pose<T>    & p, const vec<T,3> & point)    { return p.position + transform_vector(p, point); }
+
+    // A tangent is a unit-length vector which is parallel to a piece of geometry, such as a surface or a curve
+    template<class T> vec<T,3> transform_tangent (const mat<T,4,4> & m, const vec<T,3> & tangent)  { return normalize(transform_vector(m, tangent)); }
+    template<class T> vec<T,3> transform_tangent (const mat<T,3,3> & m, const vec<T,3> & tangent)  { return normalize(transform_vector(m, tangent)); }
+    template<class T> vec<T,3> transform_tangent (const pose<T>    & p, const vec<T,3> & tangent)  { return transform_vector(p, tangent); }
+
+    // A normal is a unit-length bivector which is perpendicular to a piece of geometry, such as a surface or a curve
+    template<class T> vec<T,3> transform_normal  (const mat<T,4,4> & m, const vec<T,3> & normal)   { return normalize(transform_vector(inverse(transpose(m)), normal)) * (determinant(m) < 0 ? -1.0f : 1.0f); }
+    template<class T> vec<T,3> transform_normal  (const mat<T,3,3> & m, const vec<T,3> & normal)   { return normalize(transform_vector(inverse(transpose(m)), normal)) * (determinant(m) < 0 ? -1.0f : 1.0f); }
+    template<class T> vec<T,3> transform_normal  (const pose<T>    & p, const vec<T,3> & normal)   { return transform_vector(p, normal); }
+
+    // A quaternion can describe both a rotation and a uniform scaling in 3D space
+    template<class T> vec<T,4> transform_quat    (const mat<T,4,4> & m, const vec<T,4> & quat)     { return {transform_vector(m, quat.xyz()) * (determinant(m) < 0 ? -1.0f : 1.0f), quat.w}; }
+    template<class T> vec<T,4> transform_quat    (const mat<T,3,3> & m, const vec<T,4> & quat)     { return {transform_vector(m, quat.xyz()) * (determinant(m) < 0 ? -1.0f : 1.0f), quat.w}; }
+    template<class T> vec<T,4> transform_quat    (const pose<T>    & p, const vec<T,4> & quat)     { return {transform_vector(p, quat.xyz()), quat.w}; }
+
+    // A matrix can describe a general transformation of homogeneous coordinates in projective space
+    template<class T> mat<T,4,4> transform_matrix(const mat<T,4,4> & m, const mat<T,4,4> & matrix) { return mul(m, matrix, inverse(m)); }
+    template<class T> mat<T,4,4> transform_matrix(const mat<T,3,3> & m, const mat<T,4,4> & matrix) { return transform_matrix({{m.x,0},{m.y,0},{m.z,0},{0,0,0,1}}, matrix); }
+    template<class T> mat<T,4,4> transform_matrix(const pose<T>    & p, const mat<T,4,4> & matrix) { return transform_matrix(pose_matrix(p), matrix); }
+
+    // Scaling factors are not a vector, they are a compact representation of a scaling matrix
+    template<class T> vec<T,3> transform_scaling (const mat<T,4,4> & m, const vec<T,3> & scaling)  { return diagonal(transform_matrix(m, scaling_matrix(scaling))).xyz(); }
+    template<class T> vec<T,3> transform_scaling (const mat<T,3,3> & m, const vec<T,3> & scaling)  { return diagonal(transform_matrix(m, scaling_matrix(scaling))).xyz(); }
+    template<class T> vec<T,3> transform_scaling (const pose<T>    & p, const vec<T,3> & scaling)  { return transform_scaling(pose_matrix(p), scaling); }
 
     // Provide typedefs for common element types and vector/matrix sizes
     namespace aliases
     {
-        typedef vec<bool,2> bool2; typedef vec<uint8_t,2> byte2; typedef vec<int16_t,2> short2; typedef vec<uint16_t,2> ushort2; 
-        typedef vec<bool,3> bool3; typedef vec<uint8_t,3> byte3; typedef vec<int16_t,3> short3; typedef vec<uint16_t,3> ushort3; 
-        typedef vec<bool,4> bool4; typedef vec<uint8_t,4> byte4; typedef vec<int16_t,4> short4; typedef vec<uint16_t,4> ushort4;
-        typedef vec<int,2> int2; typedef vec<unsigned,2> uint2; typedef vec<float,2> float2; typedef vec<double,2> double2;
-        typedef vec<int,3> int3; typedef vec<unsigned,3> uint3; typedef vec<float,3> float3; typedef vec<double,3> double3;
-        typedef vec<int,4> int4; typedef vec<unsigned,4> uint4; typedef vec<float,4> float4; typedef vec<double,4> double4;
-        typedef mat<bool,2,2> bool2x2; typedef mat<int,2,2> int2x2; typedef mat<float,2,2> float2x2; typedef mat<double,2,2> double2x2;
-        typedef mat<bool,2,3> bool2x3; typedef mat<int,2,3> int2x3; typedef mat<float,2,3> float2x3; typedef mat<double,2,3> double2x3;
-        typedef mat<bool,2,4> bool2x4; typedef mat<int,2,4> int2x4; typedef mat<float,2,4> float2x4; typedef mat<double,2,4> double2x4;
-        typedef mat<bool,3,2> bool3x2; typedef mat<int,3,2> int3x2; typedef mat<float,3,2> float3x2; typedef mat<double,3,2> double3x2;
-        typedef mat<bool,3,3> bool3x3; typedef mat<int,3,3> int3x3; typedef mat<float,3,3> float3x3; typedef mat<double,3,3> double3x3;
-        typedef mat<bool,3,4> bool3x4; typedef mat<int,3,4> int3x4; typedef mat<float,3,4> float3x4; typedef mat<double,3,4> double3x4;
-        typedef mat<bool,4,2> bool4x2; typedef mat<int,4,2> int4x2; typedef mat<float,4,2> float4x2; typedef mat<double,4,2> double4x2;
-        typedef mat<bool,4,3> bool4x3; typedef mat<int,4,3> int4x3; typedef mat<float,4,3> float4x3; typedef mat<double,4,3> double4x3;
-        typedef mat<bool,4,4> bool4x4; typedef mat<int,4,4> int4x4; typedef mat<float,4,4> float4x4; typedef mat<double,4,4> double4x4;
+        using bool2=vec<bool,2>; using byte2=vec<uint8_t,2>; using short2=vec<int16_t,2>; using ushort2=vec<uint16_t,2>; 
+        using bool3=vec<bool,3>; using byte3=vec<uint8_t,3>; using short3=vec<int16_t,3>; using ushort3=vec<uint16_t,3>; 
+        using bool4=vec<bool,4>; using byte4=vec<uint8_t,4>; using short4=vec<int16_t,4>; using ushort4=vec<uint16_t,4>;
+        using int2=vec<int,2>; using uint2=vec<unsigned,2>; using float2=vec<float,2>; using double2=vec<double,2>;
+        using int3=vec<int,3>; using uint3=vec<unsigned,3>; using float3=vec<float,3>; using double3=vec<double,3>;
+        using int4=vec<int,4>; using uint4=vec<unsigned,4>; using float4=vec<float,4>; using double4=vec<double,4>;
+        using bool2x2=mat<bool,2,2>; using int2x2=mat<int,2,2>; using float2x2=mat<float,2,2>; using double2x2=mat<double,2,2>;
+        using bool2x3=mat<bool,2,3>; using int2x3=mat<int,2,3>; using float2x3=mat<float,2,3>; using double2x3=mat<double,2,3>;
+        using bool2x4=mat<bool,2,4>; using int2x4=mat<int,2,4>; using float2x4=mat<float,2,4>; using double2x4=mat<double,2,4>;
+        using bool3x2=mat<bool,3,2>; using int3x2=mat<int,3,2>; using float3x2=mat<float,3,2>; using double3x2=mat<double,3,2>;
+        using bool3x3=mat<bool,3,3>; using int3x3=mat<int,3,3>; using float3x3=mat<float,3,3>; using double3x3=mat<double,3,3>;
+        using bool3x4=mat<bool,3,4>; using int3x4=mat<int,3,4>; using float3x4=mat<float,3,4>; using double3x4=mat<double,3,4>;
+        using bool4x2=mat<bool,4,2>; using int4x2=mat<int,4,2>; using float4x2=mat<float,4,2>; using double4x2=mat<double,4,2>;
+        using bool4x3=mat<bool,4,3>; using int4x3=mat<int,4,3>; using float4x3=mat<float,4,3>; using double4x3=mat<double,4,3>;
+        using bool4x4=mat<bool,4,4>; using int4x4=mat<int,4,4>; using float4x4=mat<float,4,4>; using double4x4=mat<double,4,4>;
+        using float_pose=pose<float>; using double_pose=pose<double>;
     }
 }
 

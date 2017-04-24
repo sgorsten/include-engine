@@ -1,7 +1,8 @@
 #ifndef DATA_TYPES_H
 #define DATA_TYPES_H
 
-#include "transform.h"
+#include "linalg.h"
+using namespace linalg::aliases;
 
 #include <memory>
 #include <vector>
