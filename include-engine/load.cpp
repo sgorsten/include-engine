@@ -56,6 +56,12 @@ mesh generate_box_mesh(const float3 & a, const float3 & b)
     });
 }
 
+mesh apply_vertex_color(mesh m, const float3 & color)
+{
+    for(auto & v : m.vertices) v.color = color;
+    return m;
+}
+
 #include "fbx.h"
 #include <iostream>
 

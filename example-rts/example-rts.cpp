@@ -49,19 +49,46 @@ struct fps_camera
     float3 get_back(const coord_system & c) const { return get_axis(c, coord_axis::back); }
 };
 
+#include <random>
+
+constexpr coord_system game_coords {coord_axis::east, coord_axis::north, coord_axis::up};
+
+struct unit
+{
+    float2 position;
+    float2 target;
+
+    float3 get_position() const { return {position,0}; }
+    float3 get_direction() const { return {normalize(target-position),0}; }
+    float4 get_orientation() const { return rotation_quat(game_coords.get_axis(coord_axis::north), get_direction()); }
+    float_pose get_pose() const { return {get_orientation(), get_position()}; }
+    float4x4 get_model_matrix() const { return pose_matrix(get_pose()); }
+};
+
 int main() try
 {
-    constexpr coord_system game_coords {coord_axis::right, coord_axis::forward, coord_axis::up};
     constexpr coord_system vk_coords {coord_axis::right, coord_axis::down, coord_axis::forward};
-    constexpr coord_system cubemap_coords {coord_axis::right, coord_axis::up, coord_axis::back};
+
+    std::mt19937 rng; 
+    std::uniform_real_distribution<float> dist{0, 64};
+    std::vector<unit> units;
+    for(size_t i=0; i<100; ++i) units.push_back({{dist(rng), dist(rng)}, {dist(rng), dist(rng)}});
 
     context ctx;
+    gfx_mesh terrain_mesh {ctx, generate_box_mesh({0,0,-1}, {64,64,0})};
+    gfx_mesh unit_mesh {ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game_coords, "assets/f44a.obj"))};
+    texture_2d terrain_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({127,85,25,255})};
+    texture_2d unit_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/f44a.jpg")};
 
-    // Create our meshes
-    gfx_mesh helmet_mesh {ctx, load_meshes_from_fbx(game_coords, "assets/helmet-mesh.fbx")[0]};
-    gfx_mesh mutant_mesh {ctx, load_meshes_from_fbx(game_coords, "assets/mutant-mesh.fbx")[0]};
-    gfx_mesh box_mesh {ctx, load_meshes_from_fbx(game_coords, "assets/cube-mesh.fbx")[0]};
-    gfx_mesh sands_mesh {ctx, load_mesh_from_obj(game_coords, "assets/sands location.obj")};
+    // Create our sampler
+    VkSamplerCreateInfo sampler_info = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    sampler_info.magFilter = VK_FILTER_LINEAR;
+    sampler_info.minFilter = VK_FILTER_LINEAR;
+    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler_info.maxLod = 11;
+    sampler_info.minLod = 0;
+    VkSampler sampler;
+    check(vkCreateSampler(ctx.device, &sampler_info, nullptr, &sampler));
 
     // Set up scene contract
     auto render_pass = ctx.create_render_pass(
@@ -72,7 +99,10 @@ int main() try
     renderer r {ctx};
     auto contract = r.create_contract(render_pass, {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, 
         {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}});
-    auto layout = r.create_pipeline_layout(contract, {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT}});
+    auto layout = r.create_pipeline_layout(contract, {
+        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},    
+        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+    });
     
     // Set up our shader pipeline
     auto vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/static.vert");
@@ -112,7 +142,8 @@ int main() try
     };
     int frame_index = 0;
 
-    fps_camera camera {{0,-20,20}};
+    fps_camera camera {{32,32,10}};
+    camera.pitch = -1.0f;
     float2 last_cursor;
     float total_time = 0;
     auto t0 = std::chrono::high_resolution_clock::now();
@@ -139,11 +170,25 @@ int main() try
         last_cursor = cursor;
 
         // Handle WASD
-        if(win.get_key(GLFW_KEY_W)) camera.position += camera.get_forward(game_coords) * (timestep * 50);
-        if(win.get_key(GLFW_KEY_A)) camera.position += camera.get_left(game_coords) * (timestep * 50);
-        if(win.get_key(GLFW_KEY_S)) camera.position += camera.get_back(game_coords) * (timestep * 50);
-        if(win.get_key(GLFW_KEY_D)) camera.position += camera.get_right(game_coords) * (timestep * 50);
+        if(win.get_key(GLFW_KEY_W)) camera.position += game_coords.get_axis(coord_axis::north) * (timestep * 50);
+        if(win.get_key(GLFW_KEY_A)) camera.position += game_coords.get_axis(coord_axis::west) * (timestep * 50);
+        if(win.get_key(GLFW_KEY_S)) camera.position += game_coords.get_axis(coord_axis::south) * (timestep * 50);
+        if(win.get_key(GLFW_KEY_D)) camera.position += game_coords.get_axis(coord_axis::east) * (timestep * 50);
         
+        // Update game logic
+        float max_step = timestep * 2.0f;
+        for(auto & u : units)
+        {
+            const auto delta = u.target - u.position;
+            const auto delta_len = length(delta);
+            if(delta_len < max_step) 
+            {
+                u.position = u.target;
+                u.target = {dist(rng), dist(rng)};
+            }
+            else u.position += delta*(max_step/delta_len);
+        }
+
         // Determine matrices
         const auto proj_matrix = mul(linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one), make_transform_4x4(game_coords, vk_coords));        
 
@@ -155,21 +200,18 @@ int main() try
         // Generate a draw list for the scene
         draw_list list {pool, *contract};
         {
-            scene_descriptor_set helmet_descriptors {pool, *pipeline};
-            helmet_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{30, 0, 20}), helmet_mesh.m.bones[0].initial_pose.get_local_transform(), helmet_mesh.m.bones[0].model_to_bone_matrix)}));
-            list.draw(*pipeline, helmet_descriptors, helmet_mesh);
+            scene_descriptor_set terrain_descriptors {pool, *pipeline};
+            terrain_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{translation_matrix(float3{0,0,0})}));
+            terrain_descriptors.write_combined_image_sampler(1, 0, sampler, terrain_tex);
+            list.draw(*pipeline, terrain_descriptors, terrain_mesh);
             
-            scene_descriptor_set mutant_descriptors {pool, *pipeline};
-            mutant_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(mutant_mesh.m.bones[0].initial_pose.get_local_transform(), mutant_mesh.m.bones[0].model_to_bone_matrix)}));
-            list.draw(*pipeline, mutant_descriptors, mutant_mesh);
-       
-            scene_descriptor_set box_descriptors {pool, *pipeline};
-            box_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{-30,0,20}), scaling_matrix(float3{4,4,4}))}));
-            list.draw(*pipeline, box_descriptors, box_mesh);
-        
-            scene_descriptor_set sands_descriptors {pool, *pipeline};
-            sands_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{0,27,-64}), scaling_matrix(float3{10,10,10}))}));
-            list.draw(*pipeline, sands_descriptors, sands_mesh);
+            for(auto & u : units)
+            {
+                scene_descriptor_set unit_descriptors {pool, *pipeline};
+                unit_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{u.get_model_matrix()}));
+                unit_descriptors.write_combined_image_sampler(1, 0, sampler, unit_tex);
+                list.draw(*pipeline, unit_descriptors, unit_mesh);
+            }
         }
 
         // Set up per-scene and per-view descriptor sets
@@ -225,6 +267,7 @@ int main() try
     }
 
     vkDeviceWaitIdle(ctx.device);
+    vkDestroySampler(ctx.device, sampler, nullptr);
     for(auto framebuffer : swapchain_framebuffers) vkDestroyFramebuffer(ctx.device, framebuffer, nullptr);
     vkDestroyRenderPass(ctx.device, render_pass, nullptr);    
     return EXIT_SUCCESS;

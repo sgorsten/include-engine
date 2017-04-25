@@ -48,7 +48,7 @@ public:
 };
 
 // A value type representing an abstract direction vector in 3D space, independent of any coordinate system
-enum class coord_axis { left, right, up, down, forward, back };
+enum class coord_axis { forward, back, left, right, up, down, north=forward, east=right, south=back, west=left };
 constexpr float dot(coord_axis a, coord_axis b)
 {
     constexpr float table[6][6] {{+1,-1,0,0,0,0},{-1,+1,0,0,0,0},{0,0,+1,-1,0,0},{0,0,-1,+1,0,0},{0,0,0,0,+1,-1},{0,0,0,0,-1,+1}};

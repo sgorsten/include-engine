@@ -10,6 +10,7 @@ image generate_single_color_image(const byte4 & color);
 image load_image(const char * filename);
 
 mesh generate_box_mesh(const float3 & bmin, const float3 & bmax);
+mesh apply_vertex_color(mesh m, const float3 & color);
 std::vector<mesh> load_meshes_from_fbx(coord_system target, const char * filename);
 mesh load_mesh_from_obj(coord_system target, const char * filename);
 
