@@ -6,7 +6,6 @@
 layout(set=2, binding=0) uniform PerObject
 {
 	mat4 u_model_matrix;
-	mat4 u_color_matrix;
 };
 
 layout(location = 0) in vec3 v_position;

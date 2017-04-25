@@ -31,7 +31,6 @@ struct per_view_uniforms
 struct per_static_object
 {
     alignas(16) float4x4 model_matrix;
-    alignas(16) float4x4 color_matrix;
 };
 
 VkAttachmentDescription make_attachment_description(VkFormat format, VkSampleCountFlagBits samples, VkAttachmentLoadOp load_op, VkImageLayout initial_layout=VK_IMAGE_LAYOUT_UNDEFINED, VkAttachmentStoreOp store_op=VK_ATTACHMENT_STORE_OP_DONT_CARE, VkImageLayout final_layout=VK_IMAGE_LAYOUT_UNDEFINED)
@@ -62,10 +61,12 @@ int main() try
 
     context ctx;
     gfx_mesh terrain_mesh {ctx, generate_box_mesh({0,0,-1}, {64,64,0})};
-    gfx_mesh unit_mesh {ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game_coords, "assets/f44a.obj"))};
+    gfx_mesh unit0_mesh {ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game_coords, "assets/f44a.obj"))};
+    gfx_mesh unit1_mesh {ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game_coords, "assets/cf105.obj"))};
     gfx_mesh bullet_mesh {ctx, generate_box_mesh({-0.05f,-0.1f,-0.05f},{+0.05f,+0.1f,0.05f})};
-    texture_2d terrain_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({127,85,25,255})};
-    texture_2d unit_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/f44a.jpg")};
+    texture_2d terrain_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({127,85,60,255})};
+    texture_2d unit0_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/f44a.jpg")};
+    texture_2d unit1_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/cf105.jpg")};
     texture_2d bullet_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({255,255,255,255})};
 
     // Create our sampler
@@ -186,31 +187,25 @@ int main() try
 
         draw_list list {pool, *contract};
         {
-            const float4x4 team_color_matrices[2]
-            {
-                rotation_matrix(rotation_quat(normalize(float3{1,1,1}), 0.00f)),
-                rotation_matrix(rotation_quat(normalize(float3{1,1,1}), 3.14f))
-            };
-
             scene_descriptor_set terrain_descriptors {pool, *pipeline};
-            terrain_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{translation_matrix(float3{0,0,0}), team_color_matrices[0]}));
+            terrain_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{translation_matrix(float3{0,0,0})}));
             terrain_descriptors.write_combined_image_sampler(1, 0, sampler, terrain_tex);
             list.draw(*pipeline, terrain_descriptors, terrain_mesh);
 
             for(auto & u : units)
             {
                 scene_descriptor_set unit_descriptors {pool, *pipeline};
-                unit_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{u.get_model_matrix(), team_color_matrices[u.owner]}));
-                unit_descriptors.write_combined_image_sampler(1, 0, sampler, unit_tex);
-                list.draw(*pipeline, unit_descriptors, unit_mesh);
+                unit_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{u.get_model_matrix()}));
+                unit_descriptors.write_combined_image_sampler(1, 0, sampler, u.owner ? unit1_tex : unit0_tex);
+                list.draw(*pipeline, unit_descriptors, u.owner ? unit1_mesh : unit0_mesh);
             }
 
             for(auto & b : bullets)
             {
                 scene_descriptor_set bullet_descriptors {pool, *glow_pipeline};
-                bullet_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{b.get_model_matrix(), team_color_matrices[0]}));
+                bullet_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{b.get_model_matrix()}));
                 list.draw(*glow_pipeline, bullet_descriptors, bullet_mesh);
-                if(ps.u_num_point_lights < 64) ps.u_point_lights[ps.u_num_point_lights++] = {b.get_position(), b.owner ? float3{0.5f,0.2f,0.2f} : float3{0.2f,0.5f,0.2f}};
+                if(ps.u_num_point_lights < 64) ps.u_point_lights[ps.u_num_point_lights++] = {b.get_position(), b.owner ? float3{0.2f,0.2f,1.0f} : float3{0.5f,0.5f,0.0f}};
             }
         }
 
