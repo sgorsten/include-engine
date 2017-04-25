@@ -65,6 +65,18 @@ struct unit
     float4x4 get_model_matrix() const { return pose_matrix(get_pose()); }
 };
 
+struct bullet
+{
+    float2 position;
+    float2 target;
+
+    float3 get_position() const { return {position,0}; }
+    float3 get_direction() const { return {normalize(target-position),0}; }
+    float4 get_orientation() const { return rotation_quat(game_coords.get_axis(coord_axis::north), get_direction()); }
+    float_pose get_pose() const { return {get_orientation(), get_position()}; }
+    float4x4 get_model_matrix() const { return pose_matrix(get_pose()); }
+};
+
 int main() try
 {
     constexpr coord_system vk_coords {coord_axis::right, coord_axis::down, coord_axis::forward};
@@ -72,13 +84,16 @@ int main() try
     std::mt19937 rng; 
     std::uniform_real_distribution<float> dist{0, 64};
     std::vector<unit> units;
-    for(size_t i=0; i<100; ++i) units.push_back({{dist(rng), dist(rng)}, {dist(rng), dist(rng)}});
+    std::vector<bullet> bullets;
+    for(size_t i=0; i<32; ++i) units.push_back({{dist(rng), dist(rng)}, {dist(rng), dist(rng)}});
 
     context ctx;
     gfx_mesh terrain_mesh {ctx, generate_box_mesh({0,0,-1}, {64,64,0})};
     gfx_mesh unit_mesh {ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game_coords, "assets/f44a.obj"))};
+    gfx_mesh bullet_mesh {ctx, generate_box_mesh({-0.1f,-0.5f,0.1f},{+0.1f,+0.5f,0.3f})};
     texture_2d terrain_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({127,85,25,255})};
     texture_2d unit_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/f44a.jpg")};
+    texture_2d bullet_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({255,255,255,255})};
 
     // Create our sampler
     VkSamplerCreateInfo sampler_info = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -176,17 +191,44 @@ int main() try
         if(win.get_key(GLFW_KEY_D)) camera.position += game_coords.get_axis(coord_axis::east) * (timestep * 50);
         
         // Update game logic
-        float max_step = timestep * 2.0f;
         for(auto & u : units)
         {
+            float max_step = timestep * 2.0f;
             const auto delta = u.target - u.position;
             const auto delta_len = length(delta);
             if(delta_len < max_step) 
             {
                 u.position = u.target;
                 u.target = {dist(rng), dist(rng)};
+
+                float best_dist = std::numeric_limits<float>::infinity();
+                const unit * other {};
+                for(auto & v : units)
+                {
+                    if(&u == &v) continue;
+                    float dist = distance2(u.position, v.position);
+                    if(dist < best_dist)
+                    {
+                        best_dist = dist;
+                        other = &v;
+                    }
+                }
+                if(other) bullets.push_back({u.position, other->position});
             }
             else u.position += delta*(max_step/delta_len);
+        }
+        for(auto it=begin(bullets); it!=end(bullets); )
+        {
+            float max_step = timestep * 10.0f;
+            auto & b = *it;
+            const auto delta = b.target - b.position;
+            const auto delta_len = length(delta);
+            if(delta_len < max_step) it = bullets.erase(it);
+            else 
+            {
+                b.position += delta*(max_step/delta_len);
+                ++it;
+            }
         }
 
         // Determine matrices
@@ -211,6 +253,14 @@ int main() try
                 unit_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{u.get_model_matrix()}));
                 unit_descriptors.write_combined_image_sampler(1, 0, sampler, unit_tex);
                 list.draw(*pipeline, unit_descriptors, unit_mesh);
+            }
+
+            for(auto & b : bullets)
+            {
+                scene_descriptor_set bullet_descriptors {pool, *pipeline};
+                bullet_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{b.get_model_matrix()}));
+                bullet_descriptors.write_combined_image_sampler(1, 0, sampler, bullet_tex);
+                list.draw(*pipeline, bullet_descriptors, bullet_mesh);
             }
         }
 
