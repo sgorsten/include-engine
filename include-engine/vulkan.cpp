@@ -725,70 +725,6 @@ void descriptor_set::write_combined_image_sampler(uint32_t binding, uint32_t arr
     vkUpdateDescriptorSets(ctx.device, 1, &write, 0, nullptr);
 }
 
-////////////////////
-// command_buffer //
-////////////////////
-
-void command_buffer::begin(VkCommandBufferUsageFlags flags)
-{
-    VkCommandBufferBeginInfo begin_info {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-    begin_info.flags = flags;
-    vkBeginCommandBuffer(cmd, &begin_info);
-}
-
-void command_buffer::bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout layout, uint32_t set_index, VkDescriptorSet set, array_view<uint32_t> dynamic_offsets)
-{
-    vkCmdBindDescriptorSets(cmd, bind_point, layout, set_index, 1, &set, dynamic_offsets.size, dynamic_offsets.data);
-}
-
-void command_buffer::bind_pipeline(VkPipelineBindPoint bind_point, VkPipeline pipeline)
-{
-    vkCmdBindPipeline(cmd, bind_point, pipeline);
-}
-
-void command_buffer::bind_vertex_buffer(uint32_t binding, VkBuffer buffer, VkDeviceSize offset)
-{
-    vkCmdBindVertexBuffers(cmd, binding, 1, &buffer, &offset);
-}
-
-void command_buffer::bind_index_buffer(VkBuffer buffer, VkDeviceSize offset, VkIndexType index_type)
-{
-    vkCmdBindIndexBuffer(cmd, buffer, offset, index_type);
-}
-
-void command_buffer::begin_render_pass(VkRenderPass render_pass, VkFramebuffer framebuffer, uint2 dims, array_view<VkClearValue> clear_values)
-{
-    VkRenderPassBeginInfo pass_begin_info {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    pass_begin_info.renderPass = render_pass;
-    pass_begin_info.framebuffer = framebuffer;
-    pass_begin_info.renderArea.offset = {0, 0};
-    pass_begin_info.renderArea.extent = {dims.x, dims.y};
-    pass_begin_info.clearValueCount = clear_values.size;
-    pass_begin_info.pClearValues = clear_values.data;
-    vkCmdBeginRenderPass(cmd, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
-
-    const VkViewport viewport {0, 0, static_cast<float>(dims.x), static_cast<float>(dims.y), 0.0f, 1.0f};
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
-
-    const VkRect2D scissor {0, 0, dims.x, dims.y};
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
-}
-
-void command_buffer::draw_indexed(uint32_t index_count, uint32_t instance_count, uint32_t first_index, uint32_t vertex_offset, uint32_t first_instance)
-{
-    vkCmdDrawIndexed(cmd, index_count, instance_count, first_index, vertex_offset, first_instance);
-}
-
-void command_buffer::end_render_pass() 
-{ 
-    vkCmdEndRenderPass(cmd); 
-}
-
-void command_buffer::end()
-{ 
-    check(vkEndCommandBuffer(cmd)); 
-}
-
 /////////////////////////////
 // transient_resource_pool //
 /////////////////////////////
@@ -900,20 +836,8 @@ void transition_layout(VkCommandBuffer command_buffer, VkImage image, uint32_t m
 }
 
 
-VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout layout, array_view<VkVertexInputBindingDescription> vertex_bindings, array_view<VkVertexInputAttributeDescription> vertex_attributes, VkShaderModule vert_shader, VkShaderModule frag_shader, bool depth_write, bool depth_test)
+VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout layout, VkPipelineVertexInputStateCreateInfo vertex_input_state, array_view<VkPipelineShaderStageCreateInfo> stages, bool depth_write, bool depth_test)
 {
-    const VkPipelineShaderStageCreateInfo shader_stages[]
-    {
-        {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vert_shader, "main"},
-        {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, frag_shader, "main"}
-    };
-
-    VkPipelineVertexInputStateCreateInfo vertexInputInfo {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-    vertexInputInfo.vertexBindingDescriptionCount = vertex_bindings.size;
-    vertexInputInfo.pVertexBindingDescriptions = vertex_bindings.data;
-    vertexInputInfo.vertexAttributeDescriptionCount = vertex_attributes.size;
-    vertexInputInfo.pVertexAttributeDescriptions = vertex_attributes.data;
-
     VkPipelineInputAssemblyStateCreateInfo inputAssembly {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     inputAssembly.primitiveRestartEnable = VK_FALSE;
@@ -977,9 +901,9 @@ VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLa
     depth_stencil_state.depthCompareOp = VK_COMPARE_OP_LESS;
 
     VkGraphicsPipelineCreateInfo pipelineInfo {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-    pipelineInfo.stageCount = countof(shader_stages);
-    pipelineInfo.pStages = shader_stages;
-    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.stageCount = stages.size;
+    pipelineInfo.pStages = stages.data;
+    pipelineInfo.pVertexInputState = &vertex_input_state;
     pipelineInfo.pInputAssemblyState = &inputAssembly;
     pipelineInfo.pViewportState = &viewportState;
     pipelineInfo.pRasterizationState = &rasterizer;
@@ -996,6 +920,17 @@ VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLa
     VkPipeline pipeline;
     check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline));
     return pipeline;
+}
+
+void vkCmdBindDescriptorSets(VkCommandBuffer commandBuffer, VkPipelineBindPoint pipelineBindPoint, VkPipelineLayout layout, uint32_t firstSet, array_view<VkDescriptorSet> descriptorSets, array_view<uint32_t> dynamicOffsets)
+{
+    vkCmdBindDescriptorSets(commandBuffer, pipelineBindPoint, layout, firstSet, descriptorSets.size, descriptorSets.data, dynamicOffsets.size, dynamicOffsets.data);
+}
+
+void vkCmdBindVertexBuffers(VkCommandBuffer commandBuffer, uint32_t firstBinding, array_view<VkBuffer> buffers, array_view<VkDeviceSize> offsets)
+{
+    if(buffers.size != offsets.size) fail_fast();
+    vkCmdBindVertexBuffers(commandBuffer, firstBinding, buffers.size, buffers.data, offsets.data);
 }
 
 /////////////////

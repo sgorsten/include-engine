@@ -24,9 +24,11 @@ template<class T> struct array_view
     template<uint32_t N> array_view(const std::array<T,N> & array) : data{array.data()}, size{countof(array)} {}
     array_view(std::initializer_list<T> ilist) : data{ilist.begin()}, size{countof(ilist)} {}
     array_view(const std::vector<T> & vec) : data{vec.data()}, size{countof(vec)} {}
+    const T * begin() const { return data; }
+    const T * end() const { return data + size; }
 };
-template<class T> const T * begin(const array_view<T> & view) { return view.data; }
-template<class T> const T * end(const array_view<T> & view) { return view.data + view.size; }
+template<class T> const T * begin(const array_view<T> & view) { return view.begin(); }
+template<class T> const T * end(const array_view<T> & view) { return view.end(); }
 
 // A container for storing contiguous 2D bitmaps of pixels
 struct std_free_deleter { void operator() (void * p) { std::free(p); } };

@@ -1,4 +1,4 @@
-#include "vulkan.h"
+#include "renderer.h"
 #include "load.h"
 #include "fbx.h"
 #include <fstream>
@@ -100,42 +100,36 @@ int main() try
     gfx_mesh box_mesh {ctx, load_meshes_from_fbx(game_coords, "assets/cube-mesh.fbx")[0]};
     gfx_mesh sands_mesh {ctx, load_mesh_from_obj(game_coords, "assets/sands location.obj")};
 
-    // Set up our layouts
-
-    scene_contract contract {ctx, {
-        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
-    }, {
-        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}
-    }};
-
-    scene_pipeline_layout metallic_layout {contract, {
-        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
-        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
-    }};
-
-    scene_pipeline_layout skybox_layout {contract, {}};
-
-    // Set up a render pass
+    // Set up scene contract
     auto render_pass = ctx.create_render_pass(
         {make_attachment_description(ctx.selection.surface_format.format, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)},
         make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED)
     );
 
+    renderer r {ctx};
+    auto contract = r.create_contract(render_pass, {
+        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
+    }, {
+        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}
+    });
+    auto metallic_layout = r.create_pipeline_layout(contract, {
+        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
+    });
+    auto skybox_layout = r.create_pipeline_layout(contract, {});
+    
     // Set up our shader pipeline
-    shader_compiler compiler;
-    VkShaderModule static_vert_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_VERTEX_BIT, "assets/static.vert"));
-    VkShaderModule skinned_vert_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_VERTEX_BIT, "assets/skinned.vert"));
-    VkShaderModule frag_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/shader.frag"));
-    VkShaderModule metal_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/metal.frag"));
-    VkShaderModule skybox_vert_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_VERTEX_BIT, "assets/skybox.vert"));
-    VkShaderModule skybox_frag_shader = ctx.create_shader_module(compiler.compile_glsl(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/skybox.frag"));
+    auto static_vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/static.vert");
+    auto skinned_vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/skinned.vert");
+    auto frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/shader.frag");
+    auto metal_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/metal.frag");
+    auto skybox_vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/skybox.vert");
+    auto skybox_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/skybox.frag");
 
-    const VkVertexInputBindingDescription bindings[] {{0, sizeof(mesh::vertex), VK_VERTEX_INPUT_RATE_VERTEX}};
-    const VkVertexInputAttributeDescription attributes[] 
-    {
+    auto mesh_vertex_format = r.create_vertex_format({{0, sizeof(mesh::vertex), VK_VERTEX_INPUT_RATE_VERTEX}}, {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, position)}, 
         {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, color)},
         {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, normal)},
@@ -144,15 +138,12 @@ int main() try
         {5, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, bitangent)},
         {6, 0, VK_FORMAT_R32G32B32A32_UINT, offsetof(mesh::vertex, bone_indices)},
         {7, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(mesh::vertex, bone_weights)}
-    };
-    const VkVertexInputAttributeDescription skybox_attributes[] 
-    {
-        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, position)}
-    };
-    scene_pipeline helmet_pipeline  {metallic_layout, render_pass, bindings, attributes, static_vert_shader, metal_shader, true, true};
-    scene_pipeline static_pipeline  {metallic_layout, render_pass, bindings, attributes, static_vert_shader, frag_shader, true, true};
-    scene_pipeline skinned_pipeline {metallic_layout, render_pass, bindings, attributes, skinned_vert_shader, frag_shader, true, true};
-    scene_pipeline skybox_pipeline  {skybox_layout,   render_pass, bindings, skybox_attributes, skybox_vert_shader, skybox_frag_shader, false, false};
+    });
+
+    auto helmet_pipeline  = r.create_pipeline(metallic_layout, mesh_vertex_format, {static_vert_shader, metal_shader}, true, true);
+    auto static_pipeline  = r.create_pipeline(metallic_layout, mesh_vertex_format, {static_vert_shader, frag_shader}, true, true);
+    auto skinned_pipeline = r.create_pipeline(metallic_layout, mesh_vertex_format, {skinned_vert_shader, frag_shader}, true, true);
+    auto skybox_pipeline  = r.create_pipeline(skybox_layout,   mesh_vertex_format, {skybox_vert_shader, skybox_frag_shader}, false, false);
 
     // Set up a window with swapchain framebuffers
     window win {ctx, {1280, 720}, "Example Game"};
@@ -219,9 +210,9 @@ int main() try
         // Generate a draw list for the scene
         draw_list list {pool};
         {
-            list.draw(skybox_pipeline, skybox_mesh);
+            list.draw(*skybox_pipeline, skybox_mesh);
 
-            auto helmet = list.draw(helmet_pipeline, helmet_mesh);
+            auto helmet = list.draw(*helmet_pipeline, helmet_mesh);
             helmet.write_uniform_buffer(0, 0, per_static_object{mul(translation_matrix(float3{30, 0, 20}), helmet_mesh.m.bones[0].initial_pose.get_local_transform(), helmet_mesh.m.bones[0].model_to_bone_matrix)});
             helmet.write_combined_image_sampler(1, 0, sampler, helmet_albedo);
             helmet.write_combined_image_sampler(2, 0, sampler, helmet_normal);
@@ -236,19 +227,19 @@ int main() try
                 po.bone_matrices[i] = mul(mutant_mesh.m.get_bone_pose(kf.local_transforms, i), mutant_mesh.m.bones[i].model_to_bone_matrix);
             }
 
-            auto mutant = list.draw(skinned_pipeline, mutant_mesh, {0,1,3});
+            auto mutant = list.draw(*skinned_pipeline, mutant_mesh, {0,1,3});
             mutant.write_uniform_buffer(0, 0, po);
             mutant.write_combined_image_sampler(1, 0, sampler, mutant_albedo);
             mutant.write_combined_image_sampler(2, 0, sampler, mutant_normal);
             mutant.write_combined_image_sampler(3, 0, sampler, black_tex);
 
-            auto akai = list.draw(skinned_pipeline, mutant_mesh, {2});
+            auto akai = list.draw(*skinned_pipeline, mutant_mesh, {2});
             akai.write_uniform_buffer(0, 0, po);
             akai.write_combined_image_sampler(1, 0, sampler, akai_albedo);
             akai.write_combined_image_sampler(2, 0, sampler, akai_normal);
             akai.write_combined_image_sampler(3, 0, sampler, black_tex);
        
-            auto box = list.draw(static_pipeline, box_mesh);
+            auto box = list.draw(*static_pipeline, box_mesh);
             box.write_uniform_buffer(0, 0, per_static_object{mul(translation_matrix(float3{-30,0,20}), scaling_matrix(float3{4,4,4}))});
             box.write_combined_image_sampler(1, 0, sampler, gray_tex);
             box.write_combined_image_sampler(2, 0, sampler, flat_tex);
@@ -256,7 +247,7 @@ int main() try
         
             for(size_t i=0; i<sands_mesh.m.materials.size(); ++i)
             {
-                auto sands = list.draw(static_pipeline, sands_mesh, {i});
+                auto sands = list.draw(*static_pipeline, sands_mesh, {i});
 
                 sands.write_uniform_buffer(0, 0, per_static_object{mul(translation_matrix(float3{0,27,-64}), scaling_matrix(float3{10,10,10}))});
                 if(sands_mesh.m.materials[i].name == "map_2_island1") sands.write_combined_image_sampler(1, 0, sampler, map_2_island);
@@ -268,9 +259,10 @@ int main() try
             }
         }
 
-        command_buffer cmd = pool.allocate_command_buffer();
+        VkCommandBuffer cmd = pool.allocate_command_buffer();
 
-        cmd.begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+        VkCommandBufferBeginInfo begin_info {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+        vkBeginCommandBuffer(cmd, &begin_info);
 
         // Bind per-scene uniforms
         per_scene_uniforms ps;
@@ -279,10 +271,10 @@ int main() try
         ps.light_direction = normalize(float3{1,-2,5});
         ps.light_color = {0.8f,0.7f,0.5f};
 
-        auto per_scene = pool.allocate_descriptor_set(contract.get_per_scene_layout());
+        auto per_scene = pool.allocate_descriptor_set(contract->get_per_scene_layout());
         per_scene.write_uniform_buffer(0, 0, ps);      
         per_scene.write_combined_image_sampler(1, 0, sampler, env_tex);
-        cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, skybox_layout.get_pipeline_layout(), 0, per_scene, {});
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skybox_layout->get_pipeline_layout(), 0, {per_scene}, {});
 
         // Bind per-view uniforms
         per_view_uniforms pv;
@@ -290,18 +282,34 @@ int main() try
         pv.rotation_only_view_proj_matrix = mul(proj_matrix, inverse(pose_matrix(camera.get_orientation(game_coords), float3{0,0,0})));
         pv.eye_position = camera.position;
 
-        auto per_view = pool.allocate_descriptor_set(contract.get_per_view_layout());
+        auto per_view = pool.allocate_descriptor_set(contract->get_per_view_layout());
         per_view.write_uniform_buffer(0, 0, pv);      
-        cmd.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, skybox_layout.get_pipeline_layout(), 1, per_view, {});
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skybox_layout->get_pipeline_layout(), 1, {per_view}, {});
 
         // Begin render pass
         const uint32_t index = win.begin();
-        cmd.begin_render_pass(render_pass, swapchain_framebuffers[index], win.get_dims(), {{0, 0, 0, 1}, {1.0f, 0}});
+
+        VkClearValue clear_values[] {{0, 0, 0, 1}, {1.0f, 0}};
+        const uint2 dims = win.get_dims();
+        VkRenderPassBeginInfo pass_begin_info {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        pass_begin_info.renderPass = render_pass;
+        pass_begin_info.framebuffer = swapchain_framebuffers[index];
+        pass_begin_info.renderArea.offset = {0, 0};
+        pass_begin_info.renderArea.extent = {dims.x, dims.y};
+        pass_begin_info.clearValueCount = countof(clear_values);
+        pass_begin_info.pClearValues = clear_values;
+        vkCmdBeginRenderPass(cmd, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+
+        const VkViewport viewport {0, 0, static_cast<float>(dims.x), static_cast<float>(dims.y), 0.0f, 1.0f};
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+        const VkRect2D scissor {0, 0, dims.x, dims.y};
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
 
         list.write_commands(cmd);
 
-        cmd.end_render_pass();
-        cmd.end();
+        vkCmdEndRenderPass(cmd); 
+        check(vkEndCommandBuffer(cmd)); 
 
         win.end(index, {cmd}, pool.get_fence());
         
@@ -310,12 +318,6 @@ int main() try
 
     vkDeviceWaitIdle(ctx.device);
     vkDestroySampler(ctx.device, sampler, nullptr);
-    vkDestroyShaderModule(ctx.device, static_vert_shader, nullptr);
-    vkDestroyShaderModule(ctx.device, skinned_vert_shader, nullptr);
-    vkDestroyShaderModule(ctx.device, frag_shader, nullptr);
-    vkDestroyShaderModule(ctx.device, metal_shader, nullptr);
-    vkDestroyShaderModule(ctx.device, skybox_vert_shader, nullptr);
-    vkDestroyShaderModule(ctx.device, skybox_frag_shader, nullptr);
     for(auto framebuffer : swapchain_framebuffers) vkDestroyFramebuffer(ctx.device, framebuffer, nullptr);
     vkDestroyRenderPass(ctx.device, render_pass, nullptr);    
     return EXIT_SUCCESS;

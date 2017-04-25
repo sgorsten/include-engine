@@ -6,11 +6,13 @@
     <ClInclude Include="data-types.h" />
     <ClInclude Include="vulkan.h" />
     <ClInclude Include="load.h" />
+    <ClInclude Include="renderer.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="fbx.cpp" />
     <ClCompile Include="data-types.cpp" />
     <ClCompile Include="vulkan.cpp" />
     <ClCompile Include="load.cpp" />
+    <ClCompile Include="renderer.cpp" />
   </ItemGroup>
 </Project>
