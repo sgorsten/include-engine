@@ -147,7 +147,7 @@ int main() try
 
     // Set up a window with swapchain framebuffers
     window win {ctx, {1280, 720}, "Example Game"};
-    depth_buffer depth {ctx, win.get_dims()};
+    auto depth = make_depth_buffer(ctx, win.get_dims());
 
     // Create framebuffers
     std::vector<VkFramebuffer> swapchain_framebuffers;

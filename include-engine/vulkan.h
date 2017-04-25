@@ -58,6 +58,7 @@ class window
     GLFWwindow * glfw_window {};
     VkSurfaceKHR surface {};
     VkSwapchainKHR swapchain {};
+    std::vector<VkImage> swapchain_images;
     std::vector<VkImageView> swapchain_image_views;
     VkSemaphore image_available {}, render_finished {};
     uint2 dims;
@@ -65,6 +66,7 @@ public:
     window(context & ctx, uint2 dims, const char * title);
     ~window();
 
+    const std::vector<VkImage> & get_swapchain_images() const { return swapchain_images; }
     const std::vector<VkImageView> & get_swapchain_image_views() const { return swapchain_image_views; }
     uint2 get_dims() const { return dims; }
     float get_aspect() const { return (float)dims.x/dims.y; }
@@ -78,18 +80,21 @@ public:
     void end(uint32_t index, array_view<VkCommandBuffer> commands, VkFence fence);
 };
 
-class depth_buffer
+class render_target
 {
     context & ctx;
     VkImage image;
     VkImageView image_view;
     VkDeviceMemory device_memory;
 public:
-    depth_buffer(context & ctx, uint2 dims);
-    ~depth_buffer();
+    render_target(context & ctx, uint2 dims, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect);
+    ~render_target();
 
-    operator VkImageView () const { return image_view; }
+    VkImage get_image() const { return image; }
+    VkImageView get_image_view() const { return image_view; }
 };
+
+inline render_target make_depth_buffer(context & ctx, uint2 dims) { return {ctx, dims, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT}; }
 
 class texture_2d
 {

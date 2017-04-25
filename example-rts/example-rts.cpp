@@ -81,7 +81,7 @@ int main() try
 
     // Set up scene contract
     auto render_pass = ctx.create_render_pass(
-        {make_attachment_description(ctx.selection.surface_format.format, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)},
+        {make_attachment_description(ctx.selection.surface_format.format, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)},
         make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED)
     );
 
@@ -116,11 +116,13 @@ int main() try
 
     // Set up a window with swapchain framebuffers
     window win {ctx, {1280, 720}, "Example RTS"};
-    depth_buffer depth {ctx, win.get_dims()};
+    render_target color {ctx, win.get_dims(), VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
+    auto depth = make_depth_buffer(ctx, win.get_dims());
 
     // Create framebuffers
+    VkFramebuffer main_framebuffer = ctx.create_framebuffer(render_pass, {color.get_image_view(), depth.get_image_view()}, win.get_dims());
     std::vector<VkFramebuffer> swapchain_framebuffers;
-    for(auto & view : win.get_swapchain_image_views()) swapchain_framebuffers.push_back(ctx.create_framebuffer(render_pass, {view, depth}, win.get_dims()));
+    for(auto & view : win.get_swapchain_image_views()) swapchain_framebuffers.push_back(ctx.create_framebuffer(render_pass, {view, depth.get_image_view()}, win.get_dims()));
 
     // Set up our transient resource pools
     const VkDescriptorPoolSize pool_sizes[]
@@ -233,7 +235,7 @@ int main() try
         const uint2 dims = win.get_dims();
         VkRenderPassBeginInfo pass_begin_info {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
         pass_begin_info.renderPass = render_pass;
-        pass_begin_info.framebuffer = swapchain_framebuffers[index];
+        pass_begin_info.framebuffer = main_framebuffer; //swapchain_framebuffers[index];
         pass_begin_info.renderArea.offset = {0, 0};
         pass_begin_info.renderArea.extent = {dims.x, dims.y};
         pass_begin_info.clearValueCount = countof(clear_values);
@@ -249,6 +251,28 @@ int main() try
         list.write_commands(cmd);
 
         vkCmdEndRenderPass(cmd); 
+
+        //pass_begin_info.framebuffer = swapchain_framebuffers[index];
+        //vkCmdBeginRenderPass(cmd, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+        //vkCmdSetViewport(cmd, 0, 1, &viewport);
+        //vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+        VkImageBlit region {};
+        region.srcOffsets[0] = {0,0,0};
+        region.srcOffsets[1] = {(int)dims.x,(int)dims.y,1};
+        region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.srcSubresource.layerCount = 1;
+        region.dstOffsets[0] = {0,0,0};
+        region.dstOffsets[1] = {(int)dims.x,(int)dims.y,1};
+        region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.dstSubresource.layerCount = 1;
+
+        transition_layout(cmd, win.get_swapchain_images()[index], 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        vkCmdBlitImage(cmd, color.get_image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, win.get_swapchain_images()[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_NEAREST);
+        transition_layout(cmd, win.get_swapchain_images()[index], 0, 0, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+        //vkCmdEndRenderPass(cmd); 
+
         check(vkEndCommandBuffer(cmd)); 
 
         win.end(index, {cmd}, pool.get_fence());

@@ -349,7 +349,7 @@ window::window(context & ctx, uint2 dims, const char * title) : ctx{ctx}, dims{d
     swapchain_info.imageColorSpace = ctx.selection.surface_format.colorSpace;
     swapchain_info.imageExtent = swap_extent;
     swapchain_info.imageArrayLayers = 1;
-    swapchain_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    swapchain_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     swapchain_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     swapchain_info.preTransform = ctx.selection.surface_transform;
     swapchain_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -360,7 +360,7 @@ window::window(context & ctx, uint2 dims, const char * title) : ctx{ctx}, dims{d
 
     uint32_t swapchain_image_count;    
     check(vkGetSwapchainImagesKHR(ctx.device, swapchain, &swapchain_image_count, nullptr));
-    std::vector<VkImage> swapchain_images(swapchain_image_count);
+    swapchain_images.resize(swapchain_image_count);
     check(vkGetSwapchainImagesKHR(ctx.device, swapchain, &swapchain_image_count, swapchain_images.data()));
 
     swapchain_image_views.resize(swapchain_image_count);
@@ -422,21 +422,21 @@ void window::end(uint32_t index, array_view<VkCommandBuffer> commands, VkFence f
     check(vkQueuePresentKHR(ctx.queue, &present_info));
 }
 
-//////////////////
-// depth_buffer //
-//////////////////
+///////////////////
+// render_target //
+///////////////////
 
-depth_buffer::depth_buffer(context & ctx, uint2 dims) : ctx{ctx}
+render_target::render_target(context & ctx, uint2 dims, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect) : ctx{ctx}
 {
     VkImageCreateInfo image_info {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     image_info.imageType = VK_IMAGE_TYPE_2D;
-    image_info.format = VK_FORMAT_D32_SFLOAT;
+    image_info.format = format;
     image_info.extent = {dims.x, dims.y, 1};
     image_info.mipLevels = 1;
     image_info.arrayLayers = 1;
     image_info.samples = VK_SAMPLE_COUNT_1_BIT;
     image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    image_info.usage = usage;
     image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     check(vkCreateImage(ctx.device, &image_info, nullptr, &image));
@@ -449,8 +449,8 @@ depth_buffer::depth_buffer(context & ctx, uint2 dims) : ctx{ctx}
     VkImageViewCreateInfo image_view_info {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     image_view_info.image = image;
     image_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    image_view_info.format = VK_FORMAT_D32_SFLOAT;
-    image_view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    image_view_info.format = format;
+    image_view_info.subresourceRange.aspectMask = aspect;
     image_view_info.subresourceRange.baseMipLevel = 0;
     image_view_info.subresourceRange.levelCount = 1;
     image_view_info.subresourceRange.baseArrayLayer = 0;
@@ -458,7 +458,7 @@ depth_buffer::depth_buffer(context & ctx, uint2 dims) : ctx{ctx}
     check(vkCreateImageView(ctx.device, &image_view_info, nullptr, &image_view));
 }
 
-depth_buffer::~depth_buffer()
+render_target::~render_target()
 {
     vkDestroyImageView(ctx.device, image_view, nullptr);
     vkDestroyImage(ctx.device, image, nullptr);
@@ -807,6 +807,7 @@ void transition_layout(VkCommandBuffer command_buffer, VkImage image, uint32_t m
     case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL: barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; break; // Transfer writes should wait for layout change to complete
     case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL: barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT; break; // Writes to color attachments should wait for layout change to complete
     case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL: barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT; break; // Shader reads should wait for layout change to complete
+    case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR: barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT; break; // Memory reads should wait for layout change to complete
     default: throw std::logic_error("unsupported layout transition");
     }
     vkCmdPipelineBarrier(command_buffer, src_stage_mask, dst_stage_mask, 0, 0, nullptr, 0, nullptr, 1, &barrier);

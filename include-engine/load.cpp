@@ -56,6 +56,17 @@ mesh generate_box_mesh(const float3 & a, const float3 & b)
     });
 }
 
+mesh generate_fullscreen_quad()
+{
+    return compute_tangent_basis({{
+        {{-1,-1,0.5}, {1,1,1}, {0,0,-1}, {0,0}}, 
+        {{+1,-1,0.5}, {1,1,1}, {0,0,-1}, {1,0}}, 
+        {{+1,+1,0.5}, {1,1,1}, {0,0,-1}, {1,1}}, 
+        {{-1,+1,0.5}, {1,1,1}, {0,0,-1}, {0,1}},
+        }, {{0,1,2},{0,2,3}}
+    });
+}
+
 mesh apply_vertex_color(mesh m, const float3 & color)
 {
     for(auto & v : m.vertices) v.color = color;
