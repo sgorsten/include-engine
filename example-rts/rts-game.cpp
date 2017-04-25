@@ -54,12 +54,12 @@ void advance_game(std::mt19937 & rng, std::vector<unit> & units, std::vector<bul
             u.direction = slerp(u.direction, normalize(enemy->position - u.position), 0.1f);
             if(distance2(u.position, enemy->position) > 25)
             {
-                move(u.position, enemy->position, timestep*2);
+                move(u.position, enemy->position, timestep*4);
             }
             else if(u.cooldown == 0)
             {
-                bullets.push_back({u.position, enemy->position});
-                u.cooldown += 1.0f;
+                bullets.push_back({u.owner, u.position, enemy->position});
+                u.cooldown += 0.5f;
             }
         }
     }
@@ -67,7 +67,7 @@ void advance_game(std::mt19937 & rng, std::vector<unit> & units, std::vector<bul
     // Simulate movement of bullets
     for(auto it=begin(bullets); it!=end(bullets); )
     {
-        if(move(it->position, it->target, timestep*10))
+        if(move(it->position, it->target, timestep*20))
         {
             // Bullets which reach their destination deal one damage to all units within a radius of one
             for(auto & u : units)

@@ -27,10 +27,21 @@ void main()
 
 	vec3 light = u_ambient_light;
 
-	vec3 light_vec = u_light_direction;
-	light += albedo * u_light_color * max(dot(normal_vec, light_vec), 0);
-	vec3 half_vec = normalize(light_vec + eye_vec);                
-	light += u_light_color * pow(max(dot(normal_vec, half_vec), 0), 128);
+	// directional light
+	{
+		vec3 light_vec = u_light_direction;
+		float diffuse = max(dot(normal_vec, light_vec), 0);
+		light += albedo * u_light_color * diffuse;
+	}
+
+	for(int i=0; i<u_num_point_lights; ++i)
+	{
+		vec3 light_vec = u_point_lights[i].position - position;
+		float light_dist = length(light_vec);
+		light_vec /= light_dist;
+		float diffuse = max(dot(normal_vec, light_vec), 0) / light_dist; // Note: Linear falloff
+		light += albedo * u_point_lights[i].color * diffuse;
+	}
 
 	f_color = vec4(light,1);
 }

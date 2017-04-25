@@ -2,11 +2,19 @@
 // Per-scene uniforms: Used to define the lighting environment in which all scene rendering occurs //
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 
+struct point_light
+{
+	vec3 position;
+	vec3 color;
+};
+
 layout(set=0, binding=0) uniform PerScene
 {
 	vec3 u_ambient_light;
 	vec3 u_light_direction;
 	vec3 u_light_color;
+	point_light u_point_lights[64];
+	int u_num_point_lights;
 };
 
 ////////////////////////////////////////////////////////////////////////////
