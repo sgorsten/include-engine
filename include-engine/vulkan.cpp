@@ -702,29 +702,6 @@ VkDescriptorBufferInfo dynamic_buffer::write(size_t size, const void * data)
     return info;
 }
 
-////////////////////
-// descriptor_set //
-////////////////////
-
-descriptor_set::descriptor_set(context & ctx, dynamic_buffer & uniform_buffer, VkDescriptorSet set) : ctx{ctx}, uniform_buffer{uniform_buffer}, set{set} 
-{
-
-}
-
-void descriptor_set::write_uniform_buffer(uint32_t binding, uint32_t array_element, size_t size, const void * data)
-{
-    const auto info = uniform_buffer.write(size, data);
-    VkWriteDescriptorSet write {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, binding, array_element, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &info, nullptr};
-    vkUpdateDescriptorSets(ctx.device, 1, &write, 0, nullptr);
-}
-
-void descriptor_set::write_combined_image_sampler(uint32_t binding, uint32_t array_element, VkSampler sampler, VkImageView image_view, VkImageLayout image_layout)
-{
-    VkDescriptorImageInfo info {sampler, image_view, image_layout};
-    VkWriteDescriptorSet write {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, binding, array_element, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &info, nullptr, nullptr};
-    vkUpdateDescriptorSets(ctx.device, 1, &write, 0, nullptr);
-}
-
 /////////////////////////////
 // transient_resource_pool //
 /////////////////////////////
@@ -783,7 +760,7 @@ VkCommandBuffer transient_resource_pool::allocate_command_buffer()
     return command_buffer;
 }
 
-descriptor_set transient_resource_pool::allocate_descriptor_set(VkDescriptorSetLayout layout)
+VkDescriptorSet transient_resource_pool::allocate_descriptor_set(VkDescriptorSetLayout layout)
 {
     VkDescriptorSetAllocateInfo alloc_info {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     alloc_info.descriptorPool = descriptor_pool;
@@ -792,7 +769,7 @@ descriptor_set transient_resource_pool::allocate_descriptor_set(VkDescriptorSetL
 
     VkDescriptorSet descriptor_set;
     check(vkAllocateDescriptorSets(ctx.device, &alloc_info, &descriptor_set));
-    return {ctx, uniform_buffer, descriptor_set};
+    return descriptor_set;
 }
 
 ////////////////////////////
@@ -920,6 +897,25 @@ VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLa
     VkPipeline pipeline;
     check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline));
     return pipeline;
+}
+
+//////////////////////////
+// Convenience wrappers //
+//////////////////////////
+
+void vkUpdateDescriptorSets(VkDevice device, array_view<VkWriteDescriptorSet> descriptorWrites, array_view<VkCopyDescriptorSet> descriptorCopies)
+{
+    vkUpdateDescriptorSets(device, descriptorWrites.size, descriptorWrites.data, descriptorCopies.size, descriptorCopies.data);
+}
+
+void vkWriteDescriptorBufferInfo(VkDevice device, VkDescriptorSet set, uint32_t binding, uint32_t array_element, VkDescriptorBufferInfo info)
+{
+    vkUpdateDescriptorSets(device, {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, binding, array_element, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &info, nullptr}}, {});
+}
+
+void vkWriteDescriptorCombinedImageSamplerInfo(VkDevice device, VkDescriptorSet set, uint32_t binding, uint32_t array_element, VkDescriptorImageInfo info)
+{
+    vkUpdateDescriptorSets(device, {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, binding, array_element, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &info, nullptr, nullptr}}, {});
 }
 
 void vkCmdBindDescriptorSets(VkCommandBuffer commandBuffer, VkPipelineBindPoint pipelineBindPoint, VkPipelineLayout layout, uint32_t firstSet, array_view<VkDescriptorSet> descriptorSets, array_view<uint32_t> dynamicOffsets)

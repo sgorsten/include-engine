@@ -62,6 +62,7 @@ mesh generate_box_mesh(const float3 & a, const float3 & b)
 std::vector<mesh> load_meshes_from_fbx(coord_system target, const char * filename)
 {
     std::ifstream in(filename, std::ifstream::binary);
+    if(!in) throw std::runtime_error(std::string("unable to open ") + filename);
     auto meshes = fbx::load_meshes(fbx::ast::load(in));
 
     const coord_system fbx_coords {coord_axis::right, coord_axis::up, coord_axis::back};

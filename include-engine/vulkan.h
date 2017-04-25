@@ -147,21 +147,6 @@ public:
     VkDescriptorBufferInfo write(size_t size, const void * data);
 };
 
-class descriptor_set
-{
-    context & ctx;
-    dynamic_buffer & uniform_buffer;
-    VkDescriptorSet set;
-public:
-    descriptor_set(context & ctx, dynamic_buffer & uniform_buffer, VkDescriptorSet set);
-
-    operator VkDescriptorSet () { return set; }
-
-    void write_uniform_buffer(uint32_t binding, uint32_t array_element, size_t size, const void * data);
-    void write_combined_image_sampler(uint32_t binding, uint32_t array_element, VkSampler sampler, VkImageView image_view, VkImageLayout image_layout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    template<class T> void write_uniform_buffer(uint32_t binding, uint32_t array_element, const T & data) { write_uniform_buffer(binding, array_element, sizeof(data), &data); }
-};
-
 // Manages the allocation of short-lived resources which can be recycled in a single call, protected by a fence
 class transient_resource_pool
 {
@@ -177,8 +162,11 @@ public:
 
     void reset();
     VkCommandBuffer allocate_command_buffer();
-    descriptor_set allocate_descriptor_set(VkDescriptorSetLayout layout);
+    VkDescriptorSet allocate_descriptor_set(VkDescriptorSetLayout layout);
+    VkDescriptorBufferInfo write_data(size_t size, const void * data) { return uniform_buffer.write(size, data); }
     VkFence get_fence() { return fence; }
+
+    template<class T> VkDescriptorBufferInfo write_data(const T & data) { return write_data(sizeof(data), &data); }
 };
 
 // Other utility functions
@@ -188,6 +176,10 @@ VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLa
     array_view<VkPipelineShaderStageCreateInfo> stages, bool depth_write, bool depth_test);
 
 // Convenience wrappers around Vulkan calls
+void vkUpdateDescriptorSets(VkDevice device, array_view<VkWriteDescriptorSet> descriptorWrites, array_view<VkCopyDescriptorSet> descriptorCopies);
+void vkWriteDescriptorCombinedImageSamplerInfo(VkDevice device, VkDescriptorSet set, uint32_t binding, uint32_t array_element, VkDescriptorImageInfo info);
+void vkWriteDescriptorBufferInfo(VkDevice device, VkDescriptorSet set, uint32_t binding, uint32_t array_element, VkDescriptorBufferInfo info);
+
 void vkCmdBindDescriptorSets(VkCommandBuffer commandBuffer, VkPipelineBindPoint pipelineBindPoint, VkPipelineLayout layout, uint32_t firstSet, array_view<VkDescriptorSet> descriptorSets, array_view<uint32_t> dynamicOffsets);
 void vkCmdBindVertexBuffers(VkCommandBuffer commandBuffer, uint32_t firstBinding, array_view<VkBuffer> buffers, array_view<VkDeviceSize> offsets);
 

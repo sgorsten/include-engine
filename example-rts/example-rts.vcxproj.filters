@@ -1,0 +1,22 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="shaders">
+      <UniqueIdentifier>{f92d6ba4-fdff-4171-bb8e-2635778959a0}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="assets\scene.glsl">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="assets\shader.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="assets\static.vert">
+      <Filter>shaders</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="example-rts.cpp" />
+  </ItemGroup>
+</Project>

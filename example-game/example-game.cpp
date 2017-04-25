@@ -208,83 +208,84 @@ int main() try
         pool.reset();
 
         // Generate a draw list for the scene
-        draw_list list {pool};
+        draw_list list {pool, *contract};
         {
-            list.draw(*skybox_pipeline, skybox_mesh);
+            scene_descriptor_set skybox_descriptors {pool, *skybox_pipeline};
+            list.draw(*skybox_pipeline, skybox_descriptors, skybox_mesh);
 
-            auto helmet = list.draw(*helmet_pipeline, helmet_mesh);
-            helmet.write_uniform_buffer(0, 0, per_static_object{mul(translation_matrix(float3{30, 0, 20}), helmet_mesh.m.bones[0].initial_pose.get_local_transform(), helmet_mesh.m.bones[0].model_to_bone_matrix)});
-            helmet.write_combined_image_sampler(1, 0, sampler, helmet_albedo);
-            helmet.write_combined_image_sampler(2, 0, sampler, helmet_normal);
-            helmet.write_combined_image_sampler(3, 0, sampler, helmet_metallic);
+            scene_descriptor_set helmet_descriptors {pool, *helmet_pipeline};
+            helmet_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{30, 0, 20}), helmet_mesh.m.bones[0].initial_pose.get_local_transform(), helmet_mesh.m.bones[0].model_to_bone_matrix)}));
+            helmet_descriptors.write_combined_image_sampler(1, 0, sampler, helmet_albedo);
+            helmet_descriptors.write_combined_image_sampler(2, 0, sampler, helmet_normal);
+            helmet_descriptors.write_combined_image_sampler(3, 0, sampler, helmet_metallic);
+            list.draw(*helmet_pipeline, helmet_descriptors, helmet_mesh);
 
             if(++anim_frame >= mutant_mesh.m.animations[0].keyframes.size()) anim_frame = 0;
             auto & kf = mutant_mesh.m.animations[0].keyframes[anim_frame];
 
             per_skinned_object po {};
-            for(size_t i=0; i<mutant_mesh.m.bones.size(); ++i)
-            {   
-                po.bone_matrices[i] = mul(mutant_mesh.m.get_bone_pose(kf.local_transforms, i), mutant_mesh.m.bones[i].model_to_bone_matrix);
-            }
+            for(size_t i=0; i<mutant_mesh.m.bones.size(); ++i) po.bone_matrices[i] = mul(mutant_mesh.m.get_bone_pose(kf.local_transforms, i), mutant_mesh.m.bones[i].model_to_bone_matrix);
+            auto podata = pool.write_data(po);
 
-            auto mutant = list.draw(*skinned_pipeline, mutant_mesh, {0,1,3});
-            mutant.write_uniform_buffer(0, 0, po);
-            mutant.write_combined_image_sampler(1, 0, sampler, mutant_albedo);
-            mutant.write_combined_image_sampler(2, 0, sampler, mutant_normal);
-            mutant.write_combined_image_sampler(3, 0, sampler, black_tex);
+            scene_descriptor_set mutant_descriptors {pool, *skinned_pipeline};
+            mutant_descriptors.write_uniform_buffer(0, 0, podata);
+            mutant_descriptors.write_combined_image_sampler(1, 0, sampler, mutant_albedo);
+            mutant_descriptors.write_combined_image_sampler(2, 0, sampler, mutant_normal);
+            mutant_descriptors.write_combined_image_sampler(3, 0, sampler, black_tex);
+            list.draw(*skinned_pipeline, mutant_descriptors, mutant_mesh, {0,1,3});
 
-            auto akai = list.draw(*skinned_pipeline, mutant_mesh, {2});
-            akai.write_uniform_buffer(0, 0, po);
-            akai.write_combined_image_sampler(1, 0, sampler, akai_albedo);
-            akai.write_combined_image_sampler(2, 0, sampler, akai_normal);
-            akai.write_combined_image_sampler(3, 0, sampler, black_tex);
+            scene_descriptor_set akai_descriptors {pool, *skinned_pipeline};
+            akai_descriptors.write_uniform_buffer(0, 0, podata);
+            akai_descriptors.write_combined_image_sampler(1, 0, sampler, akai_albedo);
+            akai_descriptors.write_combined_image_sampler(2, 0, sampler, akai_normal);
+            akai_descriptors.write_combined_image_sampler(3, 0, sampler, black_tex);
+            list.draw(*skinned_pipeline, akai_descriptors, mutant_mesh, {2});
        
-            auto box = list.draw(*static_pipeline, box_mesh);
-            box.write_uniform_buffer(0, 0, per_static_object{mul(translation_matrix(float3{-30,0,20}), scaling_matrix(float3{4,4,4}))});
-            box.write_combined_image_sampler(1, 0, sampler, gray_tex);
-            box.write_combined_image_sampler(2, 0, sampler, flat_tex);
-            box.write_combined_image_sampler(3, 0, sampler, black_tex);
+            scene_descriptor_set box_descriptors {pool, *static_pipeline};
+            box_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{-30,0,20}), scaling_matrix(float3{4,4,4}))}));
+            box_descriptors.write_combined_image_sampler(1, 0, sampler, gray_tex);
+            box_descriptors.write_combined_image_sampler(2, 0, sampler, flat_tex);
+            box_descriptors.write_combined_image_sampler(3, 0, sampler, black_tex);
+            list.draw(*static_pipeline, box_descriptors, box_mesh);
         
             for(size_t i=0; i<sands_mesh.m.materials.size(); ++i)
             {
-                auto sands = list.draw(*static_pipeline, sands_mesh, {i});
-
-                sands.write_uniform_buffer(0, 0, per_static_object{mul(translation_matrix(float3{0,27,-64}), scaling_matrix(float3{10,10,10}))});
-                if(sands_mesh.m.materials[i].name == "map_2_island1") sands.write_combined_image_sampler(1, 0, sampler, map_2_island);
-                else if(sands_mesh.m.materials[i].name == "map_2_object1") sands.write_combined_image_sampler(1, 0, sampler, map_2_objects);
-                else if(sands_mesh.m.materials[i].name == "map_2_terrain1") sands.write_combined_image_sampler(1, 0, sampler, map_2_terrain);
-                else sands.write_combined_image_sampler(1, 0, sampler, gray_tex);
-                sands.write_combined_image_sampler(2, 0, sampler, flat_tex);
-                sands.write_combined_image_sampler(3, 0, sampler, black_tex);
+                scene_descriptor_set sands_descriptors {pool, *static_pipeline};
+                sands_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{0,27,-64}), scaling_matrix(float3{10,10,10}))}));
+                if(sands_mesh.m.materials[i].name == "map_2_island1") sands_descriptors.write_combined_image_sampler(1, 0, sampler, map_2_island);
+                else if(sands_mesh.m.materials[i].name == "map_2_object1") sands_descriptors.write_combined_image_sampler(1, 0, sampler, map_2_objects);
+                else if(sands_mesh.m.materials[i].name == "map_2_terrain1") sands_descriptors.write_combined_image_sampler(1, 0, sampler, map_2_terrain);
+                else sands_descriptors.write_combined_image_sampler(1, 0, sampler, gray_tex);
+                sands_descriptors.write_combined_image_sampler(2, 0, sampler, flat_tex);
+                sands_descriptors.write_combined_image_sampler(3, 0, sampler, black_tex);
+                list.draw(*static_pipeline, sands_descriptors, sands_mesh, {i});
             }
         }
 
-        VkCommandBuffer cmd = pool.allocate_command_buffer();
-
-        VkCommandBufferBeginInfo begin_info {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
-        vkBeginCommandBuffer(cmd, &begin_info);
-
-        // Bind per-scene uniforms
+        // Set up per-scene and per-view descriptor sets
         per_scene_uniforms ps;
         ps.cubemap_xform = make_transform_4x4(game_coords, cubemap_coords);
         ps.ambient_light = {0.01f,0.01f,0.01f};
         ps.light_direction = normalize(float3{1,-2,5});
         ps.light_color = {0.8f,0.7f,0.5f};
 
-        auto per_scene = pool.allocate_descriptor_set(contract->get_per_scene_layout());
-        per_scene.write_uniform_buffer(0, 0, ps);      
-        per_scene.write_combined_image_sampler(1, 0, sampler, env_tex);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skybox_layout->get_pipeline_layout(), 0, {per_scene}, {});
-
-        // Bind per-view uniforms
         per_view_uniforms pv;
         pv.view_proj_matrix = mul(proj_matrix, camera.get_view_matrix(game_coords));
         pv.rotation_only_view_proj_matrix = mul(proj_matrix, inverse(pose_matrix(camera.get_orientation(game_coords), float3{0,0,0})));
         pv.eye_position = camera.position;
 
-        auto per_view = pool.allocate_descriptor_set(contract->get_per_view_layout());
-        per_view.write_uniform_buffer(0, 0, pv);      
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skybox_layout->get_pipeline_layout(), 1, {per_view}, {});
+        VkDescriptorSet per_scene = pool.allocate_descriptor_set(list.contract.get_per_scene_layout());
+        vkWriteDescriptorBufferInfo(ctx.device, per_scene, 0, 0, pool.write_data(ps));      
+        vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, per_scene, 1, 0, {sampler, env_tex, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+
+        VkDescriptorSet per_view = pool.allocate_descriptor_set(list.contract.get_per_view_layout());
+        vkWriteDescriptorBufferInfo(ctx.device, per_view, 0, 0, pool.write_data(pv));
+
+        VkCommandBuffer cmd = pool.allocate_command_buffer();
+
+        VkCommandBufferBeginInfo begin_info {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+        vkBeginCommandBuffer(cmd, &begin_info);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, list.contract.get_example_layout(), 0, {per_scene, per_view}, {});
 
         // Begin render pass
         const uint32_t index = win.begin();

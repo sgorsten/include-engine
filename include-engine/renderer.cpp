@@ -12,10 +12,12 @@ VkPipelineVertexInputStateCreateInfo vertex_format::get_vertex_input_state() con
 }
 
 scene_contract::scene_contract(context & ctx, VkRenderPass render_pass, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings) : 
-    ctx{ctx}, render_pass{render_pass}, per_scene_layout{ctx.create_descriptor_set_layout(per_scene_bindings)}, per_view_layout{ctx.create_descriptor_set_layout(per_view_bindings)} {}
+    ctx{ctx}, render_pass{render_pass}, per_scene_layout{ctx.create_descriptor_set_layout(per_scene_bindings)}, per_view_layout{ctx.create_descriptor_set_layout(per_view_bindings)},
+    example_layout{ctx.create_pipeline_layout({per_scene_layout, per_view_layout})} {}
 
 scene_contract::~scene_contract()
 {
+    vkDestroyPipelineLayout(ctx.device, example_layout, nullptr);
     vkDestroyDescriptorSetLayout(ctx.device, per_view_layout, nullptr);
     vkDestroyDescriptorSetLayout(ctx.device, per_scene_layout, nullptr);
 }
@@ -54,18 +56,28 @@ scene_pipeline::~scene_pipeline()
     vkDestroyPipeline(layout->get_device(), pipeline, nullptr);
 }
 
-descriptor_set draw_list::draw(const scene_pipeline & pipeline, const gfx_mesh & mesh, std::vector<size_t> mtls)
+void scene_descriptor_set::write_uniform_buffer(uint32_t binding, uint32_t array_element, VkDescriptorBufferInfo info)
 {
-    descriptor_set set = pool.allocate_descriptor_set(pipeline.get_per_object_descriptor_set_layout());
-    items.push_back({&pipeline, set, &mesh, mtls});
-    return set;
+    vkWriteDescriptorBufferInfo(layout->get_device(), set, binding, array_element, info);
 }
 
-descriptor_set draw_list::draw(const scene_pipeline & pipeline, const gfx_mesh & mesh)
+void scene_descriptor_set::write_combined_image_sampler(uint32_t binding, uint32_t array_element, VkSampler sampler, VkImageView image_view, VkImageLayout image_layout)
+{
+    vkWriteDescriptorCombinedImageSamplerInfo(layout->get_device(), set, binding, array_element, {sampler, image_view, image_layout});
+}
+
+void draw_list::draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls)
+{
+    if(&pipeline.get_contract() != &contract) fail_fast();
+    if(&pipeline.get_layout() != &descriptors.get_pipeline_layout()) fail_fast();
+    items.push_back({&pipeline, descriptors.get_descriptor_set(), &mesh, mtls});
+}
+
+void draw_list::draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh)
 {
     std::vector<size_t> mtls;
     for(size_t i=0; i<mesh.m.materials.size(); ++i) mtls.push_back(i);
-    return draw(pipeline, mesh, mtls);
+    return draw(pipeline, descriptors, mesh, mtls);
 }
 
 void draw_list::write_commands(VkCommandBuffer cmd) const
