@@ -151,7 +151,7 @@ int main() try
 
     // Create framebuffers
     std::vector<VkFramebuffer> swapchain_framebuffers;
-    for(auto & view : win.get_swapchain_image_views()) swapchain_framebuffers.push_back(ctx.create_framebuffer(render_pass, {view, depth}, win.get_dims()));
+    for(auto & view : win.get_swapchain_image_views()) swapchain_framebuffers.push_back(ctx.create_framebuffer(render_pass, {view, depth.get_image_view()}, win.get_dims()));
 
     // Set up our transient resource pools
     const VkDescriptorPoolSize pool_sizes[]

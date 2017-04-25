@@ -349,7 +349,7 @@ window::window(context & ctx, uint2 dims, const char * title) : ctx{ctx}, dims{d
     swapchain_info.imageColorSpace = ctx.selection.surface_format.colorSpace;
     swapchain_info.imageExtent = swap_extent;
     swapchain_info.imageArrayLayers = 1;
-    swapchain_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    swapchain_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     swapchain_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     swapchain_info.preTransform = ctx.selection.surface_transform;
     swapchain_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;

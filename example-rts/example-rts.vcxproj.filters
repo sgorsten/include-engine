@@ -18,6 +18,15 @@
     <None Include="assets\glow.frag">
       <Filter>shaders</Filter>
     </None>
+    <None Include="assets\image.vert">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="assets\hgauss.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="assets\vgauss.frag">
+      <Filter>shaders</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="example-rts.cpp" />

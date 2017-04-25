@@ -155,10 +155,13 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <None Include="assets\hgauss.frag" />
     <None Include="assets\glow.frag" />
+    <None Include="assets\image.vert" />
     <None Include="assets\scene.glsl" />
     <None Include="assets\shader.frag" />
     <None Include="assets\static.vert" />
+    <None Include="assets\vgauss.frag" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="example-rts.cpp" />

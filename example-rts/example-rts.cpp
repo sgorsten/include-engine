@@ -60,6 +60,7 @@ int main() try
     init_game(rng, units);
 
     context ctx;
+    gfx_mesh quad_mesh {ctx, generate_fullscreen_quad()};
     gfx_mesh terrain_mesh {ctx, generate_box_mesh({0,0,-1}, {64,64,0})};
     gfx_mesh unit0_mesh {ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game_coords, "assets/f44a.obj"))};
     gfx_mesh unit1_mesh {ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game_coords, "assets/cf105.obj"))};
@@ -70,23 +71,40 @@ int main() try
     texture_2d bullet_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({255,255,255,255})};
 
     // Create our sampler
-    VkSamplerCreateInfo sampler_info = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    VkSamplerCreateInfo sampler_info {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sampler_info.magFilter = VK_FILTER_LINEAR;
     sampler_info.minFilter = VK_FILTER_LINEAR;
     sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     sampler_info.maxLod = 11;
     sampler_info.minLod = 0;
-    VkSampler sampler;
+    VkSamplerCreateInfo image_sampler_info {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    image_sampler_info.magFilter = VK_FILTER_LINEAR;
+    image_sampler_info.minFilter = VK_FILTER_LINEAR;
+    image_sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    image_sampler_info.maxLod = 0;
+    image_sampler_info.minLod = 0;
+    image_sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    image_sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    VkSampler sampler, image_sampler;
     check(vkCreateSampler(ctx.device, &sampler_info, nullptr, &sampler));
+    check(vkCreateSampler(ctx.device, &image_sampler_info, nullptr, &image_sampler));
 
     // Set up scene contract
-    auto render_pass = ctx.create_render_pass(
-        {make_attachment_description(ctx.selection.surface_format.format, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)},
+    auto fb_render_pass = ctx.create_render_pass(
+        {make_attachment_description(ctx.selection.surface_format.format, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)},
         make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED)
+    );
+    auto post_render_pass = ctx.create_render_pass(
+        {make_attachment_description(ctx.selection.surface_format.format, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)},
+        std::nullopt
+    );
+    auto final_render_pass = ctx.create_render_pass(
+        {make_attachment_description(ctx.selection.surface_format.format, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)},
+        std::nullopt
     );
 
     renderer r {ctx};
-    auto contract = r.create_contract(render_pass, {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, 
+    auto contract = r.create_contract(fb_render_pass, {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, 
         {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}});
     auto layout = r.create_pipeline_layout(contract, {
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT},    
@@ -100,6 +118,9 @@ int main() try
     auto vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/static.vert");
     auto frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/shader.frag");
     auto glow_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/glow.frag");
+    auto image_vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/image.vert");
+    auto hgauss_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/hgauss.frag");
+    auto vgauss_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/vgauss.frag");
 
     auto mesh_vertex_format = r.create_vertex_format({{0, sizeof(mesh::vertex), VK_VERTEX_INPUT_RATE_VERTEX}}, {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, position)}, 
@@ -114,15 +135,22 @@ int main() try
     auto pipeline = r.create_pipeline(layout, mesh_vertex_format, {vert_shader, frag_shader}, true, true);
     auto glow_pipeline = r.create_pipeline(layout, mesh_vertex_format, {vert_shader, glow_shader}, true, true);
 
+    auto gauss_desc_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}});
+    auto gauss_pipe_layout = ctx.create_pipeline_layout({gauss_desc_layout});
+    auto hgauss_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), hgauss_frag_shader->get_shader_stage()}, false, false);
+    auto vgauss_pipe = make_pipeline(ctx.device, final_render_pass, gauss_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), vgauss_frag_shader->get_shader_stage()}, false, false);
+
     // Set up a window with swapchain framebuffers
     window win {ctx, {1280, 720}, "Example RTS"};
-    render_target color {ctx, win.get_dims(), VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
+    render_target color {ctx, win.get_dims(), VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
+    render_target color2 {ctx, win.get_dims(), VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
     auto depth = make_depth_buffer(ctx, win.get_dims());
 
     // Create framebuffers
-    VkFramebuffer main_framebuffer = ctx.create_framebuffer(render_pass, {color.get_image_view(), depth.get_image_view()}, win.get_dims());
+    VkFramebuffer main_framebuffer = ctx.create_framebuffer(fb_render_pass, {color.get_image_view(), depth.get_image_view()}, win.get_dims());
+    VkFramebuffer aux_framebuffer = ctx.create_framebuffer(post_render_pass, {color2.get_image_view()}, win.get_dims());
     std::vector<VkFramebuffer> swapchain_framebuffers;
-    for(auto & view : win.get_swapchain_image_views()) swapchain_framebuffers.push_back(ctx.create_framebuffer(render_pass, {view, depth.get_image_view()}, win.get_dims()));
+    for(auto & view : win.get_swapchain_image_views()) swapchain_framebuffers.push_back(ctx.create_framebuffer(final_render_pass, {view}, win.get_dims()));
 
     // Set up our transient resource pools
     const VkDescriptorPoolSize pool_sizes[]
@@ -234,7 +262,7 @@ int main() try
         VkClearValue clear_values[] {{0, 0, 0, 1}, {1.0f, 0}};
         const uint2 dims = win.get_dims();
         VkRenderPassBeginInfo pass_begin_info {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-        pass_begin_info.renderPass = render_pass;
+        pass_begin_info.renderPass = fb_render_pass;
         pass_begin_info.framebuffer = main_framebuffer; //swapchain_framebuffers[index];
         pass_begin_info.renderArea.offset = {0, 0};
         pass_begin_info.renderArea.extent = {dims.x, dims.y};
@@ -252,26 +280,40 @@ int main() try
 
         vkCmdEndRenderPass(cmd); 
 
-        //pass_begin_info.framebuffer = swapchain_framebuffers[index];
-        //vkCmdBeginRenderPass(cmd, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
-        //vkCmdSetViewport(cmd, 0, 1, &viewport);
-        //vkCmdSetScissor(cmd, 0, 1, &scissor);
+        pass_begin_info.renderPass = post_render_pass;
+        pass_begin_info.framebuffer = aux_framebuffer;
+        pass_begin_info.clearValueCount = 0;
+        vkCmdBeginRenderPass(cmd, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        VkImageBlit region {};
-        region.srcOffsets[0] = {0,0,0};
-        region.srcOffsets[1] = {(int)dims.x,(int)dims.y,1};
-        region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        region.srcSubresource.layerCount = 1;
-        region.dstOffsets[0] = {0,0,0};
-        region.dstOffsets[1] = {(int)dims.x,(int)dims.y,1};
-        region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        region.dstSubresource.layerCount = 1;
+        auto post_descriptors = pool.allocate_descriptor_set(gauss_desc_layout);
+        vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, post_descriptors, 0, 0, {image_sampler, color.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
 
-        transition_layout(cmd, win.get_swapchain_images()[index], 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        vkCmdBlitImage(cmd, color.get_image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, win.get_swapchain_images()[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_NEAREST);
-        transition_layout(cmd, win.get_swapchain_images()[index], 0, 0, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, hgauss_pipe);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gauss_pipe_layout, 0, {post_descriptors}, {});
+        vkCmdBindVertexBuffers(cmd, 0, {*quad_mesh.vertex_buffer}, {0});
+        vkCmdBindIndexBuffer(cmd, *quad_mesh.index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, quad_mesh.index_count, 1, 0, 0, 0);
 
-        //vkCmdEndRenderPass(cmd); 
+        vkCmdEndRenderPass(cmd); 
+        
+        pass_begin_info.renderPass = final_render_pass;
+        pass_begin_info.framebuffer = swapchain_framebuffers[index];
+        vkCmdBeginRenderPass(cmd, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+        auto post_descriptors_2 = pool.allocate_descriptor_set(gauss_desc_layout);
+        vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, post_descriptors_2, 0, 0, {image_sampler, color2.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vgauss_pipe);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gauss_pipe_layout, 0, {post_descriptors_2}, {});
+        vkCmdBindVertexBuffers(cmd, 0, {*quad_mesh.vertex_buffer}, {0});
+        vkCmdBindIndexBuffer(cmd, *quad_mesh.index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, quad_mesh.index_count, 1, 0, 0, 0);
+
+        vkCmdEndRenderPass(cmd); 
 
         check(vkEndCommandBuffer(cmd)); 
 
@@ -283,7 +325,8 @@ int main() try
     vkDeviceWaitIdle(ctx.device);
     vkDestroySampler(ctx.device, sampler, nullptr);
     for(auto framebuffer : swapchain_framebuffers) vkDestroyFramebuffer(ctx.device, framebuffer, nullptr);
-    vkDestroyRenderPass(ctx.device, render_pass, nullptr);    
+    vkDestroyRenderPass(ctx.device, fb_render_pass, nullptr);    
+    vkDestroyRenderPass(ctx.device, post_render_pass, nullptr);    
     return EXIT_SUCCESS;
 }
 catch(const std::exception & e)
