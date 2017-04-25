@@ -50,6 +50,29 @@ struct fps_camera
     float4x4 get_view_matrix(const coord_system & c) const { return pose_matrix(inverse(get_pose(c))); }
 };
 
+void draw_fullscreen_pass(VkCommandBuffer cmd, const uint2 & dims, VkRenderPass render_pass, VkFramebuffer framebuffer, VkPipeline pipeline, VkPipelineLayout pipeline_layout, VkDescriptorSet descriptors, const gfx_mesh & fullscreen_quad)
+{
+    VkRenderPassBeginInfo pass_begin_info {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    pass_begin_info.renderPass = render_pass;
+    pass_begin_info.framebuffer = framebuffer;
+    pass_begin_info.renderArea.extent = {dims.x, dims.y};
+    vkCmdBeginRenderPass(cmd, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+
+    const VkViewport viewport {0, 0, static_cast<float>(dims.x), static_cast<float>(dims.y), 0.0f, 1.0f};
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+    const VkRect2D scissor {0, 0, dims.x, dims.y};
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, {descriptors}, {});
+    vkCmdBindVertexBuffers(cmd, 0, {*fullscreen_quad.vertex_buffer}, {0});
+    vkCmdBindIndexBuffer(cmd, *fullscreen_quad.index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
+    vkCmdDrawIndexed(cmd, fullscreen_quad.index_count, 1, 0, 0, 0);
+
+    vkCmdEndRenderPass(cmd); 
+}
+
 int main() try
 {
     constexpr coord_system vk_coords {coord_axis::right, coord_axis::down, coord_axis::forward};
@@ -64,7 +87,7 @@ int main() try
     gfx_mesh terrain_mesh {ctx, generate_box_mesh({0,0,-1}, {64,64,0})};
     gfx_mesh unit0_mesh {ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game_coords, "assets/f44a.obj"))};
     gfx_mesh unit1_mesh {ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game_coords, "assets/cf105.obj"))};
-    gfx_mesh bullet_mesh {ctx, generate_box_mesh({-0.05f,-0.1f,-0.05f},{+0.05f,+0.1f,0.05f})};
+    gfx_mesh bullet_mesh {ctx, apply_vertex_color(generate_box_mesh({-0.05f,-0.1f,-0.05f},{+0.05f,+0.1f,0.05f}), {2,2,2})};
     texture_2d terrain_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({127,85,60,255})};
     texture_2d unit0_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/f44a.jpg")};
     texture_2d unit1_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/cf105.jpg")};
@@ -91,11 +114,11 @@ int main() try
 
     // Set up scene contract
     auto fb_render_pass = ctx.create_render_pass(
-        {make_attachment_description(ctx.selection.surface_format.format, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)},
+        {make_attachment_description(VK_FORMAT_R16G16B16A16_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)},
         make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED)
     );
     auto post_render_pass = ctx.create_render_pass(
-        {make_attachment_description(ctx.selection.surface_format.format, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)},
+        {make_attachment_description(VK_FORMAT_R16G16B16A16_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)},
         std::nullopt
     );
     auto final_render_pass = ctx.create_render_pass(
@@ -119,8 +142,10 @@ int main() try
     auto frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/shader.frag");
     auto glow_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/glow.frag");
     auto image_vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/image.vert");
+    auto hipass_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/hipass.frag");
     auto hgauss_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/hgauss.frag");
     auto vgauss_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/vgauss.frag");
+    auto add_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/add.frag");
 
     auto mesh_vertex_format = r.create_vertex_format({{0, sizeof(mesh::vertex), VK_VERTEX_INPUT_RATE_VERTEX}}, {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, position)}, 
@@ -137,18 +162,27 @@ int main() try
 
     auto gauss_desc_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}});
     auto gauss_pipe_layout = ctx.create_pipeline_layout({gauss_desc_layout});
+    auto add_desc_layout = ctx.create_descriptor_set_layout({
+        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
+    });
+    auto add_pipe_layout = ctx.create_pipeline_layout({add_desc_layout});
+    auto hipass_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), hipass_frag_shader->get_shader_stage()}, false, false);
     auto hgauss_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), hgauss_frag_shader->get_shader_stage()}, false, false);
-    auto vgauss_pipe = make_pipeline(ctx.device, final_render_pass, gauss_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), vgauss_frag_shader->get_shader_stage()}, false, false);
+    auto vgauss_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), vgauss_frag_shader->get_shader_stage()}, false, false);
+    auto add_pipe = make_pipeline(ctx.device, final_render_pass, add_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), add_frag_shader->get_shader_stage()}, false, false);
 
     // Set up a window with swapchain framebuffers
     window win {ctx, {1280, 720}, "Example RTS"};
-    render_target color {ctx, win.get_dims(), VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
-    render_target color2 {ctx, win.get_dims(), VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
+    render_target color {ctx, win.get_dims(), VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
+    render_target color1 {ctx, win.get_dims(), VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
+    render_target color2 {ctx, win.get_dims(), VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
     auto depth = make_depth_buffer(ctx, win.get_dims());
 
     // Create framebuffers
     VkFramebuffer main_framebuffer = ctx.create_framebuffer(fb_render_pass, {color.get_image_view(), depth.get_image_view()}, win.get_dims());
-    VkFramebuffer aux_framebuffer = ctx.create_framebuffer(post_render_pass, {color2.get_image_view()}, win.get_dims());
+    VkFramebuffer aux_framebuffer1 = ctx.create_framebuffer(post_render_pass, {color1.get_image_view()}, win.get_dims());
+    VkFramebuffer aux_framebuffer2 = ctx.create_framebuffer(post_render_pass, {color2.get_image_view()}, win.get_dims());
     std::vector<VkFramebuffer> swapchain_framebuffers;
     for(auto & view : win.get_swapchain_image_views()) swapchain_framebuffers.push_back(ctx.create_framebuffer(final_render_pass, {view}, win.get_dims()));
 
@@ -280,41 +314,23 @@ int main() try
 
         vkCmdEndRenderPass(cmd); 
 
-        pass_begin_info.renderPass = post_render_pass;
-        pass_begin_info.framebuffer = aux_framebuffer;
-        pass_begin_info.clearValueCount = 0;
-        vkCmdBeginRenderPass(cmd, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
+        auto hipass_descriptors = pool.allocate_descriptor_set(gauss_desc_layout);
+        vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, hipass_descriptors, 0, 0, {image_sampler, color.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        draw_fullscreen_pass(cmd, dims, post_render_pass, aux_framebuffer1, hipass_pipe, gauss_pipe_layout, hipass_descriptors, quad_mesh);
 
-        auto post_descriptors = pool.allocate_descriptor_set(gauss_desc_layout);
-        vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, post_descriptors, 0, 0, {image_sampler, color.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        auto hgauss_descriptors = pool.allocate_descriptor_set(gauss_desc_layout);
+        vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, hgauss_descriptors, 0, 0, {image_sampler, color1.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        draw_fullscreen_pass(cmd, dims, post_render_pass, aux_framebuffer2, hgauss_pipe, gauss_pipe_layout, hgauss_descriptors, quad_mesh);
 
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, hgauss_pipe);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gauss_pipe_layout, 0, {post_descriptors}, {});
-        vkCmdBindVertexBuffers(cmd, 0, {*quad_mesh.vertex_buffer}, {0});
-        vkCmdBindIndexBuffer(cmd, *quad_mesh.index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd, quad_mesh.index_count, 1, 0, 0, 0);
+        auto vgauss_descriptors = pool.allocate_descriptor_set(gauss_desc_layout);
+        vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, vgauss_descriptors, 0, 0, {image_sampler, color2.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        draw_fullscreen_pass(cmd, dims, post_render_pass, aux_framebuffer1, vgauss_pipe, gauss_pipe_layout, vgauss_descriptors, quad_mesh);
 
-        vkCmdEndRenderPass(cmd); 
+        auto add_descriptors = pool.allocate_descriptor_set(add_desc_layout);
+        vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, add_descriptors, 0, 0, {image_sampler, color.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, add_descriptors, 1, 0, {image_sampler, color1.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        draw_fullscreen_pass(cmd, dims, final_render_pass, swapchain_framebuffers[index], add_pipe, add_pipe_layout, add_descriptors, quad_mesh);
         
-        pass_begin_info.renderPass = final_render_pass;
-        pass_begin_info.framebuffer = swapchain_framebuffers[index];
-        vkCmdBeginRenderPass(cmd, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-        auto post_descriptors_2 = pool.allocate_descriptor_set(gauss_desc_layout);
-        vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, post_descriptors_2, 0, 0, {image_sampler, color2.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vgauss_pipe);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gauss_pipe_layout, 0, {post_descriptors_2}, {});
-        vkCmdBindVertexBuffers(cmd, 0, {*quad_mesh.vertex_buffer}, {0});
-        vkCmdBindIndexBuffer(cmd, *quad_mesh.index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd, quad_mesh.index_count, 1, 0, 0, 0);
-
-        vkCmdEndRenderPass(cmd); 
-
         check(vkEndCommandBuffer(cmd)); 
 
         win.end(index, {cmd}, pool.get_fence());

@@ -27,6 +27,12 @@
     <None Include="assets\vgauss.frag">
       <Filter>shaders</Filter>
     </None>
+    <None Include="assets\hipass.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="assets\add.frag">
+      <Filter>shaders</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="example-rts.cpp" />
