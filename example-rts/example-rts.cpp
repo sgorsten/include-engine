@@ -1,6 +1,7 @@
 #include "renderer.h"
 #include "load.h"
 #include "fbx.h"
+#include "rts-game.h"
 #include <fstream>
 #include <iostream>
 #include <chrono>
@@ -22,6 +23,7 @@ struct per_view_uniforms
 struct per_static_object
 {
     alignas(16) float4x4 model_matrix;
+    alignas(16) float4x4 color_matrix;
 };
 
 VkAttachmentDescription make_attachment_description(VkFormat format, VkSampleCountFlagBits samples, VkAttachmentLoadOp load_op, VkImageLayout initial_layout=VK_IMAGE_LAYOUT_UNDEFINED, VkAttachmentStoreOp store_op=VK_ATTACHMENT_STORE_OP_DONT_CARE, VkImageLayout final_layout=VK_IMAGE_LAYOUT_UNDEFINED)
@@ -39,58 +41,21 @@ struct fps_camera
     float4 get_orientation(const coord_system & c) const { return qmul(rotation_quat(c.get_up(), yaw), rotation_quat(c.get_right(), pitch)); }
     float_pose get_pose(const coord_system & c) const { return {get_orientation(c), position}; }
     float4x4 get_view_matrix(const coord_system & c) const { return pose_matrix(inverse(get_pose(c))); }
-
-    float3 get_axis(const coord_system & c, coord_axis axis) const { return qrot(get_orientation(c), c.get_axis(axis)); }
-    float3 get_left(const coord_system & c) const { return get_axis(c, coord_axis::left); }
-    float3 get_right(const coord_system & c) const { return get_axis(c, coord_axis::right); }
-    float3 get_up(const coord_system & c) const { return get_axis(c, coord_axis::up); }
-    float3 get_down(const coord_system & c) const { return get_axis(c, coord_axis::down); }
-    float3 get_forward(const coord_system & c) const { return get_axis(c, coord_axis::forward); }
-    float3 get_back(const coord_system & c) const { return get_axis(c, coord_axis::back); }
-};
-
-#include <random>
-
-constexpr coord_system game_coords {coord_axis::east, coord_axis::north, coord_axis::up};
-
-struct unit
-{
-    float2 position;
-    float2 target;
-
-    float3 get_position() const { return {position,0}; }
-    float3 get_direction() const { return {normalize(target-position),0}; }
-    float4 get_orientation() const { return rotation_quat(game_coords.get_axis(coord_axis::north), get_direction()); }
-    float_pose get_pose() const { return {get_orientation(), get_position()}; }
-    float4x4 get_model_matrix() const { return pose_matrix(get_pose()); }
-};
-
-struct bullet
-{
-    float2 position;
-    float2 target;
-
-    float3 get_position() const { return {position,0}; }
-    float3 get_direction() const { return {normalize(target-position),0}; }
-    float4 get_orientation() const { return rotation_quat(game_coords.get_axis(coord_axis::north), get_direction()); }
-    float_pose get_pose() const { return {get_orientation(), get_position()}; }
-    float4x4 get_model_matrix() const { return pose_matrix(get_pose()); }
 };
 
 int main() try
 {
     constexpr coord_system vk_coords {coord_axis::right, coord_axis::down, coord_axis::forward};
 
-    std::mt19937 rng; 
-    std::uniform_real_distribution<float> dist{0, 64};
+    std::mt19937 rng;
     std::vector<unit> units;
     std::vector<bullet> bullets;
-    for(size_t i=0; i<32; ++i) units.push_back({{dist(rng), dist(rng)}, {dist(rng), dist(rng)}});
+    init_game(rng, units);
 
     context ctx;
     gfx_mesh terrain_mesh {ctx, generate_box_mesh({0,0,-1}, {64,64,0})};
     gfx_mesh unit_mesh {ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game_coords, "assets/f44a.obj"))};
-    gfx_mesh bullet_mesh {ctx, generate_box_mesh({-0.1f,-0.5f,0.1f},{+0.1f,+0.5f,0.3f})};
+    gfx_mesh bullet_mesh {ctx, generate_box_mesh({-0.05f,-0.1f,0.15f},{+0.05f,+0.1f,0.25f})};
     texture_2d terrain_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({127,85,25,255})};
     texture_2d unit_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/f44a.jpg")};
     texture_2d bullet_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({255,255,255,255})};
@@ -115,13 +80,17 @@ int main() try
     auto contract = r.create_contract(render_pass, {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, 
         {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}});
     auto layout = r.create_pipeline_layout(contract, {
-        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},    
-        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT},    
+        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
+    });
+    auto glow_layout = r.create_pipeline_layout(contract, {
+        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT}
     });
     
     // Set up our shader pipeline
     auto vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/static.vert");
     auto frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/shader.frag");
+    auto glow_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/glow.frag");
 
     auto mesh_vertex_format = r.create_vertex_format({{0, sizeof(mesh::vertex), VK_VERTEX_INPUT_RATE_VERTEX}}, {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(mesh::vertex, position)}, 
@@ -134,6 +103,7 @@ int main() try
         {7, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(mesh::vertex, bone_weights)}
     });
     auto pipeline = r.create_pipeline(layout, mesh_vertex_format, {vert_shader, frag_shader}, true, true);
+    auto glow_pipeline = r.create_pipeline(layout, mesh_vertex_format, {vert_shader, glow_shader}, true, true);
 
     // Set up a window with swapchain framebuffers
     window win {ctx, {1280, 720}, "Example RTS"};
@@ -186,50 +156,11 @@ int main() try
 
         // Handle WASD
         if(win.get_key(GLFW_KEY_W)) camera.position += game_coords.get_axis(coord_axis::north) * (timestep * 50);
-        if(win.get_key(GLFW_KEY_A)) camera.position += game_coords.get_axis(coord_axis::west) * (timestep * 50);
+        if(win.get_key(GLFW_KEY_A)) camera.position += game_coords.get_axis(coord_axis::west ) * (timestep * 50);
         if(win.get_key(GLFW_KEY_S)) camera.position += game_coords.get_axis(coord_axis::south) * (timestep * 50);
-        if(win.get_key(GLFW_KEY_D)) camera.position += game_coords.get_axis(coord_axis::east) * (timestep * 50);
+        if(win.get_key(GLFW_KEY_D)) camera.position += game_coords.get_axis(coord_axis::east ) * (timestep * 50);
         
-        // Update game logic
-        for(auto & u : units)
-        {
-            float max_step = timestep * 2.0f;
-            const auto delta = u.target - u.position;
-            const auto delta_len = length(delta);
-            if(delta_len < max_step) 
-            {
-                u.position = u.target;
-                u.target = {dist(rng), dist(rng)};
-
-                float best_dist = std::numeric_limits<float>::infinity();
-                const unit * other {};
-                for(auto & v : units)
-                {
-                    if(&u == &v) continue;
-                    float dist = distance2(u.position, v.position);
-                    if(dist < best_dist)
-                    {
-                        best_dist = dist;
-                        other = &v;
-                    }
-                }
-                if(other) bullets.push_back({u.position, other->position});
-            }
-            else u.position += delta*(max_step/delta_len);
-        }
-        for(auto it=begin(bullets); it!=end(bullets); )
-        {
-            float max_step = timestep * 10.0f;
-            auto & b = *it;
-            const auto delta = b.target - b.position;
-            const auto delta_len = length(delta);
-            if(delta_len < max_step) it = bullets.erase(it);
-            else 
-            {
-                b.position += delta*(max_step/delta_len);
-                ++it;
-            }
-        }
+        advance_game(rng, units, bullets, timestep);
 
         // Determine matrices
         const auto proj_matrix = mul(linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one), make_transform_4x4(game_coords, vk_coords));        
@@ -242,25 +173,30 @@ int main() try
         // Generate a draw list for the scene
         draw_list list {pool, *contract};
         {
+            const float4x4 team_color_matrices[2]
+            {
+                rotation_matrix(rotation_quat(normalize(float3{1,1,1}), 0.00f)),
+                rotation_matrix(rotation_quat(normalize(float3{1,1,1}), 3.14f))
+            };
+
             scene_descriptor_set terrain_descriptors {pool, *pipeline};
-            terrain_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{translation_matrix(float3{0,0,0})}));
+            terrain_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{translation_matrix(float3{0,0,0}), team_color_matrices[0]}));
             terrain_descriptors.write_combined_image_sampler(1, 0, sampler, terrain_tex);
             list.draw(*pipeline, terrain_descriptors, terrain_mesh);
-            
+
             for(auto & u : units)
             {
                 scene_descriptor_set unit_descriptors {pool, *pipeline};
-                unit_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{u.get_model_matrix()}));
+                unit_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{u.get_model_matrix(), team_color_matrices[u.owner]}));
                 unit_descriptors.write_combined_image_sampler(1, 0, sampler, unit_tex);
                 list.draw(*pipeline, unit_descriptors, unit_mesh);
             }
 
             for(auto & b : bullets)
             {
-                scene_descriptor_set bullet_descriptors {pool, *pipeline};
-                bullet_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{b.get_model_matrix()}));
-                bullet_descriptors.write_combined_image_sampler(1, 0, sampler, bullet_tex);
-                list.draw(*pipeline, bullet_descriptors, bullet_mesh);
+                scene_descriptor_set bullet_descriptors {pool, *glow_pipeline};
+                bullet_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{b.get_model_matrix(), team_color_matrices[0]}));
+                list.draw(*glow_pipeline, bullet_descriptors, bullet_mesh);
             }
         }
 
@@ -268,7 +204,7 @@ int main() try
         per_scene_uniforms ps;
         ps.ambient_light = {0.01f,0.01f,0.01f};
         ps.light_direction = normalize(float3{1,-2,5});
-        ps.light_color = {0.8f,0.7f,0.5f};
+        ps.light_color = {0.9f,0.9f,0.9f};
 
         per_view_uniforms pv;
         pv.view_proj_matrix = mul(proj_matrix, camera.get_view_matrix(game_coords));

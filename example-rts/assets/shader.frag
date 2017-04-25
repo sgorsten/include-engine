@@ -3,6 +3,11 @@
 #extension GL_GOOGLE_include_directive : enable
 #include "scene.glsl"
 
+layout(set=2, binding=0) uniform PerObject
+{
+	mat4 u_model_matrix;
+	mat4 u_color_matrix;
+};
 layout(set=2, binding=1) uniform sampler2D u_albedo;
 
 layout(location = 0) in vec3 position;
@@ -17,7 +22,7 @@ layout(location = 0) out vec4 f_color;
 void main() 
 {
 	vec3 eye_vec = normalize(u_eye_position - position);
-	vec3 albedo = texture(u_albedo, texcoord).rgb * color;
+	vec3 albedo = (u_color_matrix * (texture(u_albedo, texcoord) * vec4(color,1))).rgb;
 	vec3 normal_vec = normalize(normal);
 
 	vec3 light = u_ambient_light;

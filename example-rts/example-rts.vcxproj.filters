@@ -15,8 +15,15 @@
     <None Include="assets\static.vert">
       <Filter>shaders</Filter>
     </None>
+    <None Include="assets\glow.frag">
+      <Filter>shaders</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="example-rts.cpp" />
+    <ClCompile Include="rts-game.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="rts-game.h" />
   </ItemGroup>
 </Project>

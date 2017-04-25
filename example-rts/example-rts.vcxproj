@@ -155,12 +155,14 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <None Include="assets\glow.frag" />
     <None Include="assets\scene.glsl" />
     <None Include="assets\shader.frag" />
     <None Include="assets\static.vert" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="example-rts.cpp" />
+    <ClCompile Include="rts-game.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\3rdparty\glfw\glfw.vcxproj">
@@ -169,6 +171,9 @@
     <ProjectReference Include="..\include-engine\include-engine.vcxproj">
       <Project>{a1d32bc3-739e-4370-9598-e8bb33bfcb27}</Project>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="rts-game.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
