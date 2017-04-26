@@ -96,7 +96,7 @@ int main() try
     // Create our meshes
     gfx_mesh helmet_mesh {ctx, load_meshes_from_fbx(game_coords, "assets/helmet-mesh.fbx")[0]};
     gfx_mesh mutant_mesh {ctx, load_meshes_from_fbx(game_coords, "assets/mutant-mesh.fbx")[0]};
-    gfx_mesh skybox_mesh {ctx, generate_box_mesh({-10,-10,-10}, {10,10,10})};
+    gfx_mesh skybox_mesh {ctx, invert_faces(generate_box_mesh({-10,-10,-10}, {10,10,10}))};
     gfx_mesh box_mesh {ctx, load_meshes_from_fbx(game_coords, "assets/cube-mesh.fbx")[0]};
     gfx_mesh sands_mesh {ctx, load_mesh_from_obj(game_coords, "assets/sands location.obj")};
 
@@ -140,10 +140,10 @@ int main() try
         {7, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(mesh::vertex, bone_weights)}
     });
 
-    auto helmet_pipeline  = r.create_pipeline(metallic_layout, mesh_vertex_format, {static_vert_shader, metal_shader}, true, true);
-    auto static_pipeline  = r.create_pipeline(metallic_layout, mesh_vertex_format, {static_vert_shader, frag_shader}, true, true);
-    auto skinned_pipeline = r.create_pipeline(metallic_layout, mesh_vertex_format, {skinned_vert_shader, frag_shader}, true, true);
-    auto skybox_pipeline  = r.create_pipeline(skybox_layout,   mesh_vertex_format, {skybox_vert_shader, skybox_frag_shader}, false, false);
+    auto helmet_pipeline  = r.create_pipeline(metallic_layout, mesh_vertex_format, {static_vert_shader, metal_shader}, true, true, false);
+    auto static_pipeline  = r.create_pipeline(metallic_layout, mesh_vertex_format, {static_vert_shader, frag_shader}, true, true, false);
+    auto skinned_pipeline = r.create_pipeline(metallic_layout, mesh_vertex_format, {skinned_vert_shader, frag_shader}, true, true, false);
+    auto skybox_pipeline  = r.create_pipeline(skybox_layout,   mesh_vertex_format, {skybox_vert_shader, skybox_frag_shader}, false, false, false);
 
     // Set up a window with swapchain framebuffers
     window win {ctx, {1280, 720}, "Example Game"};

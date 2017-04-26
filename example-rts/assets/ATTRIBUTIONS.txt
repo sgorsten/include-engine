@@ -2,4 +2,12 @@ The listed files are the original work of the following authors, graciously made
 
 f44a.obj, f44a.jpg
   F-44A Rapier by Hangar.b.productions is licensed under Creative Commons Attribution
-  https://sketchfab.com/hangar.b.productions
+  https://sketchfab.com/models/802caa376536497786a8c95344da884a#
+
+cf105.obj, cf105.jpg
+  CF-105 Scimitar by Hangar.b.productions is licensed under Creative Commons Attribution
+  https://sketchfab.com/models/1b5e955948f94a04b0353634a0affb1a
+
+particle.png
+  From NeHe OpenGL Tutorial 09, by Jeff Molofee
+  http://nehe.gamedev.net/tutorial/moving_bitmaps_in_3d_space/17001/

@@ -707,7 +707,8 @@ VkDescriptorBufferInfo dynamic_buffer::write(size_t size, const void * data)
 /////////////////////////////
 
 transient_resource_pool::transient_resource_pool(context & ctx, array_view<VkDescriptorPoolSize> descriptor_pool_sizes, uint32_t max_descriptor_sets)
-    : ctx{ctx}, uniform_buffer{ctx, 1024*1024, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT}
+    : ctx{ctx}, uniform_buffer{ctx, 1024*1024, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT}, 
+        vertex_buffer{ctx, 1024*1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT}
 {
     VkCommandPoolCreateInfo command_pool_info {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     command_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -814,7 +815,7 @@ void transition_layout(VkCommandBuffer command_buffer, VkImage image, uint32_t m
 }
 
 
-VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout layout, VkPipelineVertexInputStateCreateInfo vertex_input_state, array_view<VkPipelineShaderStageCreateInfo> stages, bool depth_write, bool depth_test)
+VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout layout, VkPipelineVertexInputStateCreateInfo vertex_input_state, array_view<VkPipelineShaderStageCreateInfo> stages, bool depth_write, bool depth_test, bool additive_blending)
 {
     VkPipelineInputAssemblyStateCreateInfo inputAssembly {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -833,8 +834,8 @@ VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLa
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_NONE; //VK_CULL_MODE_BACK_BIT;
-    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
     rasterizer.depthBiasConstantFactor = 0.0f; // Optional
     rasterizer.depthBiasClamp = 0.0f; // Optional
@@ -857,6 +858,12 @@ VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLa
     colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
     colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
     colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
+    if(additive_blending)
+    {
+        colorBlendAttachment.blendEnable = VK_TRUE;
+        colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    }
 
     VkPipelineColorBlendStateCreateInfo colorBlending {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
     colorBlending.logicOpEnable = VK_FALSE;

@@ -157,6 +157,7 @@ class transient_resource_pool
 {
     context & ctx;
     dynamic_buffer uniform_buffer;
+    dynamic_buffer vertex_buffer;
     VkCommandPool command_pool;
     std::vector<VkCommandBuffer> command_buffers;
     VkDescriptorPool descriptor_pool;
@@ -169,6 +170,7 @@ public:
     VkCommandBuffer allocate_command_buffer();
     VkDescriptorSet allocate_descriptor_set(VkDescriptorSetLayout layout);
     VkDescriptorBufferInfo write_data(size_t size, const void * data) { return uniform_buffer.write(size, data); }
+    VkDescriptorBufferInfo write_vertex_data(size_t size, const void * data) { return vertex_buffer.write(size, data); }
     VkFence get_fence() { return fence; }
 
     template<class T> VkDescriptorBufferInfo write_data(const T & data) { return write_data(sizeof(data), &data); }
@@ -178,7 +180,7 @@ public:
 void transition_layout(VkCommandBuffer command_buffer, VkImage image, uint32_t mip_level, uint32_t array_layer, VkImageLayout old_layout, VkImageLayout new_layout);
 
 VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout layout, VkPipelineVertexInputStateCreateInfo vertex_input_state, 
-    array_view<VkPipelineShaderStageCreateInfo> stages, bool depth_write, bool depth_test);
+    array_view<VkPipelineShaderStageCreateInfo> stages, bool depth_write, bool depth_test, bool additive_blending);
 
 // Convenience wrappers around Vulkan calls
 void vkUpdateDescriptorSets(VkDevice device, array_view<VkWriteDescriptorSet> descriptorWrites, array_view<VkCopyDescriptorSet> descriptorCopies);

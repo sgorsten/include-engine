@@ -25,4 +25,6 @@ layout(set=1, binding=0) uniform PerView
 {
 	mat4 u_view_proj_matrix;
 	vec3 u_eye_position;
+	vec3 u_eye_x_axis;
+	vec3 u_eye_y_axis;
 };

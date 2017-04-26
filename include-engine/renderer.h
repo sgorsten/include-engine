@@ -97,7 +97,7 @@ class scene_pipeline
     std::shared_ptr<scene_pipeline_layout> layout;
     VkPipeline pipeline;
 public:
-    scene_pipeline(std::shared_ptr<scene_pipeline_layout> layout, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test);
+    scene_pipeline(std::shared_ptr<scene_pipeline_layout> layout, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending);
     ~scene_pipeline();
 
     const scene_contract & get_contract() const { return layout->get_contract(); }
@@ -132,8 +132,13 @@ struct draw_item
 {
     const scene_pipeline * pipeline;
     VkDescriptorSet set;
-    const gfx_mesh * mesh;
-    std::vector<size_t> mtls;
+    uint32_t vertex_buffer_count;
+    VkBuffer vertex_buffers[4];
+    VkDeviceSize vertex_buffer_offsets[4];
+    VkBuffer index_buffer;
+    VkDeviceSize index_buffer_offset;
+    size_t first_index, index_count;
+    size_t instance_count;
 };
 struct draw_list
 {
@@ -143,6 +148,7 @@ struct draw_list
     
     draw_list(transient_resource_pool & pool, const scene_contract & contract) : pool{pool}, contract{contract} {}
 
+    void draw(draw_item item) { items.push_back(std::move(item)); }
     void draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls);
     void draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh);
     void write_commands(VkCommandBuffer cmd) const;
@@ -159,7 +165,7 @@ public:
     std::shared_ptr<vertex_format> create_vertex_format(array_view<VkVertexInputBindingDescription> bindings, array_view<VkVertexInputAttributeDescription> attributes);
     std::shared_ptr<scene_contract> create_contract(VkRenderPass render_pass, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings);
     std::shared_ptr<scene_pipeline_layout> create_pipeline_layout(std::shared_ptr<scene_contract> contract, array_view<VkDescriptorSetLayoutBinding> per_object_bindings);
-    std::shared_ptr<scene_pipeline> create_pipeline(std::shared_ptr<scene_pipeline_layout> layout, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test);
+    std::shared_ptr<scene_pipeline> create_pipeline(std::shared_ptr<scene_pipeline_layout> layout, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending);
 };
 
 #endif

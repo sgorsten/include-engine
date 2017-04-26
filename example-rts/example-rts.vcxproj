@@ -160,9 +160,11 @@
     <None Include="assets\glow.frag" />
     <None Include="assets\hipass.frag" />
     <None Include="assets\image.vert" />
+    <None Include="assets\particle.vert" />
     <None Include="assets\scene.glsl" />
     <None Include="assets\shader.frag" />
     <None Include="assets\static.vert" />
+    <None Include="assets\particle.frag" />
     <None Include="assets\vgauss.frag" />
   </ItemGroup>
   <ItemGroup>

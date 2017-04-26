@@ -43,12 +43,12 @@ shader::~shader()
     vkDestroyShaderModule(ctx.device, module, nullptr);
 }
 
-scene_pipeline::scene_pipeline(std::shared_ptr<scene_pipeline_layout> layout, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test) : 
+scene_pipeline::scene_pipeline(std::shared_ptr<scene_pipeline_layout> layout, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending) : 
     layout{layout}
 {
     std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
     for(auto & s : stages) shader_stages.push_back(s->get_shader_stage());
-    pipeline = make_pipeline(layout->get_device(), layout->get_render_pass(), layout->get_pipeline_layout(), format->get_vertex_input_state(), shader_stages, depth_write, depth_test); 
+    pipeline = make_pipeline(layout->get_device(), layout->get_render_pass(), layout->get_pipeline_layout(), format->get_vertex_input_state(), shader_stages, depth_write, depth_test, additive_blending); 
 }
     
 scene_pipeline::~scene_pipeline()
@@ -70,7 +70,20 @@ void draw_list::draw(const scene_pipeline & pipeline, const scene_descriptor_set
 {
     if(&pipeline.get_contract() != &contract) fail_fast();
     if(&pipeline.get_layout() != &descriptors.get_pipeline_layout()) fail_fast();
-    items.push_back({&pipeline, descriptors.get_descriptor_set(), &mesh, mtls});
+
+    draw_item item {&pipeline, descriptors.get_descriptor_set()};
+    item.vertex_buffer_count = 1;
+    item.vertex_buffers[0] = *mesh.vertex_buffer;
+    item.vertex_buffer_offsets[0] = 0;
+    item.index_buffer = *mesh.index_buffer;
+    item.index_buffer_offset = 0;
+    item.instance_count = 1;
+    for(auto mtl : mtls)
+    {
+        item.first_index = mesh.m.materials[mtl].first_triangle*3;
+        item.index_count = mesh.m.materials[mtl].num_triangles*3;
+        items.push_back(item);
+    }    
 }
 
 void draw_list::draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh)
@@ -86,9 +99,9 @@ void draw_list::write_commands(VkCommandBuffer cmd) const
     {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, item.pipeline->get_pipeline());
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, item.pipeline->get_pipeline_layout(), 2, {item.set}, {});
-        vkCmdBindVertexBuffers(cmd, 0, {*item.mesh->vertex_buffer}, {0});
-        vkCmdBindIndexBuffer(cmd, *item.mesh->index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
-        for(auto mtl : item.mtls) vkCmdDrawIndexed(cmd, item.mesh->m.materials[mtl].num_triangles*3, 1, item.mesh->m.materials[mtl].first_triangle*3, 0, 0);
+        vkCmdBindVertexBuffers(cmd, 0, item.vertex_buffer_count, item.vertex_buffers, item.vertex_buffer_offsets);
+        vkCmdBindIndexBuffer(cmd, item.index_buffer, item.index_buffer_offset, VkIndexType::VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, item.index_count, item.instance_count, item.first_index, 0, 0);
     }
 }
 
@@ -112,7 +125,7 @@ std::shared_ptr<scene_pipeline_layout> renderer::create_pipeline_layout(std::sha
     return std::make_shared<scene_pipeline_layout>(contract, per_object_bindings);
 }
 
-std::shared_ptr<scene_pipeline> renderer::create_pipeline(std::shared_ptr<scene_pipeline_layout> layout, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test)
+std::shared_ptr<scene_pipeline> renderer::create_pipeline(std::shared_ptr<scene_pipeline_layout> layout, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending)
 {
-    return std::make_shared<scene_pipeline>(layout, format, stages, depth_write, depth_test);
+    return std::make_shared<scene_pipeline>(layout, format, stages, depth_write, depth_test, additive_blending);
 }

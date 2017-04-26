@@ -26,6 +26,8 @@ struct per_view_uniforms
 {
 	alignas(16) float4x4 view_proj_matrix;
 	alignas(16) float3 eye_position;
+	alignas(16) float3 eye_x_axis;
+	alignas(16) float3 eye_y_axis;
 };
 
 struct per_static_object
@@ -73,25 +75,38 @@ void draw_fullscreen_pass(VkCommandBuffer cmd, const uint2 & dims, VkRenderPass 
     vkCmdEndRenderPass(cmd); 
 }
 
+struct particle_vertex
+{
+    float2 offset;
+    float2 texcoord;
+};
+
+struct particle_instance
+{
+    float3 position;
+    float3 color;
+};
+
 int main() try
 {
     constexpr coord_system vk_coords {coord_axis::right, coord_axis::down, coord_axis::forward};
 
     std::mt19937 rng;
-    std::vector<unit> units;
-    std::vector<bullet> bullets;
+    std::vector<game::unit> units;
+    std::vector<game::bullet> bullets;
     init_game(rng, units);
 
     context ctx;
     gfx_mesh quad_mesh {ctx, generate_fullscreen_quad()};
     gfx_mesh terrain_mesh {ctx, generate_box_mesh({0,0,-1}, {64,64,0})};
-    gfx_mesh unit0_mesh {ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game_coords, "assets/f44a.obj"))};
-    gfx_mesh unit1_mesh {ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game_coords, "assets/cf105.obj"))};
+    gfx_mesh unit0_mesh {ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game::coords, "assets/f44a.obj"))};
+    gfx_mesh unit1_mesh {ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game::coords, "assets/cf105.obj"))};
     gfx_mesh bullet_mesh {ctx, apply_vertex_color(generate_box_mesh({-0.05f,-0.1f,-0.05f},{+0.05f,+0.1f,0.05f}), {2,2,2})};
     texture_2d terrain_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({127,85,60,255})};
     texture_2d unit0_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/f44a.jpg")};
-    texture_2d unit1_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/cf105.jpg")};
+    texture_2d unit1_tex {ctx, VK_FORMAT_R8G8B8A8_SRGB, load_image("assets/cf105.jpg")};
     texture_2d bullet_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({255,255,255,255})};
+    texture_2d particle_tex {ctx, VK_FORMAT_R8G8B8A8_SRGB, load_image("assets/particle.png")};
 
     // Create our sampler
     VkSamplerCreateInfo sampler_info {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -140,7 +155,11 @@ int main() try
     // Set up our shader pipeline
     auto vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/static.vert");
     auto frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/shader.frag");
+
     auto glow_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/glow.frag");
+    auto particle_vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/particle.vert");
+    auto particle_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/particle.frag");
+
     auto image_vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/image.vert");
     auto hipass_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/hipass.frag");
     auto hgauss_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/hgauss.frag");
@@ -157,8 +176,27 @@ int main() try
         {6, 0, VK_FORMAT_R32G32B32A32_UINT, offsetof(mesh::vertex, bone_indices)},
         {7, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(mesh::vertex, bone_weights)}
     });
-    auto pipeline = r.create_pipeline(layout, mesh_vertex_format, {vert_shader, frag_shader}, true, true);
-    auto glow_pipeline = r.create_pipeline(layout, mesh_vertex_format, {vert_shader, glow_shader}, true, true);
+    auto pipeline = r.create_pipeline(layout, mesh_vertex_format, {vert_shader, frag_shader}, true, true, false);
+    auto glow_pipeline = r.create_pipeline(layout, mesh_vertex_format, {vert_shader, glow_shader}, true, true, false);
+
+    auto particle_layout = r.create_pipeline_layout(contract, {
+        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
+    });
+    auto particle_vertex_format = r.create_vertex_format({
+        {0, sizeof(particle_vertex), VK_VERTEX_INPUT_RATE_VERTEX},
+        {1, sizeof(particle_instance), VK_VERTEX_INPUT_RATE_INSTANCE}
+    }, {
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(particle_vertex, offset)}, 
+        {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(particle_vertex, texcoord)},
+        {2, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(particle_instance, position)},
+        {3, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(particle_instance, color)},
+    });
+    auto particle_pipeline = r.create_pipeline(particle_layout, particle_vertex_format, {particle_vert_shader, particle_frag_shader}, false, true, true);
+
+    const particle_vertex particle_vertices[] {{{-1,-1}, {0,0}}, {{-1,+1}, {0,1}}, {{+1,+1}, {1,1}}, {{+1,-1}, {1,0}}};
+    const uint32_t particle_indices[] {0, 1, 2, 0, 2, 3};
+    static_buffer particle_vertex_buffer {ctx, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(particle_vertices), particle_vertices};
+    static_buffer particle_index_buffer {ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(particle_indices), particle_indices};
 
     auto gauss_desc_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}});
     auto gauss_pipe_layout = ctx.create_pipeline_layout({gauss_desc_layout});
@@ -167,10 +205,10 @@ int main() try
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
     });
     auto add_pipe_layout = ctx.create_pipeline_layout({add_desc_layout});
-    auto hipass_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), hipass_frag_shader->get_shader_stage()}, false, false);
-    auto hgauss_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), hgauss_frag_shader->get_shader_stage()}, false, false);
-    auto vgauss_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), vgauss_frag_shader->get_shader_stage()}, false, false);
-    auto add_pipe = make_pipeline(ctx.device, final_render_pass, add_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), add_frag_shader->get_shader_stage()}, false, false);
+    auto hipass_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), hipass_frag_shader->get_shader_stage()}, false, false, false);
+    auto hgauss_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), hgauss_frag_shader->get_shader_stage()}, false, false, false);
+    auto vgauss_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), vgauss_frag_shader->get_shader_stage()}, false, false, false);
+    auto add_pipe = make_pipeline(ctx.device, final_render_pass, add_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), add_frag_shader->get_shader_stage()}, false, false, false);
 
     // Set up a window with swapchain framebuffers
     window win {ctx, {1280, 720}, "Example RTS"};
@@ -228,15 +266,15 @@ int main() try
         last_cursor = cursor;
 
         // Handle WASD
-        if(win.get_key(GLFW_KEY_W)) camera.position += game_coords.get_axis(coord_axis::north) * (timestep * 50);
-        if(win.get_key(GLFW_KEY_A)) camera.position += game_coords.get_axis(coord_axis::west ) * (timestep * 50);
-        if(win.get_key(GLFW_KEY_S)) camera.position += game_coords.get_axis(coord_axis::south) * (timestep * 50);
-        if(win.get_key(GLFW_KEY_D)) camera.position += game_coords.get_axis(coord_axis::east ) * (timestep * 50);
+        if(win.get_key(GLFW_KEY_W)) camera.position += qrot(camera.get_orientation(game::coords), game::coords.get_axis(coord_axis::north) * (timestep * 50));
+        if(win.get_key(GLFW_KEY_A)) camera.position += qrot(camera.get_orientation(game::coords), game::coords.get_axis(coord_axis::west ) * (timestep * 50));
+        if(win.get_key(GLFW_KEY_S)) camera.position += qrot(camera.get_orientation(game::coords), game::coords.get_axis(coord_axis::south) * (timestep * 50));
+        if(win.get_key(GLFW_KEY_D)) camera.position += qrot(camera.get_orientation(game::coords), game::coords.get_axis(coord_axis::east ) * (timestep * 50));
         
         advance_game(rng, units, bullets, timestep);
 
         // Determine matrices
-        const auto proj_matrix = mul(linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one), make_transform_4x4(game_coords, vk_coords));        
+        const auto proj_matrix = mul(linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one), make_transform_4x4(game::coords, vk_coords));        
 
         // Render a frame
         auto & pool = pools[frame_index];
@@ -271,12 +309,39 @@ int main() try
                 list.draw(*glow_pipeline, bullet_descriptors, bullet_mesh);
                 if(ps.u_num_point_lights < 64) ps.u_point_lights[ps.u_num_point_lights++] = {b.get_position(), b.owner ? float3{0.2f,0.2f,1.0f} : float3{0.5f,0.5f,0.0f}};
             }
+
+            scene_descriptor_set particle_descriptors {pool, *particle_pipeline};
+            particle_descriptors.write_combined_image_sampler(0, 0, sampler, particle_tex);
+
+            const particle_instance particles[] {
+                {{30,32,10},{1,0,0}},
+                {{31,32,10},{1,1,0}},
+                {{32,32,10},{0,1,0}},
+                {{33,32,10},{0,1,1}},
+                {{34,32,10},{0,0,1}}
+            };
+            auto instance_data = pool.write_vertex_data(sizeof(particles), particles);
+
+            draw_item item {particle_pipeline.get(), particle_descriptors.get_descriptor_set()};
+            item.vertex_buffer_count = 2;
+            item.vertex_buffers[0] = particle_vertex_buffer;
+            item.vertex_buffers[1] = instance_data.buffer;
+            item.vertex_buffer_offsets[1] = instance_data.offset;
+            item.index_buffer = particle_index_buffer;
+            item.first_index = 0;
+            item.index_count = 6;
+            item.instance_count = 5;
+            list.draw(item);
         }
+
+
 
         // Set up per-scene and per-view descriptor sets
         per_view_uniforms pv;
-        pv.view_proj_matrix = mul(proj_matrix, camera.get_view_matrix(game_coords));
+        pv.view_proj_matrix = mul(proj_matrix, camera.get_view_matrix(game::coords));
         pv.eye_position = camera.position;
+        pv.eye_x_axis = qrot(camera.get_orientation(game::coords), game::coords.get_right());
+        pv.eye_y_axis = qrot(camera.get_orientation(game::coords), game::coords.get_down());
 
         VkDescriptorSet per_scene = pool.allocate_descriptor_set(list.contract.get_per_scene_layout());
         vkWriteDescriptorBufferInfo(ctx.device, per_scene, 0, 0, pool.write_data(ps));      
