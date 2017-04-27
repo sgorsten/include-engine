@@ -6,6 +6,7 @@
 namespace game
 {
     constexpr coord_system coords {coord_axis::east, coord_axis::north, coord_axis::up};
+    constexpr float3 team_colors[] {{0.5f,0.5f,0.0f}, {0.2f,0.2f,1.0f}};
 
     struct unit
     {
@@ -41,8 +42,23 @@ namespace game
         float life;
     };
 
-    void init_game(std::mt19937 & rng, std::vector<unit> & units);
-    void advance_game(std::mt19937 & rng, std::vector<unit> & units, std::vector<bullet> & bullets, std::vector<particle> & particles, float timestep);
+    struct flash
+    {
+        float3 position;
+        float3 color;
+        float life;
+    };
+
+    struct state
+    {
+        std::mt19937 rng;
+        std::vector<unit> units;
+        std::vector<bullet> bullets;
+        std::vector<particle> particles;
+        std::vector<flash> flashes;
+        state();
+        void advance(float timestep);
+    };
 }
 
 #endif

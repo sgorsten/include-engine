@@ -40,13 +40,13 @@ namespace game
         return {dist_x(rng)+owner*48.0f, dist_y(rng)};
     }
 
-    void init_game(std::mt19937 & rng, std::vector<unit> & units)
+    state::state()
     {
         for(size_t i=0; i<32; ++i) units.push_back({0, 5, get_random_position(rng, 0), {+1,0}});
         for(size_t i=0; i<32; ++i) units.push_back({1, 5, get_random_position(rng, 1), {-1,0}});
     }
 
-    void advance_game(std::mt19937 & rng, std::vector<unit> & units, std::vector<bullet> & bullets, std::vector<particle> & particles, float timestep)
+    void state::advance(float timestep)
     {
         std::normal_distribution<float> ndist;
 
@@ -84,11 +84,12 @@ namespace game
                 }
 
                 // Generate some particles at the point of impact
-                for(int i=0; i<20; ++i) 
+                for(int i=0; i<50; ++i) 
                 {
                     auto dir = float3{ndist(rng),ndist(rng),ndist(rng)};
-                    particles.push_back({it->get_position(), dir+normalize(dir)*3.0f, {3,2,1}, 0.5f});
+                    particles.push_back({it->get_position(), dir+normalize(dir)*5.0f, team_colors[it->owner]*5.0f, 0.5f});
                 }
+                flashes.push_back({it->get_position(), team_colors[it->owner]*10.0f, 0.2f});
 
                 it = bullets.erase(it);
             }
@@ -106,6 +107,7 @@ namespace game
                     auto dir = float3{ndist(rng),ndist(rng),ndist(rng)};
                     particles.push_back({{u.position, 0.25f}, dir+normalize(dir)*5.0f, {6,4,2}, 1.0f});
                 }
+                flashes.push_back({{u.position, 0.25f}, {10,10,10}, 0.3f});
 
                 // Reset unit to new location
                 u.position = get_random_position(rng, u.owner);
@@ -141,5 +143,9 @@ namespace game
             p.life -= timestep;
         }
         particles.erase(std::remove_if(begin(particles), end(particles), [](const particle & p) { return p.life <= 0; }), end(particles));
+
+        // Simulate flashes
+        for(auto & f : flashes) f.life -= timestep;
+        flashes.erase(std::remove_if(begin(flashes), end(flashes), [](const flash & f) { return f.life <= 0; }), end(flashes));
     }
 }

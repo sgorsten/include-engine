@@ -33,6 +33,7 @@ struct per_view_uniforms
 struct per_static_object
 {
     alignas(16) float4x4 model_matrix;
+    alignas(16) float3 emissive_mtl;
 };
 
 VkAttachmentDescription make_attachment_description(VkFormat format, VkSampleCountFlagBits samples, VkAttachmentLoadOp load_op, VkImageLayout initial_layout=VK_IMAGE_LAYOUT_UNDEFINED, VkAttachmentStoreOp store_op=VK_ATTACHMENT_STORE_OP_DONT_CARE, VkImageLayout final_layout=VK_IMAGE_LAYOUT_UNDEFINED)
@@ -92,11 +93,7 @@ int main() try
 {
     constexpr coord_system vk_coords {coord_axis::right, coord_axis::down, coord_axis::forward};
 
-    std::mt19937 rng;
-    std::vector<game::unit> units;
-    std::vector<game::bullet> bullets;
-    std::vector<game::particle> gparticles;
-    init_game(rng, units);
+    game::state g;
 
     context ctx;
     gfx_mesh quad_mesh {ctx, generate_fullscreen_quad()};
@@ -274,7 +271,7 @@ int main() try
         if(win.get_key(GLFW_KEY_S)) camera.position += qrot(camera.get_orientation(game::coords), game::coords.get_axis(coord_axis::south) * (timestep * 50));
         if(win.get_key(GLFW_KEY_D)) camera.position += qrot(camera.get_orientation(game::coords), game::coords.get_axis(coord_axis::east ) * (timestep * 50));
         
-        advance_game(rng, units, bullets, gparticles, timestep);
+        g.advance(timestep);
 
         // Determine matrices
         const auto proj_matrix = mul(linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one), make_transform_4x4(game::coords, vk_coords));        
@@ -297,37 +294,41 @@ int main() try
             terrain_descriptors.write_combined_image_sampler(1, 0, sampler, terrain_tex);
             list.draw(*pipeline, terrain_descriptors, terrain_mesh);
 
-            for(auto & u : units)
+            for(auto & f : g.flashes)
+            {
+                if(ps.u_num_point_lights < 64) ps.u_point_lights[ps.u_num_point_lights++] = {f.position, f.color*f.life};
+            }
+
+            for(auto & u : g.units)
             {
                 scene_descriptor_set unit_descriptors {pool, *pipeline};
-                unit_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{u.get_model_matrix()}));
+                unit_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{u.get_model_matrix(), game::team_colors[u.owner]*std::max(u.cooldown*4-1.5f,0.0f)}));
                 unit_descriptors.write_combined_image_sampler(1, 0, sampler, u.owner ? unit1_tex : unit0_tex);
                 list.draw(*pipeline, unit_descriptors, u.owner ? unit1_mesh : unit0_mesh);
             }
 
-            for(auto & b : bullets)
+            for(auto & b : g.bullets)
             {
                 scene_descriptor_set bullet_descriptors {pool, *glow_pipeline};
                 bullet_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{b.get_model_matrix()}));
                 list.draw(*glow_pipeline, bullet_descriptors, bullet_mesh);
-                if(ps.u_num_point_lights < 64) ps.u_point_lights[ps.u_num_point_lights++] = {b.get_position(), b.owner ? float3{0.2f,0.2f,1.0f} : float3{0.5f,0.5f,0.0f}};
+                if(ps.u_num_point_lights < 64) ps.u_point_lights[ps.u_num_point_lights++] = {b.get_position(), game::team_colors[b.owner]};
             }
 
-            std::vector<particle_instance> particles;
-            for(auto & p : gparticles) particles.push_back({p.position,p.life/3,p.color});
-            auto instance_data = pool.write_vertex_data(sizeof(particle_instance)*particles.size(), particles.data());
+            auto particles = pool.reserve_instances<particle_instance>(g.particles.size());
+            for(size_t i=0; i<g.particles.size(); ++i) particles[i] = {g.particles[i].position, g.particles[i].life/3, g.particles[i].color};
 
             scene_descriptor_set particle_descriptors {pool, *particle_pipeline};
             particle_descriptors.write_combined_image_sampler(0, 0, sampler, particle_tex);
             draw_item item {particle_pipeline.get(), particle_descriptors.get_descriptor_set()};
             item.vertex_buffer_count = 2;
             item.vertex_buffers[0] = particle_vertex_buffer;
-            item.vertex_buffers[1] = instance_data.buffer;
-            item.vertex_buffer_offsets[1] = instance_data.offset;
+            item.vertex_buffers[1] = particles.info.buffer;
+            item.vertex_buffer_offsets[1] = particles.info.offset;
             item.index_buffer = particle_index_buffer;
             item.first_index = 0;
             item.index_count = 6;
-            item.instance_count = particles.size();
+            item.instance_count = g.particles.size();
             list.draw(item);
         }
 

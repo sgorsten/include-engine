@@ -6,6 +6,7 @@
 layout(set=2, binding=0) uniform PerObject
 {
 	mat4 u_model_matrix;
+	vec3 u_emissive_mtl;
 };
 
 layout(location = 0) in vec3 v_position;

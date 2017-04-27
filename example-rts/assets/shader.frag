@@ -3,6 +3,11 @@
 #extension GL_GOOGLE_include_directive : enable
 #include "scene.glsl"
 
+layout(set=2, binding=0) uniform PerObject
+{
+	mat4 u_model_matrix;
+	vec3 u_emissive_mtl;
+};
 layout(set=2, binding=1) uniform sampler2D u_albedo;
 
 layout(location = 0) in vec3 position;
@@ -20,7 +25,7 @@ void main()
 	vec3 albedo = texture(u_albedo, texcoord).rgb * color;
 	vec3 normal_vec = normalize(normal);
 
-	vec3 light = u_ambient_light;
+	vec3 light = u_ambient_light + u_emissive_mtl;
 
 	// directional light
 	{

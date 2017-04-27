@@ -137,6 +137,13 @@ public:
     operator VkBuffer () { return buffer; }
 };
 
+template<class T> struct reserved_range
+{
+    VkDescriptorBufferInfo info;
+    T * mapped_memory;
+    T & operator[] (size_t i) { return mapped_memory[i]; }
+};
+
 class dynamic_buffer
 {
     context & ctx;
@@ -150,6 +157,14 @@ public:
 
     void reset();
     VkDescriptorBufferInfo write(size_t size, const void * data);
+
+    template<class T> reserved_range<T> reserve_range(size_t count)
+    {
+        size_t size = sizeof(T)*count;
+        VkDescriptorBufferInfo info {buffer, offset, size};
+        offset = (offset + size + 1023)/1024*1024; // TODO: Determine actual alignment
+        return {info, reinterpret_cast<T *>(mapped_memory + info.offset)};
+    }
 };
 
 // Manages the allocation of short-lived resources which can be recycled in a single call, protected by a fence
@@ -171,6 +186,8 @@ public:
     VkDescriptorSet allocate_descriptor_set(VkDescriptorSetLayout layout);
     VkDescriptorBufferInfo write_data(size_t size, const void * data) { return uniform_buffer.write(size, data); }
     VkDescriptorBufferInfo write_vertex_data(size_t size, const void * data) { return vertex_buffer.write(size, data); }
+    template<class T> reserved_range<T> reserve_instances(size_t count) { return vertex_buffer.reserve_range<T>(count); }
+
     VkFence get_fence() { return fence; }
 
     template<class T> VkDescriptorBufferInfo write_data(const T & data) { return write_data(sizeof(data), &data); }
