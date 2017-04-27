@@ -84,6 +84,7 @@ struct particle_vertex
 struct particle_instance
 {
     float3 position;
+    float size;
     float3 color;
 };
 
@@ -94,6 +95,7 @@ int main() try
     std::mt19937 rng;
     std::vector<game::unit> units;
     std::vector<game::bullet> bullets;
+    std::vector<game::particle> gparticles;
     init_game(rng, units);
 
     context ctx;
@@ -189,11 +191,12 @@ int main() try
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(particle_vertex, offset)}, 
         {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(particle_vertex, texcoord)},
         {2, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(particle_instance, position)},
-        {3, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(particle_instance, color)},
+        {3, 1, VK_FORMAT_R32_SFLOAT, offsetof(particle_instance, size)},
+        {4, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(particle_instance, color)},
     });
     auto particle_pipeline = r.create_pipeline(particle_layout, particle_vertex_format, {particle_vert_shader, particle_frag_shader}, false, true, true);
 
-    const particle_vertex particle_vertices[] {{{-1,-1}, {0,0}}, {{-1,+1}, {0,1}}, {{+1,+1}, {1,1}}, {{+1,-1}, {1,0}}};
+    const particle_vertex particle_vertices[] {{{-0.5f,-0.5f}, {0,0}}, {{-0.5f,+0.5f}, {0,1}}, {{+0.5f,+0.5f}, {1,1}}, {{+0.5f,-0.5f}, {1,0}}};
     const uint32_t particle_indices[] {0, 1, 2, 0, 2, 3};
     static_buffer particle_vertex_buffer {ctx, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(particle_vertices), particle_vertices};
     static_buffer particle_index_buffer {ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(particle_indices), particle_indices};
@@ -271,7 +274,7 @@ int main() try
         if(win.get_key(GLFW_KEY_S)) camera.position += qrot(camera.get_orientation(game::coords), game::coords.get_axis(coord_axis::south) * (timestep * 50));
         if(win.get_key(GLFW_KEY_D)) camera.position += qrot(camera.get_orientation(game::coords), game::coords.get_axis(coord_axis::east ) * (timestep * 50));
         
-        advance_game(rng, units, bullets, timestep);
+        advance_game(rng, units, bullets, gparticles, timestep);
 
         // Determine matrices
         const auto proj_matrix = mul(linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one), make_transform_4x4(game::coords, vk_coords));        
@@ -310,18 +313,12 @@ int main() try
                 if(ps.u_num_point_lights < 64) ps.u_point_lights[ps.u_num_point_lights++] = {b.get_position(), b.owner ? float3{0.2f,0.2f,1.0f} : float3{0.5f,0.5f,0.0f}};
             }
 
+            std::vector<particle_instance> particles;
+            for(auto & p : gparticles) particles.push_back({p.position,p.life/3,p.color});
+            auto instance_data = pool.write_vertex_data(sizeof(particle_instance)*particles.size(), particles.data());
+
             scene_descriptor_set particle_descriptors {pool, *particle_pipeline};
             particle_descriptors.write_combined_image_sampler(0, 0, sampler, particle_tex);
-
-            const particle_instance particles[] {
-                {{30,32,10},{1,0,0}},
-                {{31,32,10},{1,1,0}},
-                {{32,32,10},{0,1,0}},
-                {{33,32,10},{0,1,1}},
-                {{34,32,10},{0,0,1}}
-            };
-            auto instance_data = pool.write_vertex_data(sizeof(particles), particles);
-
             draw_item item {particle_pipeline.get(), particle_descriptors.get_descriptor_set()};
             item.vertex_buffer_count = 2;
             item.vertex_buffers[0] = particle_vertex_buffer;
@@ -330,11 +327,9 @@ int main() try
             item.index_buffer = particle_index_buffer;
             item.first_index = 0;
             item.index_count = 6;
-            item.instance_count = 5;
+            item.instance_count = particles.size();
             list.draw(item);
         }
-
-
 
         // Set up per-scene and per-view descriptor sets
         per_view_uniforms pv;

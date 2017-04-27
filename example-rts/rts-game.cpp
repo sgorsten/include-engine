@@ -1,4 +1,5 @@
 #include "rts-game.h"
+#include <algorithm>
 
 namespace game
 {
@@ -45,8 +46,10 @@ namespace game
         for(size_t i=0; i<32; ++i) units.push_back({1, 5, get_random_position(rng, 1), {-1,0}});
     }
 
-    void advance_game(std::mt19937 & rng, std::vector<unit> & units, std::vector<bullet> & bullets, float timestep)
+    void advance_game(std::mt19937 & rng, std::vector<unit> & units, std::vector<bullet> & bullets, std::vector<particle> & particles, float timestep)
     {
+        std::normal_distribution<float> ndist;
+
         // Move towards the nearest enemy unit, and open fire once we have reached a distance of five units
         for(auto & u : units)
         {
@@ -79,6 +82,14 @@ namespace game
                         --u.hp;
                     }
                 }
+
+                // Generate some particles at the point of impact
+                for(int i=0; i<20; ++i) 
+                {
+                    auto dir = float3{ndist(rng),ndist(rng),ndist(rng)};
+                    particles.push_back({it->get_position(), dir+normalize(dir)*3.0f, {3,2,1}, 0.5f});
+                }
+
                 it = bullets.erase(it);
             }
             else ++it;
@@ -89,6 +100,14 @@ namespace game
         {
             if(u.hp < 0)
             {
+                // Generate some particles where unit was destroyed
+                for(int i=0; i<100; ++i) 
+                {
+                    auto dir = float3{ndist(rng),ndist(rng),ndist(rng)};
+                    particles.push_back({{u.position, 0.25f}, dir+normalize(dir)*5.0f, {6,4,2}, 1.0f});
+                }
+
+                // Reset unit to new location
                 u.position = get_random_position(rng, u.owner);
                 u.direction = {u.owner ? -1.0f : +1.0f, 0};
                 u.hp = 5;
@@ -111,5 +130,16 @@ namespace game
                 v.position += delta;
             }
         }
+
+        // Simulate particles
+        const float3 gravity {0,0,-2};
+        for(auto & p : particles)
+        {
+            p.position += p.velocity * timestep + gravity * (timestep*timestep/2);
+            p.velocity += gravity * timestep;
+            if(p.position.z < 0 && p.velocity.z < 0) p.velocity.z *= -0.5f;
+            p.life -= timestep;
+        }
+        particles.erase(std::remove_if(begin(particles), end(particles), [](const particle & p) { return p.life <= 0; }), end(particles));
     }
 }

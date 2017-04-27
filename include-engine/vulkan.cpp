@@ -746,6 +746,7 @@ void transient_resource_pool::reset()
     check(vkResetCommandPool(ctx.device, command_pool, 0));
     check(vkResetDescriptorPool(ctx.device, descriptor_pool, 0));
     uniform_buffer.reset();
+    vertex_buffer.reset();
 }
 
 VkCommandBuffer transient_resource_pool::allocate_command_buffer()
