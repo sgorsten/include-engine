@@ -720,6 +720,7 @@ transient_resource_pool::transient_resource_pool(context & ctx, array_view<VkDes
     descriptor_pool_info.poolSizeCount = descriptor_pool_sizes.size;
     descriptor_pool_info.pPoolSizes = descriptor_pool_sizes.data;
     descriptor_pool_info.maxSets = max_descriptor_sets;
+    descriptor_pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     check(vkCreateDescriptorPool(ctx.device, &descriptor_pool_info, nullptr, &descriptor_pool));
 
     VkFenceCreateInfo fence_info {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
@@ -744,6 +745,11 @@ void transient_resource_pool::reset()
         command_buffers.clear();
     }
     check(vkResetCommandPool(ctx.device, command_pool, 0));
+    if(!descriptor_sets.empty())
+    {
+        vkFreeDescriptorSets(ctx.device, descriptor_pool, descriptor_sets.size(), descriptor_sets.data());
+        descriptor_sets.clear();
+    }
     check(vkResetDescriptorPool(ctx.device, descriptor_pool, 0));
     uniform_buffer.reset();
     vertex_buffer.reset();
@@ -771,6 +777,7 @@ VkDescriptorSet transient_resource_pool::allocate_descriptor_set(VkDescriptorSet
 
     VkDescriptorSet descriptor_set;
     check(vkAllocateDescriptorSets(ctx.device, &alloc_info, &descriptor_set));
+    descriptor_sets.push_back(descriptor_set);
     return descriptor_set;
 }
 

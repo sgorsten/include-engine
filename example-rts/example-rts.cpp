@@ -395,15 +395,26 @@ int main() try
         check(vkEndCommandBuffer(cmd)); 
 
         win.end(index, {cmd}, pool.get_fence());
-        
-        glfwPollEvents();
     }
 
     vkDeviceWaitIdle(ctx.device);
+    vkDestroyPipeline(ctx.device, hipass_pipe, nullptr);
+    vkDestroyPipeline(ctx.device, hgauss_pipe, nullptr);
+    vkDestroyPipeline(ctx.device, vgauss_pipe, nullptr);
+    vkDestroyPipeline(ctx.device, add_pipe, nullptr);
+    vkDestroyPipelineLayout(ctx.device, gauss_pipe_layout, nullptr);
+    vkDestroyPipelineLayout(ctx.device, add_pipe_layout, nullptr);
+    vkDestroyDescriptorSetLayout(ctx.device, gauss_desc_layout, nullptr);
+    vkDestroyDescriptorSetLayout(ctx.device, add_desc_layout, nullptr);
     vkDestroySampler(ctx.device, sampler, nullptr);
+    vkDestroySampler(ctx.device, image_sampler, nullptr);
+    vkDestroyFramebuffer(ctx.device, main_framebuffer, nullptr);
+    vkDestroyFramebuffer(ctx.device, aux_framebuffer1, nullptr);
+    vkDestroyFramebuffer(ctx.device, aux_framebuffer2, nullptr);
     for(auto framebuffer : swapchain_framebuffers) vkDestroyFramebuffer(ctx.device, framebuffer, nullptr);
     vkDestroyRenderPass(ctx.device, fb_render_pass, nullptr);    
-    vkDestroyRenderPass(ctx.device, post_render_pass, nullptr);    
+    vkDestroyRenderPass(ctx.device, post_render_pass, nullptr);
+    vkDestroyRenderPass(ctx.device, final_render_pass, nullptr);   
     return EXIT_SUCCESS;
 }
 catch(const std::exception & e)

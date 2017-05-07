@@ -176,6 +176,7 @@ class transient_resource_pool
     VkCommandPool command_pool;
     std::vector<VkCommandBuffer> command_buffers;
     VkDescriptorPool descriptor_pool;
+    std::vector<VkDescriptorSet> descriptor_sets;
     VkFence fence;
 public:
     transient_resource_pool(context & ctx, array_view<VkDescriptorPoolSize> descriptor_pool_sizes, uint32_t max_descriptor_sets);
