@@ -212,4 +212,8 @@ void vkWriteDescriptorBufferInfo(VkDevice device, VkDescriptorSet set, uint32_t 
 void vkCmdBindDescriptorSets(VkCommandBuffer commandBuffer, VkPipelineBindPoint pipelineBindPoint, VkPipelineLayout layout, uint32_t firstSet, array_view<VkDescriptorSet> descriptorSets, array_view<uint32_t> dynamicOffsets);
 void vkCmdBindVertexBuffers(VkCommandBuffer commandBuffer, uint32_t firstBinding, array_view<VkBuffer> buffers, array_view<VkDeviceSize> offsets);
 
+void vkCmdSetViewport(VkCommandBuffer commandBuffer, VkRect2D viewport);
+void vkCmdSetScissor(VkCommandBuffer commandBuffer, VkRect2D scissor);
+void vkCmdBeginRenderPass(VkCommandBuffer cmd, VkRenderPass renderPass, VkFramebuffer framebuffer, VkRect2D renderArea, array_view<VkClearValue> clearValues);
+
 #endif

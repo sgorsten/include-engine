@@ -154,7 +154,14 @@ struct draw_list
     
     draw_list(transient_resource_pool & pool, const scene_contract & contract) : pool{pool}, contract{contract} {}
 
-    void draw(draw_item item) { items.push_back(std::move(item)); }
+    template<class T> VkDescriptorBufferInfo upload_uniforms(const T & uniforms) { return pool.write_data(uniforms); }
+
+    void begin_instances() { pool.begin_instances(); }
+    template<class T> void write_instance(const T & instance) { pool.write_instance(instance); }
+    VkDescriptorBufferInfo end_instances() { return pool.end_instances(); }
+
+    scene_descriptor_set descriptor_set(const scene_pipeline & pipeline) { return {pool, pipeline}; }    
+
     void draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls, VkDescriptorBufferInfo instances, size_t instance_stride);
     void draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, VkDescriptorBufferInfo instances, size_t instance_stride);
     void draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls);
@@ -164,7 +171,9 @@ struct draw_list
 
 class renderer
 {
+public:
     context & ctx;
+private:
     shader_compiler compiler;
 public:
     renderer(context & ctx) : ctx{ctx} {}

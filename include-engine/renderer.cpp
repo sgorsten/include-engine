@@ -85,7 +85,7 @@ void draw_list::draw(const scene_pipeline & pipeline, const scene_descriptor_set
         item.first_index = mesh.m.materials[mtl].first_triangle*3;
         item.index_count = mesh.m.materials[mtl].num_triangles*3;
         items.push_back(item);
-    }    
+    }
 }
 
 void draw_list::draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, VkDescriptorBufferInfo instances, size_t instance_stride)

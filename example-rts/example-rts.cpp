@@ -7,35 +7,6 @@
 #include <chrono>
 #include <memory>
 
-struct point_light
-{
-	alignas(16) float3 u_position;
-	alignas(16) float3 u_color;
-};
-
-struct per_scene_uniforms
-{
-	alignas(16) float3 ambient_light;
-	alignas(16) float3 light_direction;
-	alignas(16) float3 light_color;
-	alignas(16) point_light u_point_lights[64];
-	alignas(16) int u_num_point_lights;
-};
-
-struct per_view_uniforms
-{
-	alignas(16) float4x4 view_proj_matrix;
-	alignas(16) float3 eye_position;
-	alignas(16) float3 eye_x_axis;
-	alignas(16) float3 eye_y_axis;
-};
-
-struct per_static_object
-{
-    alignas(16) float4x4 model_matrix;
-    alignas(16) float3 emissive_mtl;
-};
-
 VkAttachmentDescription make_attachment_description(VkFormat format, VkSampleCountFlagBits samples, VkAttachmentLoadOp load_op, VkImageLayout initial_layout=VK_IMAGE_LAYOUT_UNDEFINED, VkAttachmentStoreOp store_op=VK_ATTACHMENT_STORE_OP_DONT_CARE, VkImageLayout final_layout=VK_IMAGE_LAYOUT_UNDEFINED)
 {
     return {0, format, samples, load_op, store_op, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE, initial_layout, final_layout};
@@ -53,41 +24,16 @@ struct fps_camera
     float4x4 get_view_matrix(const coord_system & c) const { return pose_matrix(inverse(get_pose(c))); }
 };
 
-void draw_fullscreen_pass(VkCommandBuffer cmd, const uint2 & dims, VkRenderPass render_pass, VkFramebuffer framebuffer, VkPipeline pipeline, VkPipelineLayout pipeline_layout, VkDescriptorSet descriptors, const gfx_mesh & fullscreen_quad)
+void draw_fullscreen_pass(VkCommandBuffer cmd, VkRenderPass render_pass, VkFramebuffer framebuffer, const VkRect2D & rect, VkPipeline pipeline, VkPipelineLayout pipeline_layout, VkDescriptorSet descriptors, const gfx_mesh & fullscreen_quad)
 {
-    VkRenderPassBeginInfo pass_begin_info {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    pass_begin_info.renderPass = render_pass;
-    pass_begin_info.framebuffer = framebuffer;
-    pass_begin_info.renderArea.extent = {dims.x, dims.y};
-    vkCmdBeginRenderPass(cmd, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
-
-    const VkViewport viewport {0, 0, static_cast<float>(dims.x), static_cast<float>(dims.y), 0.0f, 1.0f};
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
-
-    const VkRect2D scissor {0, 0, dims.x, dims.y};
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
-    
+    vkCmdBeginRenderPass(cmd, render_pass, framebuffer, rect, {});  
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, {descriptors}, {});
     vkCmdBindVertexBuffers(cmd, 0, {*fullscreen_quad.vertex_buffer}, {0});
     vkCmdBindIndexBuffer(cmd, *fullscreen_quad.index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
     vkCmdDrawIndexed(cmd, fullscreen_quad.index_count, 1, 0, 0, 0);
-
     vkCmdEndRenderPass(cmd); 
 }
-
-struct particle_vertex
-{
-    float2 offset;
-    float2 texcoord;
-};
-
-struct particle_instance
-{
-    float3 position;
-    float size;
-    float3 color;
-};
 
 int main() try
 {
@@ -96,24 +42,12 @@ int main() try
     game::state g;
 
     context ctx;
+    renderer r {ctx};
+
     gfx_mesh quad_mesh {ctx, generate_fullscreen_quad()};
-    gfx_mesh terrain_mesh {ctx, generate_box_mesh({0,0,-1}, {64,64,0})};
-    gfx_mesh unit0_mesh {ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game::coords, "assets/f44a.obj"))};
-    gfx_mesh unit1_mesh {ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game::coords, "assets/cf105.obj"))};
-    gfx_mesh bullet_mesh {ctx, apply_vertex_color(generate_box_mesh({-0.05f,-0.1f,-0.05f},{+0.05f,+0.1f,0.05f}), {2,2,2})};
-    texture_2d terrain_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({127,85,60,255})};
-    texture_2d unit0_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/f44a.jpg")};
-    texture_2d unit1_tex {ctx, VK_FORMAT_R8G8B8A8_SRGB, load_image("assets/cf105.jpg")};
-    texture_2d bullet_tex {ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({255,255,255,255})};
-    texture_2d particle_tex {ctx, VK_FORMAT_R8G8B8A8_SRGB, load_image("assets/particle.png")};
+   
 
     // Create our sampler
-    VkSamplerCreateInfo sampler_info {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    sampler_info.magFilter = VK_FILTER_LINEAR;
-    sampler_info.minFilter = VK_FILTER_LINEAR;
-    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    sampler_info.maxLod = 11;
-    sampler_info.minLod = 0;
     VkSamplerCreateInfo image_sampler_info {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     image_sampler_info.magFilter = VK_FILTER_LINEAR;
     image_sampler_info.minFilter = VK_FILTER_LINEAR;
@@ -122,8 +56,7 @@ int main() try
     image_sampler_info.minLod = 0;
     image_sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     image_sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    VkSampler sampler, image_sampler;
-    check(vkCreateSampler(ctx.device, &sampler_info, nullptr, &sampler));
+    VkSampler image_sampler;
     check(vkCreateSampler(ctx.device, &image_sampler_info, nullptr, &image_sampler));
 
     // Set up scene contract
@@ -140,24 +73,13 @@ int main() try
         std::nullopt
     );
 
-    renderer r {ctx};
-    auto contract = r.create_contract(fb_render_pass, {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, 
-        {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}});
-    auto layout = r.create_pipeline_layout(contract, {
-        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT},    
+    auto gauss_desc_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}});
+    auto gauss_pipe_layout = ctx.create_pipeline_layout({gauss_desc_layout});
+    auto add_desc_layout = ctx.create_descriptor_set_layout({
+        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
     });
-    auto glow_layout = r.create_pipeline_layout(contract, {
-        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT}
-    });
-    
-    // Set up our shader pipeline
-    auto vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/static.vert");
-    auto frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/shader.frag");
-
-    auto glow_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/glow.frag");
-    auto particle_vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/particle.vert");
-    auto particle_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/particle.frag");
+    auto add_pipe_layout = ctx.create_pipeline_layout({add_desc_layout});
 
     auto image_vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/image.vert");
     auto hipass_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/hipass.frag");
@@ -175,40 +97,16 @@ int main() try
         {6, 0, VK_FORMAT_R32G32B32A32_UINT, offsetof(mesh::vertex, bone_indices)},
         {7, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(mesh::vertex, bone_weights)}
     });
-    auto pipeline = r.create_pipeline(layout, mesh_vertex_format, {vert_shader, frag_shader}, true, true, false);
-    auto glow_pipeline = r.create_pipeline(layout, mesh_vertex_format, {vert_shader, glow_shader}, true, true, false);
 
-    auto particle_layout = r.create_pipeline_layout(contract, {
-        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
-    });
-    auto particle_vertex_format = r.create_vertex_format({
-        {0, sizeof(particle_vertex), VK_VERTEX_INPUT_RATE_VERTEX},
-        {1, sizeof(particle_instance), VK_VERTEX_INPUT_RATE_INSTANCE}
-    }, {
-        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(particle_vertex, offset)}, 
-        {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(particle_vertex, texcoord)},
-        {2, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(particle_instance, position)},
-        {3, 1, VK_FORMAT_R32_SFLOAT, offsetof(particle_instance, size)},
-        {4, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(particle_instance, color)},
-    });
-    auto particle_pipeline = r.create_pipeline(particle_layout, particle_vertex_format, {particle_vert_shader, particle_frag_shader}, false, true, true);
-
-    const particle_vertex particle_vertices[] {{{-0.5f,-0.5f}, {0,0}}, {{-0.5f,+0.5f}, {0,1}}, {{+0.5f,+0.5f}, {1,1}}, {{+0.5f,-0.5f}, {1,0}}};
-    const uint32_t particle_indices[] {0, 1, 2, 0, 2, 3};
-    gfx_mesh particle_mesh(std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(particle_vertices), particle_vertices),
-                           std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(particle_indices), particle_indices), 6);
-
-    auto gauss_desc_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}});
-    auto gauss_pipe_layout = ctx.create_pipeline_layout({gauss_desc_layout});
-    auto add_desc_layout = ctx.create_descriptor_set_layout({
-        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
-    });
-    auto add_pipe_layout = ctx.create_pipeline_layout({add_desc_layout});
     auto hipass_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), hipass_frag_shader->get_shader_stage()}, false, false, false);
     auto hgauss_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), hgauss_frag_shader->get_shader_stage()}, false, false, false);
     auto vgauss_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), vgauss_frag_shader->get_shader_stage()}, false, false, false);
     auto add_pipe = make_pipeline(ctx.device, final_render_pass, add_pipe_layout, mesh_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), add_frag_shader->get_shader_stage()}, false, false, false);
+    
+    // Load our game resources
+    auto contract = r.create_contract(fb_render_pass, {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, 
+        {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}});
+    const game::resources res {r, contract};
 
     // Set up a window with swapchain framebuffers
     window win {ctx, {1280, 720}, "Example RTS"};
@@ -282,49 +180,15 @@ int main() try
         pool.reset();
 
         // Generate a draw list for the scene
-        per_scene_uniforms ps {};
+        game::per_scene_uniforms ps {};
         ps.ambient_light = {0.01f,0.01f,0.01f};
         ps.light_direction = normalize(float3{1,-2,5});
         ps.light_color = {0.9f,0.9f,0.9f};
-
         draw_list list {pool, *contract};
-        {
-            scene_descriptor_set terrain_descriptors {pool, *pipeline};
-            terrain_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{translation_matrix(float3{0,0,0})}));
-            terrain_descriptors.write_combined_image_sampler(1, 0, sampler, terrain_tex);
-            list.draw(*pipeline, terrain_descriptors, terrain_mesh);
-
-            for(auto & f : g.flashes)
-            {
-                if(ps.u_num_point_lights < 64) ps.u_point_lights[ps.u_num_point_lights++] = {f.position, f.color*f.life};
-            }
-
-            for(auto & u : g.units)
-            {
-                scene_descriptor_set unit_descriptors {pool, *pipeline};
-                unit_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{u.get_model_matrix(), game::team_colors[u.owner]*std::max(u.cooldown*4-1.5f,0.0f)}));
-                unit_descriptors.write_combined_image_sampler(1, 0, sampler, u.owner ? unit1_tex : unit0_tex);
-                list.draw(*pipeline, unit_descriptors, u.owner ? unit1_mesh : unit0_mesh);
-            }
-
-            for(auto & b : g.bullets)
-            {
-                scene_descriptor_set bullet_descriptors {pool, *glow_pipeline};
-                bullet_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{b.get_model_matrix()}));
-                list.draw(*glow_pipeline, bullet_descriptors, bullet_mesh);
-                if(ps.u_num_point_lights < 64) ps.u_point_lights[ps.u_num_point_lights++] = {b.get_position(), game::team_colors[b.owner]};
-            }
-
-            pool.begin_instances();
-            for(auto & p : g.particles) pool.write_instance(particle_instance{p.position, p.life/3, p.color});
-            const auto particle_instances = pool.end_instances();
-            scene_descriptor_set particle_descriptors {pool, *particle_pipeline};
-            particle_descriptors.write_combined_image_sampler(0, 0, sampler, particle_tex);
-            list.draw(*particle_pipeline, particle_descriptors, particle_mesh, particle_instances, sizeof(particle_instance));
-        }
+        game::draw(list, ps, res, g);
 
         // Set up per-scene and per-view descriptor sets
-        per_view_uniforms pv;
+        game::per_view_uniforms pv;
         pv.view_proj_matrix = mul(proj_matrix, camera.get_view_matrix(game::coords));
         pv.eye_position = camera.position;
         pv.eye_x_axis = qrot(camera.get_orientation(game::coords), game::coords.get_right());
@@ -343,44 +207,28 @@ int main() try
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, list.contract.get_example_layout(), 0, {per_scene, per_view}, {});
 
         // Begin render pass
-        VkClearValue clear_values[] {{0, 0, 0, 1}, {1.0f, 0}};
-        const uint2 dims = win.get_dims();
-        VkRenderPassBeginInfo pass_begin_info {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-        pass_begin_info.renderPass = fb_render_pass;
-        pass_begin_info.framebuffer = main_framebuffer;
-        pass_begin_info.renderArea.offset = {0, 0};
-        pass_begin_info.renderArea.extent = {dims.x, dims.y};
-        pass_begin_info.clearValueCount = countof(clear_values);
-        pass_begin_info.pClearValues = clear_values;
-        vkCmdBeginRenderPass(cmd, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
-
-        const VkViewport viewport {0, 0, static_cast<float>(dims.x), static_cast<float>(dims.y), 0.0f, 1.0f};
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
-
-        const VkRect2D scissor {0, 0, dims.x, dims.y};
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
-
+        VkRect2D render_area {{0,0},{win.get_dims().x,win.get_dims().y}};
+        vkCmdBeginRenderPass(cmd, fb_render_pass, main_framebuffer, render_area, {{0, 0, 0, 1}, {1.0f, 0}});
         list.write_commands(cmd);
-
         vkCmdEndRenderPass(cmd); 
 
         auto hipass_descriptors = pool.allocate_descriptor_set(gauss_desc_layout);
         vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, hipass_descriptors, 0, 0, {image_sampler, color.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-        draw_fullscreen_pass(cmd, dims, post_render_pass, aux_framebuffer1, hipass_pipe, gauss_pipe_layout, hipass_descriptors, quad_mesh);
+        draw_fullscreen_pass(cmd, post_render_pass, aux_framebuffer1, render_area, hipass_pipe, gauss_pipe_layout, hipass_descriptors, quad_mesh);
 
         auto hgauss_descriptors = pool.allocate_descriptor_set(gauss_desc_layout);
         vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, hgauss_descriptors, 0, 0, {image_sampler, color1.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-        draw_fullscreen_pass(cmd, dims, post_render_pass, aux_framebuffer2, hgauss_pipe, gauss_pipe_layout, hgauss_descriptors, quad_mesh);
+        draw_fullscreen_pass(cmd, post_render_pass, aux_framebuffer2, render_area, hgauss_pipe, gauss_pipe_layout, hgauss_descriptors, quad_mesh);
 
         auto vgauss_descriptors = pool.allocate_descriptor_set(gauss_desc_layout);
         vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, vgauss_descriptors, 0, 0, {image_sampler, color2.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-        draw_fullscreen_pass(cmd, dims, post_render_pass, aux_framebuffer1, vgauss_pipe, gauss_pipe_layout, vgauss_descriptors, quad_mesh);
+        draw_fullscreen_pass(cmd, post_render_pass, aux_framebuffer1, render_area, vgauss_pipe, gauss_pipe_layout, vgauss_descriptors, quad_mesh);
 
         auto add_descriptors = pool.allocate_descriptor_set(add_desc_layout);
         vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, add_descriptors, 0, 0, {image_sampler, color.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
         vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, add_descriptors, 1, 0, {image_sampler, color1.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
         const uint32_t index = win.begin();
-        draw_fullscreen_pass(cmd, dims, final_render_pass, swapchain_framebuffers[index], add_pipe, add_pipe_layout, add_descriptors, quad_mesh);
+        draw_fullscreen_pass(cmd, final_render_pass, swapchain_framebuffers[index], render_area, add_pipe, add_pipe_layout, add_descriptors, quad_mesh);
         check(vkEndCommandBuffer(cmd));
         win.end(index, {cmd}, pool.get_fence());
     }
@@ -394,7 +242,7 @@ int main() try
     vkDestroyPipelineLayout(ctx.device, add_pipe_layout, nullptr);
     vkDestroyDescriptorSetLayout(ctx.device, gauss_desc_layout, nullptr);
     vkDestroyDescriptorSetLayout(ctx.device, add_desc_layout, nullptr);
-    vkDestroySampler(ctx.device, sampler, nullptr);
+    vkDestroySampler(ctx.device, res.linear_sampler, nullptr);
     vkDestroySampler(ctx.device, image_sampler, nullptr);
     vkDestroyFramebuffer(ctx.device, main_framebuffer, nullptr);
     vkDestroyFramebuffer(ctx.device, aux_framebuffer1, nullptr);

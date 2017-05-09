@@ -957,6 +957,31 @@ void vkCmdBindVertexBuffers(VkCommandBuffer commandBuffer, uint32_t firstBinding
     vkCmdBindVertexBuffers(commandBuffer, firstBinding, buffers.size, buffers.data, offsets.data);
 }
 
+void vkCmdSetViewport(VkCommandBuffer commandBuffer, VkRect2D viewport)
+{
+    const VkViewport viewports[] {{static_cast<float>(viewport.offset.x), static_cast<float>(viewport.offset.y), 
+        static_cast<float>(viewport.extent.width), static_cast<float>(viewport.extent.height), 0.0f, 1.0f}};
+    vkCmdSetViewport(commandBuffer, 0, countof(viewports), viewports);
+}
+
+void vkCmdSetScissor(VkCommandBuffer commandBuffer, VkRect2D scissor)
+{
+    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+}
+
+void vkCmdBeginRenderPass(VkCommandBuffer cmd, VkRenderPass renderPass, VkFramebuffer framebuffer, VkRect2D renderArea, array_view<VkClearValue> clearValues)
+{
+    VkRenderPassBeginInfo pass_begin_info {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    pass_begin_info.renderPass = renderPass;
+    pass_begin_info.framebuffer = framebuffer;
+    pass_begin_info.renderArea = renderArea;
+    pass_begin_info.clearValueCount = clearValues.size;
+    pass_begin_info.pClearValues = clearValues.data;
+    vkCmdBeginRenderPass(cmd, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdSetViewport(cmd, renderArea);
+    vkCmdSetScissor(cmd, renderArea);
+}
+
 /////////////////
 // fail_fast() //
 /////////////////
