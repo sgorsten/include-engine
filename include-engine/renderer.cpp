@@ -66,18 +66,20 @@ void scene_descriptor_set::write_combined_image_sampler(uint32_t binding, uint32
     vkWriteDescriptorCombinedImageSamplerInfo(layout->get_device(), set, binding, array_element, {sampler, image_view, image_layout});
 }
 
-void draw_list::draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls)
+void draw_list::draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls, VkDescriptorBufferInfo instances, size_t instance_stride)
 {
     if(&pipeline.get_contract() != &contract) fail_fast();
     if(&pipeline.get_layout() != &descriptors.get_pipeline_layout()) fail_fast();
 
     draw_item item {&pipeline, descriptors.get_descriptor_set()};
-    item.vertex_buffer_count = 1;
+    item.vertex_buffer_count = instance_stride ? 2 : 1;
     item.vertex_buffers[0] = *mesh.vertex_buffer;
+    item.vertex_buffers[1] = instances.buffer;
     item.vertex_buffer_offsets[0] = 0;
+    item.vertex_buffer_offsets[1] = instances.offset;
     item.index_buffer = *mesh.index_buffer;
     item.index_buffer_offset = 0;
-    item.instance_count = 1;
+    item.instance_count = instance_stride ? instances.range / instance_stride : 1;
     for(auto mtl : mtls)
     {
         item.first_index = mesh.m.materials[mtl].first_triangle*3;
@@ -86,11 +88,21 @@ void draw_list::draw(const scene_pipeline & pipeline, const scene_descriptor_set
     }    
 }
 
-void draw_list::draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh)
+void draw_list::draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, VkDescriptorBufferInfo instances, size_t instance_stride)
 {
     std::vector<size_t> mtls;
     for(size_t i=0; i<mesh.m.materials.size(); ++i) mtls.push_back(i);
-    return draw(pipeline, descriptors, mesh, mtls);
+    draw(pipeline, descriptors, mesh, mtls, instances, instance_stride);
+}
+
+void draw_list::draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls)
+{
+    draw(pipeline, descriptors, mesh, mtls, {}, 0);
+}
+
+void draw_list::draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh)
+{
+    draw(pipeline, descriptors, mesh, {}, 0);
 }
 
 void draw_list::write_commands(VkCommandBuffer cmd) const

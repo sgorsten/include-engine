@@ -195,8 +195,8 @@ int main() try
 
     const particle_vertex particle_vertices[] {{{-0.5f,-0.5f}, {0,0}}, {{-0.5f,+0.5f}, {0,1}}, {{+0.5f,+0.5f}, {1,1}}, {{+0.5f,-0.5f}, {1,0}}};
     const uint32_t particle_indices[] {0, 1, 2, 0, 2, 3};
-    static_buffer particle_vertex_buffer {ctx, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(particle_vertices), particle_vertices};
-    static_buffer particle_index_buffer {ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(particle_indices), particle_indices};
+    gfx_mesh particle_mesh(std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(particle_vertices), particle_vertices),
+                           std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(particle_indices), particle_indices), 6);
 
     auto gauss_desc_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}});
     auto gauss_pipe_layout = ctx.create_pipeline_layout({gauss_desc_layout});
@@ -315,21 +315,12 @@ int main() try
                 if(ps.u_num_point_lights < 64) ps.u_point_lights[ps.u_num_point_lights++] = {b.get_position(), game::team_colors[b.owner]};
             }
 
-            auto particles = pool.reserve_instances<particle_instance>(g.particles.size());
-            for(size_t i=0; i<g.particles.size(); ++i) particles[i] = {g.particles[i].position, g.particles[i].life/3, g.particles[i].color};
-
+            pool.begin_instances();
+            for(auto & p : g.particles) pool.write_instance(particle_instance{p.position, p.life/3, p.color});
+            const auto particle_instances = pool.end_instances();
             scene_descriptor_set particle_descriptors {pool, *particle_pipeline};
             particle_descriptors.write_combined_image_sampler(0, 0, sampler, particle_tex);
-            draw_item item {particle_pipeline.get(), particle_descriptors.get_descriptor_set()};
-            item.vertex_buffer_count = 2;
-            item.vertex_buffers[0] = particle_vertex_buffer;
-            item.vertex_buffers[1] = particles.info.buffer;
-            item.vertex_buffer_offsets[1] = particles.info.offset;
-            item.index_buffer = particle_index_buffer;
-            item.first_index = 0;
-            item.index_count = 6;
-            item.instance_count = g.particles.size();
-            list.draw(item);
+            list.draw(*particle_pipeline, particle_descriptors, particle_mesh, particle_instances, sizeof(particle_instance));
         }
 
         // Set up per-scene and per-view descriptor sets
@@ -352,13 +343,11 @@ int main() try
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, list.contract.get_example_layout(), 0, {per_scene, per_view}, {});
 
         // Begin render pass
-        const uint32_t index = win.begin();
-
         VkClearValue clear_values[] {{0, 0, 0, 1}, {1.0f, 0}};
         const uint2 dims = win.get_dims();
         VkRenderPassBeginInfo pass_begin_info {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
         pass_begin_info.renderPass = fb_render_pass;
-        pass_begin_info.framebuffer = main_framebuffer; //swapchain_framebuffers[index];
+        pass_begin_info.framebuffer = main_framebuffer;
         pass_begin_info.renderArea.offset = {0, 0};
         pass_begin_info.renderArea.extent = {dims.x, dims.y};
         pass_begin_info.clearValueCount = countof(clear_values);
@@ -390,10 +379,9 @@ int main() try
         auto add_descriptors = pool.allocate_descriptor_set(add_desc_layout);
         vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, add_descriptors, 0, 0, {image_sampler, color.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
         vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, add_descriptors, 1, 0, {image_sampler, color1.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        const uint32_t index = win.begin();
         draw_fullscreen_pass(cmd, dims, final_render_pass, swapchain_framebuffers[index], add_pipe, add_pipe_layout, add_descriptors, quad_mesh);
-        
-        check(vkEndCommandBuffer(cmd)); 
-
+        check(vkEndCommandBuffer(cmd));
         win.end(index, {cmd}, pool.get_fence());
     }
 

@@ -35,6 +35,12 @@ struct gfx_mesh
     uint32_t index_count;
     mesh m;
 
+    gfx_mesh(std::unique_ptr<static_buffer> vertex_buffer, std::unique_ptr<static_buffer> index_buffer, uint32_t index_count)
+        : vertex_buffer{move(vertex_buffer)}, index_buffer{move(index_buffer)}, index_count{index_count}
+    {
+        m.materials.push_back({"", 0, index_count/3});
+    }
+
     gfx_mesh(context & ctx, const mesh & m) :
         vertex_buffer{std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.vertices.size() * sizeof(mesh::vertex), m.vertices.data())},
         index_buffer{std::make_unique<static_buffer>(ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m.triangles.size() * sizeof(uint3), m.triangles.data())},
@@ -149,6 +155,8 @@ struct draw_list
     draw_list(transient_resource_pool & pool, const scene_contract & contract) : pool{pool}, contract{contract} {}
 
     void draw(draw_item item) { items.push_back(std::move(item)); }
+    void draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls, VkDescriptorBufferInfo instances, size_t instance_stride);
+    void draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, VkDescriptorBufferInfo instances, size_t instance_stride);
     void draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls);
     void draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh);
     void write_commands(VkCommandBuffer cmd) const;

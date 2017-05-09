@@ -672,14 +672,10 @@ dynamic_buffer::dynamic_buffer(context & ctx, VkDeviceSize size, VkBufferUsageFl
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     check(vkCreateBuffer(ctx.device, &buffer_info, nullptr, &buffer));
 
-    VkMemoryRequirements mem_reqs;
     vkGetBufferMemoryRequirements(ctx.device, buffer, &mem_reqs);
     device_memory = ctx.allocate(mem_reqs, memory_properties);
     vkBindBufferMemory(ctx.device, buffer, device_memory, 0);
-
-    void * mapped;
-    check(vkMapMemory(ctx.device, device_memory, 0, size, 0, &mapped));
-    mapped_memory = reinterpret_cast<char *>(mapped);
+    check(vkMapMemory(ctx.device, device_memory, 0, size, 0, reinterpret_cast<void**>(&mapped_memory)));
 }
 
 dynamic_buffer::~dynamic_buffer()
@@ -691,15 +687,31 @@ dynamic_buffer::~dynamic_buffer()
 
 void dynamic_buffer::reset() 
 { 
-    offset = 0; 
+    offset = range = 0; 
 }
 
-VkDescriptorBufferInfo dynamic_buffer::write(size_t size, const void * data)
+void dynamic_buffer::begin() 
+{ 
+    offset += (range + mem_reqs.alignment - 1) / mem_reqs.alignment * mem_reqs.alignment;
+    range = 0;
+}
+
+void dynamic_buffer::write(size_t size, const void * data)
 {
-    VkDescriptorBufferInfo info {buffer, offset, size};
-    memcpy(mapped_memory + offset, data, size);
-    offset = (offset + size + 1023)/1024*1024; // TODO: Determine actual alignment
-    return info;
+    memcpy(mapped_memory + offset + range, data, size); 
+    range += size;
+}
+
+VkDescriptorBufferInfo dynamic_buffer::end()
+{
+    return {buffer, offset, range};
+}
+
+VkDescriptorBufferInfo dynamic_buffer::upload(size_t size, const void * data)
+{
+    begin();
+    write(size, data);
+    return end();
 }
 
 /////////////////////////////

@@ -147,24 +147,22 @@ template<class T> struct reserved_range
 class dynamic_buffer
 {
     context & ctx;
-    VkBuffer buffer;
-    VkDeviceMemory device_memory;
-    char * mapped_memory;
-    VkDeviceSize offset {};
+    VkBuffer buffer {};
+    VkMemoryRequirements mem_reqs {};
+    VkDeviceMemory device_memory {};
+    char * mapped_memory {};
+    VkDeviceSize offset {}, range {};
 public:
     dynamic_buffer(context & ctx, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memory_properties);
     ~dynamic_buffer();
 
     void reset();
-    VkDescriptorBufferInfo write(size_t size, const void * data);
+    
+    void begin();
+    void write(size_t size, const void * data);
+    VkDescriptorBufferInfo end();
 
-    template<class T> reserved_range<T> reserve_range(size_t count)
-    {
-        size_t size = sizeof(T)*count;
-        VkDescriptorBufferInfo info {buffer, offset, size};
-        offset = (offset + size + 1023)/1024*1024; // TODO: Determine actual alignment
-        return {info, reinterpret_cast<T *>(mapped_memory + info.offset)};
-    }
+    VkDescriptorBufferInfo upload(size_t size, const void * data);
 };
 
 // Manages the allocation of short-lived resources which can be recycled in a single call, protected by a fence
@@ -185,9 +183,15 @@ public:
     void reset();
     VkCommandBuffer allocate_command_buffer();
     VkDescriptorSet allocate_descriptor_set(VkDescriptorSetLayout layout);
-    VkDescriptorBufferInfo write_data(size_t size, const void * data) { return uniform_buffer.write(size, data); }
-    VkDescriptorBufferInfo write_vertex_data(size_t size, const void * data) { return vertex_buffer.write(size, data); }
-    template<class T> reserved_range<T> reserve_instances(size_t count) { return vertex_buffer.reserve_range<T>(count); }
+    VkDescriptorBufferInfo write_data(size_t size, const void * data) { return uniform_buffer.upload(size, data); }
+
+    void begin_vertices() { vertex_buffer.begin(); }
+    template<class T> void write_vertex(const T & vertex) { vertex_buffer.write(sizeof(vertex), &vertex); }
+    VkDescriptorBufferInfo end_vertices() { return vertex_buffer.end(); }
+
+    void begin_instances() { begin_vertices(); }
+    template<class T> void write_instance(const T & instance) { write_vertex(instance); }
+    VkDescriptorBufferInfo end_instances() { return end_vertices(); }
 
     VkFence get_fence() { return fence; }
 
