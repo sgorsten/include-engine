@@ -4,49 +4,46 @@
     <Filter Include="shaders">
       <UniqueIdentifier>{f92d6ba4-fdff-4171-bb8e-2635778959a0}</UniqueIdentifier>
     </Filter>
-    <Filter Include="shaders\include">
+    <Filter Include="shaders\scene">
       <UniqueIdentifier>{9d175d6f-ca37-43c0-a2b8-d3908f41be17}</UniqueIdentifier>
     </Filter>
-    <Filter Include="shaders\vert">
-      <UniqueIdentifier>{e832d936-87a7-48ee-8a2a-bc839c5ece99}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="shaders\frag">
-      <UniqueIdentifier>{cea8f4ac-4e86-411f-9da4-ae0c3ad6e173}</UniqueIdentifier>
+    <Filter Include="shaders\post">
+      <UniqueIdentifier>{c778ee4b-8956-46a6-90ab-2f1cd758b5fa}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="assets\scene.glsl">
-      <Filter>shaders\include</Filter>
+      <Filter>shaders\scene</Filter>
     </None>
     <None Include="assets\image.vert">
-      <Filter>shaders\vert</Filter>
-    </None>
-    <None Include="assets\static.vert">
-      <Filter>shaders\vert</Filter>
-    </None>
-    <None Include="assets\particle.vert">
-      <Filter>shaders\vert</Filter>
-    </None>
-    <None Include="assets\add.frag">
-      <Filter>shaders\frag</Filter>
-    </None>
-    <None Include="assets\glow.frag">
-      <Filter>shaders\frag</Filter>
-    </None>
-    <None Include="assets\hgauss.frag">
-      <Filter>shaders\frag</Filter>
-    </None>
-    <None Include="assets\hipass.frag">
-      <Filter>shaders\frag</Filter>
-    </None>
-    <None Include="assets\shader.frag">
-      <Filter>shaders\frag</Filter>
+      <Filter>shaders\post</Filter>
     </None>
     <None Include="assets\vgauss.frag">
-      <Filter>shaders\frag</Filter>
+      <Filter>shaders\post</Filter>
+    </None>
+    <None Include="assets\hgauss.frag">
+      <Filter>shaders\post</Filter>
+    </None>
+    <None Include="assets\hipass.frag">
+      <Filter>shaders\post</Filter>
+    </None>
+    <None Include="assets\add.frag">
+      <Filter>shaders\post</Filter>
+    </None>
+    <None Include="assets\static.vert">
+      <Filter>shaders\scene</Filter>
     </None>
     <None Include="assets\particle.frag">
-      <Filter>shaders\frag</Filter>
+      <Filter>shaders\scene</Filter>
+    </None>
+    <None Include="assets\particle.vert">
+      <Filter>shaders\scene</Filter>
+    </None>
+    <None Include="assets\shader.frag">
+      <Filter>shaders\scene</Filter>
+    </None>
+    <None Include="assets\glow.frag">
+      <Filter>shaders\scene</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
