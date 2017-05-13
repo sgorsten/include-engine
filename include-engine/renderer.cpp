@@ -11,8 +11,8 @@ VkPipelineVertexInputStateCreateInfo vertex_format::get_vertex_input_state() con
     return {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO, nullptr, 0, static_cast<uint32_t>(bindings.size()), bindings.data(), static_cast<uint32_t>(attributes.size()), attributes.data()};
 }
 
-scene_contract::scene_contract(context & ctx, VkRenderPass render_pass, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings) : 
-    ctx{ctx}, render_pass{render_pass}, per_scene_layout{ctx.create_descriptor_set_layout(per_scene_bindings)}, per_view_layout{ctx.create_descriptor_set_layout(per_view_bindings)},
+scene_contract::scene_contract(context & ctx, array_view<VkRenderPass> render_passes, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings) : 
+    ctx{ctx}, render_passes{render_passes.begin(), render_passes.end()}, per_scene_layout{ctx.create_descriptor_set_layout(per_scene_bindings)}, per_view_layout{ctx.create_descriptor_set_layout(per_view_bindings)},
     example_layout{ctx.create_pipeline_layout({per_scene_layout, per_view_layout})} {}
 
 scene_contract::~scene_contract()
@@ -48,12 +48,12 @@ scene_pipeline::scene_pipeline(std::shared_ptr<scene_pipeline_layout> layout, st
 {
     std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
     for(auto & s : stages) shader_stages.push_back(s->get_shader_stage());
-    pipeline = make_pipeline(layout->get_device(), layout->get_render_pass(), layout->get_pipeline_layout(), format->get_vertex_input_state(), shader_stages, depth_write, depth_test, additive_blending); 
+    for(auto & p : layout->get_contract().get_render_passes()) pipelines.push_back(make_pipeline(layout->get_device(), p, layout->get_pipeline_layout(), format->get_vertex_input_state(), shader_stages, depth_write, depth_test, additive_blending));
 }
     
 scene_pipeline::~scene_pipeline()
 {
-    vkDestroyPipeline(layout->get_device(), pipeline, nullptr);
+    for(auto & p : pipelines) vkDestroyPipeline(layout->get_device(), p, nullptr);
 }
 
 void scene_descriptor_set::write_uniform_buffer(uint32_t binding, uint32_t array_element, VkDescriptorBufferInfo info)
@@ -105,11 +105,12 @@ void draw_list::draw(const scene_pipeline & pipeline, const scene_descriptor_set
     draw(pipeline, descriptors, mesh, {}, 0);
 }
 
-void draw_list::write_commands(VkCommandBuffer cmd) const
+void draw_list::write_commands(VkCommandBuffer cmd, VkRenderPass render_pass) const
 {
+    auto render_pass_index = contract.get_render_pass_index(render_pass);
     for(auto & item : items)
     {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, item.pipeline->get_pipeline());
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, item.pipeline->get_pipeline(render_pass_index));
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, item.pipeline->get_pipeline_layout(), 2, {item.set}, {});
         vkCmdBindVertexBuffers(cmd, 0, item.vertex_buffer_count, item.vertex_buffers, item.vertex_buffer_offsets);
         vkCmdBindIndexBuffer(cmd, item.index_buffer, item.index_buffer_offset, VkIndexType::VK_INDEX_TYPE_UINT32);
@@ -127,9 +128,9 @@ std::shared_ptr<vertex_format> renderer::create_vertex_format(array_view<VkVerte
     return std::make_shared<vertex_format>(bindings, attributes);
 }
 
-std::shared_ptr<scene_contract> renderer::create_contract(VkRenderPass render_pass, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings)
+std::shared_ptr<scene_contract> renderer::create_contract(array_view<VkRenderPass> render_passes, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings)
 {
-    return std::make_shared<scene_contract>(ctx, render_pass, per_scene_bindings, per_view_bindings);
+    return std::make_shared<scene_contract>(ctx, render_passes, per_scene_bindings, per_view_bindings);
 }
 
 std::shared_ptr<scene_pipeline_layout> renderer::create_pipeline_layout(std::shared_ptr<scene_contract> contract, array_view<VkDescriptorSetLayoutBinding> per_object_bindings)

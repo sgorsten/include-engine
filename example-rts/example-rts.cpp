@@ -91,16 +91,14 @@ int main() try
         {0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(mesh::vertex, position)}, 
         {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(mesh::vertex, texcoord)}
     });
-
-    auto post_contract = r.create_contract(post_render_pass, {}, {})
-
+    
     auto hipass_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, image_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), hipass_frag_shader->get_shader_stage()}, false, false, false);
     auto hgauss_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, image_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), hgauss_frag_shader->get_shader_stage()}, false, false, false);
     auto vgauss_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, image_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), vgauss_frag_shader->get_shader_stage()}, false, false, false);
     auto add_pipe = make_pipeline(ctx.device, final_render_pass, add_pipe_layout, image_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), add_frag_shader->get_shader_stage()}, false, false, false);
     
     // Load our game resources
-    auto contract = r.create_contract(fb_render_pass, {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, 
+    auto contract = r.create_contract({fb_render_pass}, {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, 
         {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}});
     const game::resources res {r, contract};
 
@@ -205,7 +203,7 @@ int main() try
         // Begin render pass
         VkRect2D render_area {{0,0},{win.get_dims().x,win.get_dims().y}};
         vkCmdBeginRenderPass(cmd, fb_render_pass, main_framebuffer, render_area, {{0, 0, 0, 1}, {1.0f, 0}});
-        list.write_commands(cmd);
+        list.write_commands(cmd, fb_render_pass);
         vkCmdEndRenderPass(cmd); 
 
         auto hipass_descriptors = pool.allocate_descriptor_set(gauss_desc_layout);

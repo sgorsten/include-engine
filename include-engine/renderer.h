@@ -3,6 +3,7 @@
 
 #include "vulkan.h" // For Vulkan API access
 #include "load.h"   // For shader_compiler
+#include <map>
 
 class shader
 {
@@ -60,14 +61,16 @@ class scene_contract
 {
     friend class scene_pipeline_layout;
     context & ctx;
-    VkRenderPass render_pass;
-    VkDescriptorSetLayout per_scene_layout; // Descriptors which are shared by the entire scene
-    VkDescriptorSetLayout per_view_layout;  // Descriptors which vary per unique view into the scene
-    VkPipelineLayout example_layout;        // Layout for a pipeline which has no per-object descriptor set
+    std::vector<VkRenderPass> render_passes;    // List of possible render passes that pipelines obeying this contract can participate in
+    VkDescriptorSetLayout per_scene_layout;     // Descriptors which are shared by the entire scene
+    VkDescriptorSetLayout per_view_layout;      // Descriptors which vary per unique view into the scene
+    VkPipelineLayout example_layout;            // Layout for a pipeline which has no per-object descriptor set
 public:
-    scene_contract(context & ctx, VkRenderPass render_pass, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings);
+    scene_contract(context & ctx, array_view<VkRenderPass> render_passes, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings);
     ~scene_contract();
 
+    std::vector<VkRenderPass> get_render_passes() const { return render_passes; }
+    size_t get_render_pass_index(VkRenderPass pass) const { for(size_t i=0; i<render_passes.size(); ++i) if(render_passes[i] == pass) return i; throw std::logic_error("render pass not part of contract"); }
     VkDescriptorSetLayout get_per_scene_layout() const { return per_scene_layout; }
     VkDescriptorSetLayout get_per_view_layout() const { return per_view_layout; }
     VkPipelineLayout get_example_layout() const { return example_layout; }
@@ -89,7 +92,6 @@ public:
 
     const scene_contract & get_contract() const { return *contract; }
     VkDevice get_device() const { return contract->ctx.device; }
-    VkRenderPass get_render_pass() const { return contract->render_pass; }
     VkDescriptorSetLayout get_per_object_descriptor_set_layout() const { return per_object_layout; }
     VkPipelineLayout get_pipeline_layout() const { return pipeline_layout; }
 };
@@ -101,14 +103,14 @@ public:
 class scene_pipeline
 {
     std::shared_ptr<scene_pipeline_layout> layout;
-    VkPipeline pipeline;
+    std::vector<VkPipeline> pipelines;
 public:
     scene_pipeline(std::shared_ptr<scene_pipeline_layout> layout, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending);
     ~scene_pipeline();
 
     const scene_contract & get_contract() const { return layout->get_contract(); }
     const scene_pipeline_layout & get_layout() const { return *layout; }
-    VkPipeline get_pipeline() const { return pipeline; }
+    VkPipeline get_pipeline(size_t render_pass_index) const { return pipelines[render_pass_index]; }
     VkPipelineLayout get_pipeline_layout() const { return layout->get_pipeline_layout(); }
     VkDescriptorSetLayout get_per_object_descriptor_set_layout() const { return layout->get_per_object_descriptor_set_layout(); }
 };
@@ -166,7 +168,7 @@ struct draw_list
     void draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, VkDescriptorBufferInfo instances, size_t instance_stride);
     void draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls);
     void draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh);
-    void write_commands(VkCommandBuffer cmd) const;
+    void write_commands(VkCommandBuffer cmd, VkRenderPass render_pass) const;
 };
 
 class renderer
@@ -180,7 +182,7 @@ public:
 
     std::shared_ptr<shader> create_shader(VkShaderStageFlagBits stage, const char * filename);
     std::shared_ptr<vertex_format> create_vertex_format(array_view<VkVertexInputBindingDescription> bindings, array_view<VkVertexInputAttributeDescription> attributes);
-    std::shared_ptr<scene_contract> create_contract(VkRenderPass render_pass, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings);
+    std::shared_ptr<scene_contract> create_contract(array_view<VkRenderPass> render_passes, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings);
     std::shared_ptr<scene_pipeline_layout> create_pipeline_layout(std::shared_ptr<scene_contract> contract, array_view<VkDescriptorSetLayoutBinding> per_object_bindings);
     std::shared_ptr<scene_pipeline> create_pipeline(std::shared_ptr<scene_pipeline_layout> layout, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending);
 };
