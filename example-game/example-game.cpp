@@ -107,7 +107,7 @@ int main() try
     );
 
     renderer r {ctx};
-    auto contract = r.create_contract(render_pass, {
+    auto contract = r.create_contract({render_pass}, {
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
     }, {
@@ -289,26 +289,9 @@ int main() try
 
         // Begin render pass
         const uint32_t index = win.begin();
-
-        VkClearValue clear_values[] {{0, 0, 0, 1}, {1.0f, 0}};
         const uint2 dims = win.get_dims();
-        VkRenderPassBeginInfo pass_begin_info {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-        pass_begin_info.renderPass = render_pass;
-        pass_begin_info.framebuffer = swapchain_framebuffers[index];
-        pass_begin_info.renderArea.offset = {0, 0};
-        pass_begin_info.renderArea.extent = {dims.x, dims.y};
-        pass_begin_info.clearValueCount = countof(clear_values);
-        pass_begin_info.pClearValues = clear_values;
-        vkCmdBeginRenderPass(cmd, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
-
-        const VkViewport viewport {0, 0, static_cast<float>(dims.x), static_cast<float>(dims.y), 0.0f, 1.0f};
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
-
-        const VkRect2D scissor {0, 0, dims.x, dims.y};
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-        list.write_commands(cmd);
-
+        vkCmdBeginRenderPass(cmd, render_pass, swapchain_framebuffers[index], {{0,0},{dims.x,dims.y}}, {{0, 0, 0, 1}, {1.0f, 0}});
+        list.write_commands(cmd, render_pass);
         vkCmdEndRenderPass(cmd); 
         check(vkEndCommandBuffer(cmd)); 
 
