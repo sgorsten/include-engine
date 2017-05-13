@@ -78,7 +78,7 @@ namespace game
         std::shared_ptr<texture_2d> unit1_tex;
         std::shared_ptr<texture_2d> bullet_tex;
         std::shared_ptr<texture_2d> particle_tex;
-        VkSampler linear_sampler;
+        std::shared_ptr<sampler> linear_sampler;
 
         resources(renderer & r, std::shared_ptr<scene_contract> contract);
     };

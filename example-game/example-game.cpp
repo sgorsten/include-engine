@@ -62,23 +62,23 @@ int main() try
     constexpr coord_system vk_coords {coord_axis::right, coord_axis::down, coord_axis::forward};
     constexpr coord_system cubemap_coords {coord_axis::right, coord_axis::up, coord_axis::back};
 
-    context ctx;
+    renderer r;
 
     // Create our textures
-    texture_2d black_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({0,0,0,255}));
-    texture_2d gray_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({128,128,128,255}));
-    texture_2d flat_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({128,128,255,255}));
-    texture_2d helmet_albedo(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-albedo.jpg"));
-    texture_2d helmet_normal(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-normal.jpg"));
-    texture_2d helmet_metallic(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-metallic.jpg"));
-    texture_2d mutant_albedo(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/mutant-albedo.jpg"));
-    texture_2d mutant_normal(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/mutant-normal.jpg"));
-    texture_2d akai_albedo(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/akai-albedo.jpg"));
-    texture_2d akai_normal(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/akai-normal.jpg"));
-    texture_2d map_2_island(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/map_2_island.jpg"));
-    texture_2d map_2_objects(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/map_2_objects.jpg"));
-    texture_2d map_2_terrain(ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/map_2_terrain.jpg"));
-    texture_cube env_tex(ctx, VK_FORMAT_R8G8B8A8_UNORM, 
+    texture_2d black_tex(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({0,0,0,255}));
+    texture_2d gray_tex(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({128,128,128,255}));
+    texture_2d flat_tex(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({128,128,255,255}));
+    texture_2d helmet_albedo(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-albedo.jpg"));
+    texture_2d helmet_normal(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-normal.jpg"));
+    texture_2d helmet_metallic(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-metallic.jpg"));
+    texture_2d mutant_albedo(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/mutant-albedo.jpg"));
+    texture_2d mutant_normal(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/mutant-normal.jpg"));
+    texture_2d akai_albedo(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/akai-albedo.jpg"));
+    texture_2d akai_normal(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/akai-normal.jpg"));
+    texture_2d map_2_island(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/map_2_island.jpg"));
+    texture_2d map_2_objects(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/map_2_objects.jpg"));
+    texture_2d map_2_terrain(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/map_2_terrain.jpg"));
+    texture_cube env_tex(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, 
         load_image("assets/posx.jpg"), load_image("assets/negx.jpg"), 
         load_image("assets/posy.jpg"), load_image("assets/negy.jpg"),
         load_image("assets/posz.jpg"), load_image("assets/negz.jpg"));
@@ -90,24 +90,22 @@ int main() try
     sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     sampler_info.maxLod = 11;
     sampler_info.minLod = 0;
-    VkSampler sampler;
-    check(vkCreateSampler(ctx.device, &sampler_info, nullptr, &sampler));
+    sampler sampler {r.ctx, sampler_info};
 
     // Create our meshes
-    gfx_mesh helmet_mesh {ctx, load_meshes_from_fbx(game_coords, "assets/helmet-mesh.fbx")[0]};
-    gfx_mesh mutant_mesh {ctx, load_meshes_from_fbx(game_coords, "assets/mutant-mesh.fbx")[0]};
-    gfx_mesh skybox_mesh {ctx, invert_faces(generate_box_mesh({-10,-10,-10}, {10,10,10}))};
-    gfx_mesh box_mesh {ctx, load_meshes_from_fbx(game_coords, "assets/cube-mesh.fbx")[0]};
-    gfx_mesh sands_mesh {ctx, load_mesh_from_obj(game_coords, "assets/sands location.obj")};
+    gfx_mesh helmet_mesh {r.ctx, load_meshes_from_fbx(game_coords, "assets/helmet-mesh.fbx")[0]};
+    gfx_mesh mutant_mesh {r.ctx, load_meshes_from_fbx(game_coords, "assets/mutant-mesh.fbx")[0]};
+    gfx_mesh skybox_mesh {r.ctx, invert_faces(generate_box_mesh({-10,-10,-10}, {10,10,10}))};
+    gfx_mesh box_mesh {r.ctx, load_meshes_from_fbx(game_coords, "assets/cube-mesh.fbx")[0]};
+    gfx_mesh sands_mesh {r.ctx, load_mesh_from_obj(game_coords, "assets/sands location.obj")};
 
     // Set up scene contract
-    auto render_pass = ctx.create_render_pass(
-        {make_attachment_description(ctx.selection.surface_format.format, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)},
+    render_pass render_pass {r.ctx,
+        {make_attachment_description(r.get_swapchain_surface_format(), VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)},
         make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED)
-    );
+    };
 
-    renderer r {ctx};
-    auto contract = r.create_contract({render_pass}, {
+    auto contract = r.create_contract({render_pass.get_vk_handle()}, {
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
     }, {
@@ -146,12 +144,12 @@ int main() try
     auto skybox_pipeline  = r.create_pipeline(skybox_layout,   mesh_vertex_format, {skybox_vert_shader, skybox_frag_shader}, false, false, false);
 
     // Set up a window with swapchain framebuffers
-    window win {ctx, {1280, 720}, "Example Game"};
-    auto depth = make_depth_buffer(ctx, win.get_dims());
+    window win {r.ctx, {1280, 720}, "Example Game"};
+    auto depth = make_depth_buffer(r.ctx, win.get_dims());
 
     // Create framebuffers
-    std::vector<VkFramebuffer> swapchain_framebuffers;
-    for(auto & view : win.get_swapchain_image_views()) swapchain_framebuffers.push_back(ctx.create_framebuffer(render_pass, {view, depth.get_image_view()}, win.get_dims()));
+    std::vector<std::shared_ptr<framebuffer>> swapchain_framebuffers;
+    for(auto & view : win.get_swapchain_image_views()) swapchain_framebuffers.push_back(r.create_framebuffer(render_pass.get_vk_handle(), {view, depth.get_image_view()}, win.get_dims()));
 
     // Set up our transient resource pools
     const VkDescriptorPoolSize pool_sizes[]
@@ -161,9 +159,9 @@ int main() try
     };
     transient_resource_pool pools[3]
     {
-        {ctx, pool_sizes, 1024},
-        {ctx, pool_sizes, 1024},
-        {ctx, pool_sizes, 1024},
+        {r.ctx, pool_sizes, 1024},
+        {r.ctx, pool_sizes, 1024},
+        {r.ctx, pool_sizes, 1024},
     };
     int frame_index = 0;
 
@@ -215,9 +213,9 @@ int main() try
 
             scene_descriptor_set helmet_descriptors {pool, *helmet_pipeline};
             helmet_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{30, 0, 20}), helmet_mesh.m.bones[0].initial_pose.get_local_transform(), helmet_mesh.m.bones[0].model_to_bone_matrix)}));
-            helmet_descriptors.write_combined_image_sampler(1, 0, sampler, helmet_albedo);
-            helmet_descriptors.write_combined_image_sampler(2, 0, sampler, helmet_normal);
-            helmet_descriptors.write_combined_image_sampler(3, 0, sampler, helmet_metallic);
+            helmet_descriptors.write_combined_image_sampler(1, 0, sampler.get_vk_handle(), helmet_albedo);
+            helmet_descriptors.write_combined_image_sampler(2, 0, sampler.get_vk_handle(), helmet_normal);
+            helmet_descriptors.write_combined_image_sampler(3, 0, sampler.get_vk_handle(), helmet_metallic);
             list.draw(*helmet_pipeline, helmet_descriptors, helmet_mesh);
 
             if(++anim_frame >= mutant_mesh.m.animations[0].keyframes.size()) anim_frame = 0;
@@ -229,35 +227,35 @@ int main() try
 
             scene_descriptor_set mutant_descriptors {pool, *skinned_pipeline};
             mutant_descriptors.write_uniform_buffer(0, 0, podata);
-            mutant_descriptors.write_combined_image_sampler(1, 0, sampler, mutant_albedo);
-            mutant_descriptors.write_combined_image_sampler(2, 0, sampler, mutant_normal);
-            mutant_descriptors.write_combined_image_sampler(3, 0, sampler, black_tex);
+            mutant_descriptors.write_combined_image_sampler(1, 0, sampler.get_vk_handle(), mutant_albedo);
+            mutant_descriptors.write_combined_image_sampler(2, 0, sampler.get_vk_handle(), mutant_normal);
+            mutant_descriptors.write_combined_image_sampler(3, 0, sampler.get_vk_handle(), black_tex);
             list.draw(*skinned_pipeline, mutant_descriptors, mutant_mesh, {0,1,3});
 
             scene_descriptor_set akai_descriptors {pool, *skinned_pipeline};
             akai_descriptors.write_uniform_buffer(0, 0, podata);
-            akai_descriptors.write_combined_image_sampler(1, 0, sampler, akai_albedo);
-            akai_descriptors.write_combined_image_sampler(2, 0, sampler, akai_normal);
-            akai_descriptors.write_combined_image_sampler(3, 0, sampler, black_tex);
+            akai_descriptors.write_combined_image_sampler(1, 0, sampler.get_vk_handle(), akai_albedo);
+            akai_descriptors.write_combined_image_sampler(2, 0, sampler.get_vk_handle(), akai_normal);
+            akai_descriptors.write_combined_image_sampler(3, 0, sampler.get_vk_handle(), black_tex);
             list.draw(*skinned_pipeline, akai_descriptors, mutant_mesh, {2});
        
             scene_descriptor_set box_descriptors {pool, *static_pipeline};
             box_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{-30,0,20}), scaling_matrix(float3{4,4,4}))}));
-            box_descriptors.write_combined_image_sampler(1, 0, sampler, gray_tex);
-            box_descriptors.write_combined_image_sampler(2, 0, sampler, flat_tex);
-            box_descriptors.write_combined_image_sampler(3, 0, sampler, black_tex);
+            box_descriptors.write_combined_image_sampler(1, 0, sampler.get_vk_handle(), gray_tex);
+            box_descriptors.write_combined_image_sampler(2, 0, sampler.get_vk_handle(), flat_tex);
+            box_descriptors.write_combined_image_sampler(3, 0, sampler.get_vk_handle(), black_tex);
             list.draw(*static_pipeline, box_descriptors, box_mesh);
         
             for(size_t i=0; i<sands_mesh.m.materials.size(); ++i)
             {
                 scene_descriptor_set sands_descriptors {pool, *static_pipeline};
                 sands_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{0,27,-64}), scaling_matrix(float3{10,10,10}))}));
-                if(sands_mesh.m.materials[i].name == "map_2_island1") sands_descriptors.write_combined_image_sampler(1, 0, sampler, map_2_island);
-                else if(sands_mesh.m.materials[i].name == "map_2_object1") sands_descriptors.write_combined_image_sampler(1, 0, sampler, map_2_objects);
-                else if(sands_mesh.m.materials[i].name == "map_2_terrain1") sands_descriptors.write_combined_image_sampler(1, 0, sampler, map_2_terrain);
-                else sands_descriptors.write_combined_image_sampler(1, 0, sampler, gray_tex);
-                sands_descriptors.write_combined_image_sampler(2, 0, sampler, flat_tex);
-                sands_descriptors.write_combined_image_sampler(3, 0, sampler, black_tex);
+                if(sands_mesh.m.materials[i].name == "map_2_island1") sands_descriptors.write_combined_image_sampler(1, 0, sampler.get_vk_handle(), map_2_island);
+                else if(sands_mesh.m.materials[i].name == "map_2_object1") sands_descriptors.write_combined_image_sampler(1, 0, sampler.get_vk_handle(), map_2_objects);
+                else if(sands_mesh.m.materials[i].name == "map_2_terrain1") sands_descriptors.write_combined_image_sampler(1, 0, sampler.get_vk_handle(), map_2_terrain);
+                else sands_descriptors.write_combined_image_sampler(1, 0, sampler.get_vk_handle(), gray_tex);
+                sands_descriptors.write_combined_image_sampler(2, 0, sampler.get_vk_handle(), flat_tex);
+                sands_descriptors.write_combined_image_sampler(3, 0, sampler.get_vk_handle(), black_tex);
                 list.draw(*static_pipeline, sands_descriptors, sands_mesh, {i});
             }
         }
@@ -275,11 +273,11 @@ int main() try
         pv.eye_position = camera.position;
 
         VkDescriptorSet per_scene = pool.allocate_descriptor_set(list.contract.get_per_scene_layout());
-        vkWriteDescriptorBufferInfo(ctx.device, per_scene, 0, 0, pool.write_data(ps));      
-        vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, per_scene, 1, 0, {sampler, env_tex, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        vkWriteDescriptorBufferInfo(r.get_device(), per_scene, 0, 0, pool.write_data(ps));      
+        vkWriteDescriptorCombinedImageSamplerInfo(r.get_device(), per_scene, 1, 0, {sampler.get_vk_handle(), env_tex, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
 
         VkDescriptorSet per_view = pool.allocate_descriptor_set(list.contract.get_per_view_layout());
-        vkWriteDescriptorBufferInfo(ctx.device, per_view, 0, 0, pool.write_data(pv));
+        vkWriteDescriptorBufferInfo(r.get_device(), per_view, 0, 0, pool.write_data(pv));
 
         VkCommandBuffer cmd = pool.allocate_command_buffer();
 
@@ -290,8 +288,8 @@ int main() try
         // Begin render pass
         const uint32_t index = win.begin();
         const uint2 dims = win.get_dims();
-        vkCmdBeginRenderPass(cmd, render_pass, swapchain_framebuffers[index], {{0,0},{dims.x,dims.y}}, {{0, 0, 0, 1}, {1.0f, 0}});
-        list.write_commands(cmd, render_pass);
+        vkCmdBeginRenderPass(cmd, render_pass.get_vk_handle(), swapchain_framebuffers[index]->get_vk_handle(), {{0,0},{dims.x,dims.y}}, {{0, 0, 0, 1}, {1.0f, 0}});
+        list.write_commands(cmd, render_pass.get_vk_handle());
         vkCmdEndRenderPass(cmd); 
         check(vkEndCommandBuffer(cmd)); 
 
@@ -300,10 +298,7 @@ int main() try
         glfwPollEvents();
     }
 
-    vkDeviceWaitIdle(ctx.device);
-    vkDestroySampler(ctx.device, sampler, nullptr);
-    for(auto framebuffer : swapchain_framebuffers) vkDestroyFramebuffer(ctx.device, framebuffer, nullptr);
-    vkDestroyRenderPass(ctx.device, render_pass, nullptr);    
+    vkDeviceWaitIdle(r.get_device()); 
     return EXIT_SUCCESS;
 }
 catch(const std::exception & e)

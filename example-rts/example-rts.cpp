@@ -24,9 +24,10 @@ struct fps_camera
     float4x4 get_view_matrix(const coord_system & c) const { return pose_matrix(inverse(get_pose(c))); }
 };
 
-void draw_fullscreen_pass(VkCommandBuffer cmd, VkRenderPass render_pass, VkFramebuffer framebuffer, const VkRect2D & rect, scene_pipeline & pipeline, VkDescriptorSet descriptors, const gfx_mesh & fullscreen_quad)
+void draw_fullscreen_pass(VkCommandBuffer cmd, VkRenderPass render_pass, framebuffer & fb, scene_pipeline & pipeline, VkDescriptorSet descriptors, const gfx_mesh & fullscreen_quad)
 {
-    vkCmdBeginRenderPass(cmd, render_pass, framebuffer, rect, {});  
+    const auto dims = fb.get_dimensions();
+    vkCmdBeginRenderPass(cmd, render_pass, fb.get_vk_handle(), {{0,0}, {dims.x,dims.y}}, {});  
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.get_pipeline(pipeline.get_contract().get_render_pass_index(render_pass)));
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.get_pipeline_layout(), 2, {descriptors}, {});
     vkCmdBindVertexBuffers(cmd, 0, {*fullscreen_quad.vertex_buffer}, {0});
@@ -41,12 +42,10 @@ int main() try
 
     game::state g;
 
-    context ctx;
-    renderer r {ctx};
+    renderer r;
 
-    gfx_mesh quad_mesh {ctx, generate_fullscreen_quad()};
+    gfx_mesh quad_mesh {r.ctx, generate_fullscreen_quad()};
    
-
     // Create our sampler
     VkSamplerCreateInfo image_sampler_info {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     image_sampler_info.magFilter = VK_FILTER_LINEAR;
@@ -56,24 +55,23 @@ int main() try
     image_sampler_info.minLod = 0;
     image_sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     image_sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    VkSampler image_sampler;
-    check(vkCreateSampler(ctx.device, &image_sampler_info, nullptr, &image_sampler));
+    sampler image_sampler {r.ctx, image_sampler_info};
 
     // Set up scene contract
-    auto fb_render_pass = ctx.create_render_pass(
+    render_pass fb_render_pass {r.ctx,
         {make_attachment_description(VK_FORMAT_R16G16B16A16_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)},
         make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED)
-    );
-    auto post_render_pass = ctx.create_render_pass(
+    };
+    render_pass post_render_pass {r.ctx,
         {make_attachment_description(VK_FORMAT_R16G16B16A16_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)},
         std::nullopt
-    );
-    auto final_render_pass = ctx.create_render_pass(
-        {make_attachment_description(ctx.selection.surface_format.format, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)},
+    };
+    render_pass final_render_pass {r.ctx,
+        {make_attachment_description(r.get_swapchain_surface_format(), VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)},
         std::nullopt
-    );
+    };
 
-    auto post_contract = r.create_contract({post_render_pass, final_render_pass}, {}, {});
+    auto post_contract = r.create_contract({post_render_pass.get_vk_handle(), final_render_pass.get_vk_handle()}, {}, {});
 
     auto gauss_layout = r.create_pipeline_layout(post_contract, {{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}});
     auto add_layout = r.create_pipeline_layout(post_contract, {
@@ -98,23 +96,23 @@ int main() try
     auto add_pipe = r.create_pipeline(add_layout, image_vertex_format, {image_vert_shader, add_frag_shader}, false, false, false);
     
     // Load our game resources
-    auto contract = r.create_contract({fb_render_pass}, {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, 
+    auto contract = r.create_contract({fb_render_pass.get_vk_handle()}, {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, 
         {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}});
     const game::resources res {r, contract};
 
     // Set up a window with swapchain framebuffers
-    window win {ctx, {1280, 720}, "Example RTS"};
-    render_target color {ctx, win.get_dims(), VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
-    render_target color1 {ctx, win.get_dims(), VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
-    render_target color2 {ctx, win.get_dims(), VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
-    auto depth = make_depth_buffer(ctx, win.get_dims());
+    window win {r.ctx, {1280, 720}, "Example RTS"};
+    render_target color {r.ctx, win.get_dims(), VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
+    render_target color1 {r.ctx, win.get_dims(), VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
+    render_target color2 {r.ctx, win.get_dims(), VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
+    auto depth = make_depth_buffer(r.ctx, win.get_dims());
 
     // Create framebuffers
-    VkFramebuffer main_framebuffer = ctx.create_framebuffer(fb_render_pass, {color.get_image_view(), depth.get_image_view()}, win.get_dims());
-    VkFramebuffer aux_framebuffer1 = ctx.create_framebuffer(post_render_pass, {color1.get_image_view()}, win.get_dims());
-    VkFramebuffer aux_framebuffer2 = ctx.create_framebuffer(post_render_pass, {color2.get_image_view()}, win.get_dims());
-    std::vector<VkFramebuffer> swapchain_framebuffers;
-    for(auto & view : win.get_swapchain_image_views()) swapchain_framebuffers.push_back(ctx.create_framebuffer(final_render_pass, {view}, win.get_dims()));
+    auto main_framebuffer = r.create_framebuffer(fb_render_pass.get_vk_handle(), {color.get_image_view(), depth.get_image_view()}, win.get_dims());
+    auto aux_framebuffer1 = r.create_framebuffer(post_render_pass.get_vk_handle(), {color1.get_image_view()}, win.get_dims());
+    auto aux_framebuffer2 = r.create_framebuffer(post_render_pass.get_vk_handle(), {color2.get_image_view()}, win.get_dims());
+    std::vector<std::shared_ptr<framebuffer>> swapchain_framebuffers;
+    for(auto & view : win.get_swapchain_image_views()) swapchain_framebuffers.push_back(r.create_framebuffer(final_render_pass.get_vk_handle(), {view}, win.get_dims()));
 
     // Set up our transient resource pools
     const VkDescriptorPoolSize pool_sizes[]
@@ -124,9 +122,9 @@ int main() try
     };
     transient_resource_pool pools[3]
     {
-        {ctx, pool_sizes, 1024},
-        {ctx, pool_sizes, 1024},
-        {ctx, pool_sizes, 1024},
+        {r.ctx, pool_sizes, 1024},
+        {r.ctx, pool_sizes, 1024},
+        {r.ctx, pool_sizes, 1024},
     };
     int frame_index = 0;
 
@@ -189,10 +187,10 @@ int main() try
         pv.eye_y_axis = qrot(camera.get_orientation(game::coords), game::coords.get_down());
 
         VkDescriptorSet per_scene = pool.allocate_descriptor_set(list.contract.get_per_scene_layout());
-        vkWriteDescriptorBufferInfo(ctx.device, per_scene, 0, 0, pool.write_data(ps));      
+        vkWriteDescriptorBufferInfo(r.get_device(), per_scene, 0, 0, pool.write_data(ps));      
 
         VkDescriptorSet per_view = pool.allocate_descriptor_set(list.contract.get_per_view_layout());
-        vkWriteDescriptorBufferInfo(ctx.device, per_view, 0, 0, pool.write_data(pv));
+        vkWriteDescriptorBufferInfo(r.get_device(), per_view, 0, 0, pool.write_data(pv));
 
         VkCommandBuffer cmd = pool.allocate_command_buffer();
 
@@ -202,41 +200,32 @@ int main() try
 
         // Begin render pass
         VkRect2D render_area {{0,0},{win.get_dims().x,win.get_dims().y}};
-        vkCmdBeginRenderPass(cmd, fb_render_pass, main_framebuffer, render_area, {{0, 0, 0, 1}, {1.0f, 0}});
-        list.write_commands(cmd, fb_render_pass);
+        vkCmdBeginRenderPass(cmd, fb_render_pass.get_vk_handle(), main_framebuffer->get_vk_handle(), render_area, {{0, 0, 0, 1}, {1.0f, 0}});
+        list.write_commands(cmd, fb_render_pass.get_vk_handle());
         vkCmdEndRenderPass(cmd); 
 
-        auto hipass_descriptors = pool.allocate_descriptor_set(gauss_layout->get_per_object_descriptor_set_layout());
-        vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, hipass_descriptors, 0, 0, {image_sampler, color.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-        draw_fullscreen_pass(cmd, post_render_pass, aux_framebuffer1, render_area, *hipass_pipe, hipass_descriptors, quad_mesh);
+        scene_descriptor_set hipass_descriptors {pool, *gauss_layout};
+        hipass_descriptors.write_combined_image_sampler(0, 0, image_sampler.get_vk_handle(), color.get_image_view());
+        draw_fullscreen_pass(cmd, post_render_pass.get_vk_handle(), *aux_framebuffer1, *hipass_pipe, hipass_descriptors.get_descriptor_set(), quad_mesh);
 
-        auto hgauss_descriptors = pool.allocate_descriptor_set(gauss_layout->get_per_object_descriptor_set_layout());
-        vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, hgauss_descriptors, 0, 0, {image_sampler, color1.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-        draw_fullscreen_pass(cmd, post_render_pass, aux_framebuffer2, render_area, *hgauss_pipe, hgauss_descriptors, quad_mesh);
+        scene_descriptor_set hgauss_descriptors {pool, *gauss_layout};
+        hgauss_descriptors.write_combined_image_sampler(0, 0, image_sampler.get_vk_handle(), color1.get_image_view());
+        draw_fullscreen_pass(cmd, post_render_pass.get_vk_handle(), *aux_framebuffer2, *hgauss_pipe, hgauss_descriptors.get_descriptor_set(), quad_mesh);
 
-        auto vgauss_descriptors = pool.allocate_descriptor_set(gauss_layout->get_per_object_descriptor_set_layout());
-        vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, vgauss_descriptors, 0, 0, {image_sampler, color2.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-        draw_fullscreen_pass(cmd, post_render_pass, aux_framebuffer1, render_area, *vgauss_pipe, vgauss_descriptors, quad_mesh);
+        scene_descriptor_set vgauss_descriptors {pool, *gauss_layout};
+        vgauss_descriptors.write_combined_image_sampler(0, 0, image_sampler.get_vk_handle(), color2.get_image_view());
+        draw_fullscreen_pass(cmd, post_render_pass.get_vk_handle(), *aux_framebuffer1, *vgauss_pipe, vgauss_descriptors.get_descriptor_set(), quad_mesh);
 
-        auto add_descriptors = pool.allocate_descriptor_set(add_layout->get_per_object_descriptor_set_layout());
-        vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, add_descriptors, 0, 0, {image_sampler, color.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-        vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, add_descriptors, 1, 0, {image_sampler, color1.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        scene_descriptor_set add_descriptors {pool, *add_layout};
+        add_descriptors.write_combined_image_sampler(0, 0, image_sampler.get_vk_handle(), color.get_image_view());
+        add_descriptors.write_combined_image_sampler(1, 0, image_sampler.get_vk_handle(), color1.get_image_view());
         const uint32_t index = win.begin();
-        draw_fullscreen_pass(cmd, final_render_pass, swapchain_framebuffers[index], render_area, *add_pipe, add_descriptors, quad_mesh);
+        draw_fullscreen_pass(cmd, final_render_pass.get_vk_handle(), *swapchain_framebuffers[index], *add_pipe, add_descriptors.get_descriptor_set(), quad_mesh);
         check(vkEndCommandBuffer(cmd));
         win.end(index, {cmd}, pool.get_fence());
     }
 
-    vkDeviceWaitIdle(ctx.device);
-    vkDestroySampler(ctx.device, res.linear_sampler, nullptr);
-    vkDestroySampler(ctx.device, image_sampler, nullptr);
-    vkDestroyFramebuffer(ctx.device, main_framebuffer, nullptr);
-    vkDestroyFramebuffer(ctx.device, aux_framebuffer1, nullptr);
-    vkDestroyFramebuffer(ctx.device, aux_framebuffer2, nullptr);
-    for(auto framebuffer : swapchain_framebuffers) vkDestroyFramebuffer(ctx.device, framebuffer, nullptr);
-    vkDestroyRenderPass(ctx.device, fb_render_pass, nullptr);    
-    vkDestroyRenderPass(ctx.device, post_render_pass, nullptr);
-    vkDestroyRenderPass(ctx.device, final_render_pass, nullptr);   
+    vkDeviceWaitIdle(r.get_device());
     return EXIT_SUCCESS;
 }
 catch(const std::exception & e)

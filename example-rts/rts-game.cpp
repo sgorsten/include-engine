@@ -181,7 +181,7 @@ game::resources::resources(renderer & r, std::shared_ptr<scene_contract> contrac
     const particle_vertex particle_vertices[] {{{-0.5f,-0.5f}, {0,0}}, {{-0.5f,+0.5f}, {0,1}}, {{+0.5f,+0.5f}, {1,1}}, {{+0.5f,-0.5f}, {1,0}}};
     const uint32_t particle_indices[] {0, 1, 2, 0, 2, 3};
     particle_mesh = std::make_shared<gfx_mesh>(std::make_unique<static_buffer>(r.ctx, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(particle_vertices), particle_vertices),
-                                                   std::make_unique<static_buffer>(r.ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(particle_indices), particle_indices), 6);
+                                               std::make_unique<static_buffer>(r.ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(particle_indices), particle_indices), 6);
 
     // Load textures
     terrain_tex = std::make_shared<texture_2d>(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({127,85,60,255}));
@@ -197,7 +197,7 @@ game::resources::resources(renderer & r, std::shared_ptr<scene_contract> contrac
     sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     sampler_info.maxLod = 11;
     sampler_info.minLod = 0;
-    check(vkCreateSampler(r.ctx.device, &sampler_info, nullptr, &linear_sampler));
+    linear_sampler = std::make_shared<sampler>(r.ctx, sampler_info);
 
     // Create our scene contract
     auto layout = r.create_pipeline_layout(contract, {
@@ -254,7 +254,7 @@ void game::draw(draw_list & list, per_scene_uniforms & ps, const resources & r, 
     {
         auto descriptors = list.descriptor_set(*r.pipeline);
         descriptors.write_uniform_buffer(0, 0, list.upload_uniforms(per_static_object{translation_matrix(float3{0,0,0})}));
-        descriptors.write_combined_image_sampler(1, 0, r.linear_sampler, *r.terrain_tex);
+        descriptors.write_combined_image_sampler(1, 0, r.linear_sampler->get_vk_handle(), *r.terrain_tex);
         list.draw(*r.pipeline, descriptors, *r.terrain_mesh);
     }
 
@@ -267,7 +267,7 @@ void game::draw(draw_list & list, per_scene_uniforms & ps, const resources & r, 
     {
         auto descriptors = list.descriptor_set(*r.pipeline);
         descriptors.write_uniform_buffer(0, 0, list.upload_uniforms(per_static_object{u.get_model_matrix(), game::team_colors[u.owner]*std::max(u.cooldown*4-1.5f,0.0f)}));
-        descriptors.write_combined_image_sampler(1, 0, r.linear_sampler, u.owner ? *r.unit1_tex : *r.unit0_tex);
+        descriptors.write_combined_image_sampler(1, 0, r.linear_sampler->get_vk_handle(), u.owner ? *r.unit1_tex : *r.unit0_tex);
         list.draw(*r.pipeline, descriptors, u.owner ? *r.unit1_mesh : *r.unit0_mesh);
     }
 
@@ -280,7 +280,7 @@ void game::draw(draw_list & list, per_scene_uniforms & ps, const resources & r, 
     }
 
     auto particle_descriptors = list.descriptor_set(*r.particle_pipeline);
-    particle_descriptors.write_combined_image_sampler(0, 0, r.linear_sampler, *r.particle_tex);
+    particle_descriptors.write_combined_image_sampler(0, 0, r.linear_sampler->get_vk_handle(), *r.particle_tex);
     list.begin_instances();
     for(auto & p : s.particles) list.write_instance(particle_instance{p.position, p.life/3, p.color});           
     list.draw(*r.particle_pipeline, particle_descriptors, *r.particle_mesh, list.end_instances(), sizeof(particle_instance));
