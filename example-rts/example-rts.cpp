@@ -24,11 +24,11 @@ struct fps_camera
     float4x4 get_view_matrix(const coord_system & c) const { return pose_matrix(inverse(get_pose(c))); }
 };
 
-void draw_fullscreen_pass(VkCommandBuffer cmd, VkRenderPass render_pass, VkFramebuffer framebuffer, const VkRect2D & rect, VkPipeline pipeline, VkPipelineLayout pipeline_layout, VkDescriptorSet descriptors, const gfx_mesh & fullscreen_quad)
+void draw_fullscreen_pass(VkCommandBuffer cmd, VkRenderPass render_pass, VkFramebuffer framebuffer, const VkRect2D & rect, scene_pipeline & pipeline, VkDescriptorSet descriptors, const gfx_mesh & fullscreen_quad)
 {
     vkCmdBeginRenderPass(cmd, render_pass, framebuffer, rect, {});  
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, {descriptors}, {});
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.get_pipeline(pipeline.get_contract().get_render_pass_index(render_pass)));
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.get_pipeline_layout(), 2, {descriptors}, {});
     vkCmdBindVertexBuffers(cmd, 0, {*fullscreen_quad.vertex_buffer}, {0});
     vkCmdBindIndexBuffer(cmd, *fullscreen_quad.index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
     vkCmdDrawIndexed(cmd, fullscreen_quad.index_count, 1, 0, 0, 0);
@@ -73,13 +73,13 @@ int main() try
         std::nullopt
     );
 
-    auto gauss_desc_layout = ctx.create_descriptor_set_layout({{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}});
-    auto gauss_pipe_layout = ctx.create_pipeline_layout({gauss_desc_layout});
-    auto add_desc_layout = ctx.create_descriptor_set_layout({
+    auto post_contract = r.create_contract({post_render_pass, final_render_pass}, {}, {});
+
+    auto gauss_layout = r.create_pipeline_layout(post_contract, {{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}});
+    auto add_layout = r.create_pipeline_layout(post_contract, {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
     });
-    auto add_pipe_layout = ctx.create_pipeline_layout({add_desc_layout});
 
     auto image_vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/image.vert");
     auto hipass_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/hipass.frag");
@@ -92,10 +92,10 @@ int main() try
         {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(mesh::vertex, texcoord)}
     });
     
-    auto hipass_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, image_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), hipass_frag_shader->get_shader_stage()}, false, false, false);
-    auto hgauss_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, image_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), hgauss_frag_shader->get_shader_stage()}, false, false, false);
-    auto vgauss_pipe = make_pipeline(ctx.device, post_render_pass, gauss_pipe_layout, image_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), vgauss_frag_shader->get_shader_stage()}, false, false, false);
-    auto add_pipe = make_pipeline(ctx.device, final_render_pass, add_pipe_layout, image_vertex_format->get_vertex_input_state(), {image_vert_shader->get_shader_stage(), add_frag_shader->get_shader_stage()}, false, false, false);
+    auto hipass_pipe = r.create_pipeline(gauss_layout, image_vertex_format, {image_vert_shader, hipass_frag_shader}, false, false, false);
+    auto hgauss_pipe = r.create_pipeline(gauss_layout, image_vertex_format, {image_vert_shader, hgauss_frag_shader}, false, false, false);
+    auto vgauss_pipe = r.create_pipeline(gauss_layout, image_vertex_format, {image_vert_shader, vgauss_frag_shader}, false, false, false);
+    auto add_pipe = r.create_pipeline(add_layout, image_vertex_format, {image_vert_shader, add_frag_shader}, false, false, false);
     
     // Load our game resources
     auto contract = r.create_contract({fb_render_pass}, {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, 
@@ -206,36 +206,28 @@ int main() try
         list.write_commands(cmd, fb_render_pass);
         vkCmdEndRenderPass(cmd); 
 
-        auto hipass_descriptors = pool.allocate_descriptor_set(gauss_desc_layout);
+        auto hipass_descriptors = pool.allocate_descriptor_set(gauss_layout->get_per_object_descriptor_set_layout());
         vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, hipass_descriptors, 0, 0, {image_sampler, color.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-        draw_fullscreen_pass(cmd, post_render_pass, aux_framebuffer1, render_area, hipass_pipe, gauss_pipe_layout, hipass_descriptors, quad_mesh);
+        draw_fullscreen_pass(cmd, post_render_pass, aux_framebuffer1, render_area, *hipass_pipe, hipass_descriptors, quad_mesh);
 
-        auto hgauss_descriptors = pool.allocate_descriptor_set(gauss_desc_layout);
+        auto hgauss_descriptors = pool.allocate_descriptor_set(gauss_layout->get_per_object_descriptor_set_layout());
         vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, hgauss_descriptors, 0, 0, {image_sampler, color1.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-        draw_fullscreen_pass(cmd, post_render_pass, aux_framebuffer2, render_area, hgauss_pipe, gauss_pipe_layout, hgauss_descriptors, quad_mesh);
+        draw_fullscreen_pass(cmd, post_render_pass, aux_framebuffer2, render_area, *hgauss_pipe, hgauss_descriptors, quad_mesh);
 
-        auto vgauss_descriptors = pool.allocate_descriptor_set(gauss_desc_layout);
+        auto vgauss_descriptors = pool.allocate_descriptor_set(gauss_layout->get_per_object_descriptor_set_layout());
         vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, vgauss_descriptors, 0, 0, {image_sampler, color2.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-        draw_fullscreen_pass(cmd, post_render_pass, aux_framebuffer1, render_area, vgauss_pipe, gauss_pipe_layout, vgauss_descriptors, quad_mesh);
+        draw_fullscreen_pass(cmd, post_render_pass, aux_framebuffer1, render_area, *vgauss_pipe, vgauss_descriptors, quad_mesh);
 
-        auto add_descriptors = pool.allocate_descriptor_set(add_desc_layout);
+        auto add_descriptors = pool.allocate_descriptor_set(add_layout->get_per_object_descriptor_set_layout());
         vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, add_descriptors, 0, 0, {image_sampler, color.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
         vkWriteDescriptorCombinedImageSamplerInfo(ctx.device, add_descriptors, 1, 0, {image_sampler, color1.get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
         const uint32_t index = win.begin();
-        draw_fullscreen_pass(cmd, final_render_pass, swapchain_framebuffers[index], render_area, add_pipe, add_pipe_layout, add_descriptors, quad_mesh);
+        draw_fullscreen_pass(cmd, final_render_pass, swapchain_framebuffers[index], render_area, *add_pipe, add_descriptors, quad_mesh);
         check(vkEndCommandBuffer(cmd));
         win.end(index, {cmd}, pool.get_fence());
     }
 
     vkDeviceWaitIdle(ctx.device);
-    vkDestroyPipeline(ctx.device, hipass_pipe, nullptr);
-    vkDestroyPipeline(ctx.device, hgauss_pipe, nullptr);
-    vkDestroyPipeline(ctx.device, vgauss_pipe, nullptr);
-    vkDestroyPipeline(ctx.device, add_pipe, nullptr);
-    vkDestroyPipelineLayout(ctx.device, gauss_pipe_layout, nullptr);
-    vkDestroyPipelineLayout(ctx.device, add_pipe_layout, nullptr);
-    vkDestroyDescriptorSetLayout(ctx.device, gauss_desc_layout, nullptr);
-    vkDestroyDescriptorSetLayout(ctx.device, add_desc_layout, nullptr);
     vkDestroySampler(ctx.device, res.linear_sampler, nullptr);
     vkDestroySampler(ctx.device, image_sampler, nullptr);
     vkDestroyFramebuffer(ctx.device, main_framebuffer, nullptr);

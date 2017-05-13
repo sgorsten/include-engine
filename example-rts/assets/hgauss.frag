@@ -3,7 +3,7 @@
 #extension GL_GOOGLE_include_directive : enable
 #include "scene.glsl"
 
-layout(set=0, binding=0) uniform sampler2D u_texture;
+layout(set=2, binding=0) uniform sampler2D u_texture;
 
 layout(location = 0) in vec2 texcoord;
 
