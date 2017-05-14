@@ -5,8 +5,6 @@
 #include <map>
 #include <zlib.h>
 
-#include <iostream>
-
 namespace fbx
 {
     namespace ast

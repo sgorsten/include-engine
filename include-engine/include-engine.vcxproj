@@ -24,12 +24,14 @@
     <ClInclude Include="linalg.h" />
     <ClInclude Include="load.h" />
     <ClInclude Include="renderer.h" />
+    <ClInclude Include="utility.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="data-types.cpp" />
     <ClCompile Include="fbx.cpp" />
     <ClCompile Include="load.cpp" />
     <ClCompile Include="renderer.cpp" />
+    <ClCompile Include="utility.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\3rdparty\glslang\glslang.vcxproj">

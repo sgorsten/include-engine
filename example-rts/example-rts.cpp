@@ -12,8 +12,6 @@ VkAttachmentDescription make_attachment_description(VkFormat format, VkSampleCou
     return {0, format, samples, load_op, store_op, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE, initial_layout, final_layout};
 }
 
-std::ostream & operator << (std::ostream & out, const float3 & v) { return out << '[' << v.x << ',' << v.y << ',' << v.z << ']'; }
-
 struct fps_camera
 {
     float3 position;
@@ -26,10 +24,9 @@ struct fps_camera
 
 void draw_fullscreen_pass(VkCommandBuffer cmd, framebuffer & fb, const scene_descriptor_set & descriptors, const gfx_mesh & fullscreen_quad)
 {
-    const auto dims = fb.get_dimensions();
-    vkCmdBeginRenderPass(cmd, fb.get_render_pass().get_vk_handle(), fb.get_vk_handle(), {{0,0}, {dims.x,dims.y}}, {});  
+    vkCmdBeginRenderPass(cmd, fb.get_render_pass().get_vk_handle(), fb.get_vk_handle(), fb.get_bounds(), {});  
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, descriptors.get_material().get_pipeline(descriptors.get_material().get_contract().get_render_pass_index(fb.get_render_pass())));
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, descriptors.get_material().get_pipeline_layout(), 2, {descriptors.get_descriptor_set()}, {});
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, descriptors.get_material().get_pipeline_layout(), descriptors.get_material().get_contract().get_shared_layouts().size(), {descriptors.get_descriptor_set()}, {});
     vkCmdBindVertexBuffers(cmd, 0, {*fullscreen_quad.vertex_buffer}, {0});
     vkCmdBindIndexBuffer(cmd, *fullscreen_quad.index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
     vkCmdDrawIndexed(cmd, fullscreen_quad.index_count, 1, 0, 0, 0);
@@ -42,7 +39,7 @@ int main() try
 
     game::state g;
 
-    renderer r;
+    renderer r {[](const char * message) { std::cerr << "validation layer: " << message << std::endl; }};
 
     gfx_mesh quad_mesh {r.ctx, generate_fullscreen_quad()};
    
@@ -58,20 +55,16 @@ int main() try
     sampler image_sampler {r.ctx, image_sampler_info};
 
     // Set up scene contract
-    auto fb_render_pass = r.create_render_pass(
-        {make_attachment_description(VK_FORMAT_R16G16B16A16_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)},
-        make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED)
-    );
-    auto post_render_pass = r.create_render_pass(
-        {make_attachment_description(VK_FORMAT_R16G16B16A16_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)},
-        std::nullopt
-    );
-    auto final_render_pass = r.create_render_pass(
-        {make_attachment_description(r.get_swapchain_surface_format(), VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)},
-        std::nullopt
-    );
+    auto fb_render_pass = r.create_render_pass({make_attachment_description(VK_FORMAT_R16G16B16A16_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)}, make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED));
+    auto shadowmap_render_pass = r.create_render_pass({}, make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+    auto post_render_pass = r.create_render_pass({make_attachment_description(VK_FORMAT_R16G16B16A16_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)}, std::nullopt);
+    auto final_render_pass = r.create_render_pass({make_attachment_description(r.get_swapchain_surface_format(), VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)}, std::nullopt);
 
-    auto post_contract = r.create_contract({post_render_pass, final_render_pass}, {}, {});
+    auto contract = r.create_contract({fb_render_pass, shadowmap_render_pass}, {
+        {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, 
+        {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}}
+    });
+    auto post_contract = r.create_contract({post_render_pass, final_render_pass}, {});
 
     auto image_vertex_format = r.create_vertex_format({{0, sizeof(mesh::vertex), VK_VERTEX_INPUT_RATE_VERTEX}}, {
         {0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(mesh::vertex, position)}, 
@@ -84,17 +77,12 @@ int main() try
     auto vgauss_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/vgauss.frag");
     auto add_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/add.frag");
     
-    auto hipass_mtl = r.create_material(post_contract, {{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, image_vertex_format, {image_vert_shader, hipass_frag_shader}, false, false, false);
-    auto hgauss_mtl = r.create_material(post_contract, {{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, image_vertex_format, {image_vert_shader, hgauss_frag_shader}, false, false, false);
-    auto vgauss_mtl = r.create_material(post_contract, {{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, image_vertex_format, {image_vert_shader, vgauss_frag_shader}, false, false, false);
-    auto add_mtl = r.create_material(post_contract, {
-        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
-    }, image_vertex_format, {image_vert_shader, add_frag_shader}, false, false, false);
+    auto hipass_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, hipass_frag_shader}, false, false, false);
+    auto hgauss_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, hgauss_frag_shader}, false, false, false);
+    auto vgauss_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, vgauss_frag_shader}, false, false, false);
+    auto add_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, add_frag_shader}, false, false, false);
     
     // Load our game resources
-    auto contract = r.create_contract({fb_render_pass}, {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, 
-        {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}});
     const game::resources res {r, contract};
 
     // Set up a window with swapchain framebuffers
@@ -183,22 +171,19 @@ int main() try
         pv.eye_x_axis = qrot(camera.get_orientation(game::coords), game::coords.get_right());
         pv.eye_y_axis = qrot(camera.get_orientation(game::coords), game::coords.get_down());
 
-        VkDescriptorSet per_scene = pool.allocate_descriptor_set(list.contract.get_per_scene_layout());
-        vkWriteDescriptorBufferInfo(r.get_device(), per_scene, 0, 0, pool.write_data(ps));      
+        auto per_scene = list.shared_descriptor_set(0);
+        per_scene.write_uniform_buffer(0, 0, list.upload_uniforms(ps));      
 
-        VkDescriptorSet per_view = pool.allocate_descriptor_set(list.contract.get_per_view_layout());
-        vkWriteDescriptorBufferInfo(r.get_device(), per_view, 0, 0, pool.write_data(pv));
+        auto per_view = list.shared_descriptor_set(1);
+        per_view.write_uniform_buffer(0, 0, list.upload_uniforms(pv));
 
         VkCommandBuffer cmd = pool.allocate_command_buffer();
 
         VkCommandBufferBeginInfo begin_info {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
         vkBeginCommandBuffer(cmd, &begin_info);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, list.contract.get_example_layout(), 0, {per_scene, per_view}, {});
 
-        // Begin render pass
-        VkRect2D render_area {{0,0},{win.get_dims().x,win.get_dims().y}};
-        vkCmdBeginRenderPass(cmd, fb_render_pass->get_vk_handle(), main_framebuffer->get_vk_handle(), render_area, {{0, 0, 0, 1}, {1.0f, 0}});
-        list.write_commands(cmd, *fb_render_pass);
+        vkCmdBeginRenderPass(cmd, fb_render_pass->get_vk_handle(), main_framebuffer->get_vk_handle(), main_framebuffer->get_bounds(), {{0, 0, 0, 1}, {1.0f, 0}});
+        list.write_commands(cmd, *fb_render_pass, {per_scene, per_view});
         vkCmdEndRenderPass(cmd); 
 
         scene_descriptor_set hipass {pool, *hipass_mtl};
@@ -216,13 +201,14 @@ int main() try
         scene_descriptor_set add {pool, *add_mtl};
         add.write_combined_image_sampler(0, 0, image_sampler, color.get_image_view());
         add.write_combined_image_sampler(1, 0, image_sampler, color1.get_image_view());
+
         const uint32_t index = win.begin();
         draw_fullscreen_pass(cmd, *swapchain_framebuffers[index], add, quad_mesh);
         check(vkEndCommandBuffer(cmd));
         win.end(index, {cmd}, pool.get_fence());
     }
 
-    vkDeviceWaitIdle(r.get_device());
+    r.wait_until_device_idle();
     return EXIT_SUCCESS;
 }
 catch(const std::exception & e)

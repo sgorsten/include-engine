@@ -24,6 +24,7 @@ template<class T> struct array_view
     template<uint32_t N> array_view(const std::array<T,N> & array) : data{array.data()}, size{countof(array)} {}
     array_view(std::initializer_list<T> ilist) : data{ilist.begin()}, size{countof(ilist)} {}
     array_view(const std::vector<T> & vec) : data{vec.data()}, size{countof(vec)} {}
+    const T & operator [] (int i) const { return data[i]; }
     const T * begin() const { return data; }
     const T * end() const { return data + size; }
 };

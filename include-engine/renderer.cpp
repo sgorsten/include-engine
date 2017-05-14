@@ -1,6 +1,6 @@
 #include "renderer.h"
+#include "utility.h"
 #include <stdexcept>
-#include <iostream>
 
 struct physical_device_selection
 {
@@ -14,6 +14,7 @@ struct physical_device_selection
 
 struct context
 {
+    std::function<void(const char *)> debug_callback;
     VkInstance instance {};
     PFN_vkDestroyDebugReportCallbackEXT vkDestroyDebugReportCallbackEXT {};
     VkDebugReportCallbackEXT callback {};
@@ -27,7 +28,7 @@ struct context
     void * mapped_staging_memory {};
     VkCommandPool staging_pool {};
 
-    context();
+    context(std::function<void(const char *)> debug_callback);
     ~context();
 
     uint32_t select_memory_type(const VkMemoryRequirements & reqs, VkMemoryPropertyFlags props) const;
@@ -87,12 +88,6 @@ void check(VkResult result)
     {
         throw std::system_error(std::error_code(result, vulkan_error::instance()), "VkResult");
     }
-}
-
-static VkBool32 VKAPI_PTR debug_callback(VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT object_type, uint64_t object, size_t location, int32_t message_code, const char * layer_prefix, const char * message, void * user_data)
-{
-    std::cerr << "validation layer: " << message << std::endl;
-    return VK_FALSE;
 }
 
 bool has_extension(const std::vector<VkExtensionProperties> & extensions, std::string_view name)
@@ -167,7 +162,7 @@ physical_device_selection select_physical_device(VkInstance instance, const std:
 // context //
 /////////////
 
-context::context()
+context::context(std::function<void(const char *)> debug_callback) : debug_callback{debug_callback}
 {
     if(glfwInit() == GLFW_FALSE) throw std::runtime_error("glfwInit() failed");
     uint32_t extension_count = 0;
@@ -182,7 +177,13 @@ context::context()
     auto vkCreateDebugReportCallbackEXT = reinterpret_cast<PFN_vkCreateDebugReportCallbackEXT>(vkGetInstanceProcAddr(instance, "vkCreateDebugReportCallbackEXT"));
     vkDestroyDebugReportCallbackEXT = reinterpret_cast<PFN_vkDestroyDebugReportCallbackEXT>(vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT"));
 
-    const VkDebugReportCallbackCreateInfoEXT callback_info {VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT, nullptr, VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT, debug_callback, nullptr};
+    const VkDebugReportCallbackCreateInfoEXT callback_info {VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT, nullptr, VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT, 
+        [](VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT object_type, uint64_t object, size_t location, int32_t message_code, const char * layer_prefix, const char * message, void * user_data) -> VkBool32
+        {
+            auto & ctx = *reinterpret_cast<context *>(user_data);
+            if(ctx.debug_callback) ctx.debug_callback(message);
+            return VK_FALSE;
+        }, this};
     check(vkCreateDebugReportCallbackEXT(instance, &callback_info, nullptr, &callback));
 
     std::vector<const char *> device_extensions {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
@@ -966,21 +967,6 @@ void vkCmdBeginRenderPass(VkCommandBuffer cmd, VkRenderPass renderPass, VkFrameb
     vkCmdSetScissor(cmd, renderArea);
 }
 
-/////////////////
-// fail_fast() //
-/////////////////
-
-#define NOMINMAX
-#include <Windows.h>
-
-void fail_fast()
-{
-    if(IsDebuggerPresent()) DebugBreak();
-    std::cerr << "fail_fast() called." << std::endl;
-    std::exit(EXIT_FAILURE);
-}
-
-
 vertex_format::vertex_format(array_view<VkVertexInputBindingDescription> bindings, array_view<VkVertexInputAttributeDescription> attributes) :
     bindings{bindings.begin(), bindings.end()}, attributes{attributes.begin(), attributes.end()}
 {
@@ -996,8 +982,7 @@ VkPipelineVertexInputStateCreateInfo vertex_format::get_vertex_input_state() con
 // shader //
 ////////////
 
-shader::shader(std::shared_ptr<context> ctx, VkShaderStageFlagBits stage, array_view<uint32_t> words)
-    : ctx{ctx}, stage{stage}
+shader::shader(std::shared_ptr<context> ctx, array_view<uint32_t> words) : ctx{ctx}, info{words}
 {
     VkShaderModuleCreateInfo create_info {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     create_info.codeSize = words.size * sizeof(uint32_t);
@@ -1052,6 +1037,9 @@ render_pass::render_pass(std::shared_ptr<context> ctx, array_view<VkAttachmentDe
     render_pass_info.pSubpasses = &subpass_desc;
 
     check(vkCreateRenderPass(ctx->device, &render_pass_info, nullptr, &handle));
+
+    color_attachment_count = color_attachments.size;
+    has_depth_attachment = depth_attachment.has_value();
 }
 
 render_pass::~render_pass()
@@ -1084,24 +1072,73 @@ framebuffer::~framebuffer()
 // scene_contract //
 ////////////////////
 
-scene_contract::scene_contract(std::shared_ptr<context> ctx, array_view<std::shared_ptr<const render_pass>> render_passes, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings) : 
-    ctx{ctx}, render_passes{render_passes.begin(), render_passes.end()}, per_scene_layout{ctx->create_descriptor_set_layout(per_scene_bindings)}, per_view_layout{ctx->create_descriptor_set_layout(per_view_bindings)},
-    example_layout{ctx->create_pipeline_layout({per_scene_layout, per_view_layout})} {}
+scene_contract::scene_contract(std::shared_ptr<context> ctx, array_view<std::shared_ptr<const render_pass>> render_passes, array_view<array_view<VkDescriptorSetLayoutBinding>> shared_descriptor_sets) :
+    ctx{ctx}, render_passes{render_passes.begin(), render_passes.end()}
+{
+    for(auto & bindings : shared_descriptor_sets) shared_layouts.push_back(ctx->create_descriptor_set_layout(bindings));
+    example_layout = ctx->create_pipeline_layout(shared_layouts);
+}
 
 scene_contract::~scene_contract()
 {
     vkDestroyPipelineLayout(ctx->device, example_layout, nullptr);
-    vkDestroyDescriptorSetLayout(ctx->device, per_view_layout, nullptr);
-    vkDestroyDescriptorSetLayout(ctx->device, per_scene_layout, nullptr);
+    for(auto layout : shared_layouts) vkDestroyDescriptorSetLayout(ctx->device, layout, nullptr);
+}
+ 
+////////////////////
+// scene_material //
+////////////////////
+
+VkDescriptorSetLayoutBinding get_descriptor_set_layout_binding(uint32_t binding, const shader_info::type & type, VkShaderStageFlags stage_flags)
+{
+    if(auto * a = std::get_if<shader_info::array>(&type.contents))
+    {
+        auto b = get_descriptor_set_layout_binding(binding, *a->element, stage_flags);
+        b.descriptorCount *= a->length;
+        return b;
+    }
+    if(auto * s = std::get_if<shader_info::sampler>(&type.contents)) return {binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, stage_flags};
+    return {binding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, stage_flags};
 }
 
-scene_material::scene_material(std::shared_ptr<context> ctx, std::shared_ptr<scene_contract> contract, array_view<VkDescriptorSetLayoutBinding> per_object_bindings, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending) : 
-    ctx{ctx}, contract{contract}, per_object_layout{ctx->create_descriptor_set_layout(per_object_bindings)},
-    pipeline_layout{ctx->create_pipeline_layout({contract->per_scene_layout, contract->per_view_layout, per_object_layout})}
+scene_material::scene_material(std::shared_ptr<context> ctx, std::shared_ptr<scene_contract> contract, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending) : 
+    ctx{ctx}, contract{contract}
 {
-    std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
-    for(auto & s : stages) shader_stages.push_back(s->get_shader_stage());
-    for(auto & p : contract->render_passes) pipelines.push_back(make_pipeline(ctx->device, p->get_vk_handle(), pipeline_layout, format->get_vertex_input_state(), shader_stages, depth_write, depth_test, additive_blending));
+    // Determine the full set of per object descriptors across all stages
+    std::vector<VkDescriptorSetLayoutBinding> per_object_bindings;
+    std::vector<VkPipelineShaderStageCreateInfo> shader_stages, shader_stages_no_frag;
+    const uint32_t per_object_descriptor_set_index = contract->get_shared_layouts().size();
+    for(auto & s : stages) 
+    {
+        shader_stages.push_back(s->get_shader_stage());
+        if(s->get_shader_stage().stage != VK_SHADER_STAGE_FRAGMENT_BIT) shader_stages_no_frag.push_back(s->get_shader_stage());
+        for(auto & descriptor : s->get_descriptors())
+        {
+            if(descriptor.set != per_object_descriptor_set_index) continue;
+            auto db = get_descriptor_set_layout_binding(descriptor.binding, descriptor.type, s->get_shader_stage().stage);
+            
+            bool found = false;
+            for(auto & b : per_object_bindings)
+            {
+                if(b.binding != db.binding) continue;
+                if(b.descriptorType != db.descriptorType) throw std::runtime_error("descriptor type mismatch");
+                if(b.descriptorCount != db.descriptorCount) throw std::runtime_error("descriptor count mismatch");
+                b.stageFlags |= db.stageFlags;
+                found = true;
+                break;
+            }
+            if(!found) per_object_bindings.push_back(db);
+        }
+    }
+
+    per_object_layout = ctx->create_descriptor_set_layout(per_object_bindings);
+    auto set_layouts = contract->shared_layouts;
+    set_layouts.push_back(per_object_layout);
+    pipeline_layout = ctx->create_pipeline_layout(set_layouts);
+    for(auto & p : contract->render_passes)
+    {
+        pipelines.push_back(make_pipeline(ctx->device, p->get_vk_handle(), pipeline_layout, format->get_vertex_input_state(), p->has_color_attachments() ? shader_stages : shader_stages_no_frag, depth_write, depth_test, additive_blending));
+    }
 }
     
 scene_material::~scene_material()
@@ -1111,15 +1148,26 @@ scene_material::~scene_material()
     vkDestroyDescriptorSetLayout(ctx->device, per_object_layout, nullptr);
 }
 
+//////////////////////////
+// scene_descriptor_set //
+//////////////////////////
+
+scene_descriptor_set::scene_descriptor_set(transient_resource_pool & pool, VkDescriptorSetLayout layout) : material{}, layout{layout}, set{pool.allocate_descriptor_set(layout)}, device{pool.get_context().device} {}
+scene_descriptor_set::scene_descriptor_set(transient_resource_pool & pool, const scene_material & material) : scene_descriptor_set(pool, material.get_per_object_descriptor_set_layout()) { this->material = &material; }
+
 void scene_descriptor_set::write_uniform_buffer(uint32_t binding, uint32_t array_element, VkDescriptorBufferInfo info)
 {
-    vkWriteDescriptorBufferInfo(material->ctx->device, set, binding, array_element, info);
+    vkWriteDescriptorBufferInfo(device, set, binding, array_element, info);
 }
 
 void scene_descriptor_set::write_combined_image_sampler(uint32_t binding, uint32_t array_element, sampler & sampler, VkImageView image_view, VkImageLayout image_layout)
 {
-    vkWriteDescriptorCombinedImageSamplerInfo(material->ctx->device, set, binding, array_element, {sampler.get_vk_handle(), image_view, image_layout});
+    vkWriteDescriptorCombinedImageSamplerInfo(device, set, binding, array_element, {sampler.get_vk_handle(), image_view, image_layout});
 }
+
+///////////////
+// draw_list //
+///////////////
 
 void draw_list::draw(const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls, VkDescriptorBufferInfo instances, size_t instance_stride)
 {
@@ -1159,27 +1207,43 @@ void draw_list::draw(const scene_descriptor_set & descriptors, const gfx_mesh & 
     draw(descriptors, mesh, {}, 0);
 }
 
-void draw_list::write_commands(VkCommandBuffer cmd, const render_pass & render_pass) const
+void draw_list::write_commands(VkCommandBuffer cmd, const render_pass & render_pass, array_view<scene_descriptor_set> shared_descriptors) const
 {
+    // Validate and bind shared descriptor sets
+    std::vector<VkDescriptorSet> sets;
+    auto & contract_layouts = contract.get_shared_layouts();
+    if(shared_descriptors.size != contract_layouts.size()) throw std::runtime_error("contract violation");
+    for(size_t i=0; i<shared_descriptors.size; ++i) 
+    {
+        if(shared_descriptors[i].get_descriptor_set_layout() != contract_layouts[i]) throw std::runtime_error("contract violation");
+        sets.push_back(shared_descriptors[i].get_descriptor_set());
+    }
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, contract.get_example_layout(), 0, sets, {});
+
+    // Issue draw calls
     auto render_pass_index = contract.get_render_pass_index(render_pass);
     for(auto & item : items)
     {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, item.material->get_pipeline(render_pass_index));
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, item.material->get_pipeline_layout(), 2, {item.set}, {});
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, item.material->get_pipeline_layout(), sets.size(), {item.set}, {});
         vkCmdBindVertexBuffers(cmd, 0, item.vertex_buffer_count, item.vertex_buffers, item.vertex_buffer_offsets);
         vkCmdBindIndexBuffer(cmd, item.index_buffer, item.index_buffer_offset, VkIndexType::VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(cmd, item.index_count, item.instance_count, item.first_index, 0, 0);
     }
 }
 
-renderer::renderer() : ctx{std::make_shared<context>()} 
+//////////////
+// renderer //
+//////////////
+
+renderer::renderer(std::function<void(const char *)> debug_callback) : ctx{std::make_shared<context>(debug_callback)} 
 {
 
 }
 
-VkDevice renderer::get_device()
+void renderer::wait_until_device_idle()
 {
-    return ctx->device;
+    vkDeviceWaitIdle(ctx->device);
 }
 
 VkFormat renderer::get_swapchain_surface_format() const 
@@ -1199,7 +1263,7 @@ std::shared_ptr<framebuffer> renderer::create_framebuffer(std::shared_ptr<const 
 
 std::shared_ptr<shader> renderer::create_shader(VkShaderStageFlagBits stage, const char * filename)
 {
-    return std::make_shared<shader>(ctx, stage, compiler.compile_glsl(stage, filename));
+    return std::make_shared<shader>(ctx, compiler.compile_glsl(stage, filename));
 }
 
 std::shared_ptr<vertex_format> renderer::create_vertex_format(array_view<VkVertexInputBindingDescription> bindings, array_view<VkVertexInputAttributeDescription> attributes)
@@ -1207,12 +1271,12 @@ std::shared_ptr<vertex_format> renderer::create_vertex_format(array_view<VkVerte
     return std::make_shared<vertex_format>(bindings, attributes);
 }
 
-std::shared_ptr<scene_contract> renderer::create_contract(array_view<std::shared_ptr<const render_pass>> render_passes, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings)
+std::shared_ptr<scene_contract> renderer::create_contract(array_view<std::shared_ptr<const render_pass>> render_passes, array_view<array_view<VkDescriptorSetLayoutBinding>> shared_descriptor_sets)
 {
-    return std::make_shared<scene_contract>(ctx, render_passes, per_scene_bindings, per_view_bindings);
+    return std::make_shared<scene_contract>(ctx, render_passes, shared_descriptor_sets);
 }
 
-std::shared_ptr<scene_material> renderer::create_material(std::shared_ptr<scene_contract> contract, array_view<VkDescriptorSetLayoutBinding> per_object_bindings, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending)
+std::shared_ptr<scene_material> renderer::create_material(std::shared_ptr<scene_contract> contract, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending)
 {
-    return std::make_shared<scene_material>(ctx, contract, per_object_bindings, format, stages, depth_write, depth_test, additive_blending);
+    return std::make_shared<scene_material>(ctx, contract, format, stages, depth_write, depth_test, additive_blending);
 }

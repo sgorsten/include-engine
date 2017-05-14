@@ -2,11 +2,10 @@
 #define RENDERER_H
 
 #include "data-types.h"
-
+#include <functional>
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 
-[[noreturn]] void fail_fast();
 const char * to_string(VkResult result);
 void check(VkResult result);
 
@@ -147,6 +146,7 @@ public:
     template<class T> void write_instance(const T & instance) { write_vertex(instance); }
     VkDescriptorBufferInfo end_instances() { return end_vertices(); }
 
+    context & get_context() { return *ctx; }
     VkFence get_fence() { return fence; }
 
     template<class T> VkDescriptorBufferInfo write_data(const T & data) { return write_data(sizeof(data), &data); }
@@ -208,12 +208,13 @@ class shader
 {
     std::shared_ptr<context> ctx;
     VkShaderModule module;
-    VkShaderStageFlagBits stage;
+    shader_info info;
 public:
-    shader(std::shared_ptr<context> ctx, VkShaderStageFlagBits stage, array_view<uint32_t> words);
+    shader(std::shared_ptr<context> ctx, array_view<uint32_t> words);
     ~shader();
 
-    VkPipelineShaderStageCreateInfo get_shader_stage() const { return {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, stage, module, "main"}; }
+    VkPipelineShaderStageCreateInfo get_shader_stage() const { return {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, info.stage, module, info.name.c_str()}; }
+    const std::vector<shader_info::descriptor> & get_descriptors() const { return info.descriptors; }
 };
 
 class sampler
@@ -231,10 +232,13 @@ class render_pass
 {
     std::shared_ptr<context> ctx;
     VkRenderPass handle;
+    size_t color_attachment_count;
+    bool has_depth_attachment;
 public:
     render_pass(std::shared_ptr<context> ctx, array_view<VkAttachmentDescription> color_attachments, std::optional<VkAttachmentDescription> depth_attachment);
     ~render_pass();
 
+    bool has_color_attachments() const { return color_attachment_count != 0; }
     VkRenderPass get_vk_handle() const { return handle; }
 };
 
@@ -251,6 +255,7 @@ public:
     const render_pass & get_render_pass() const { return *pass; }
     VkFramebuffer get_vk_handle() const { return handle; }
     uint2 get_dimensions() const { return dims; }
+    VkRect2D get_bounds() const { return {{0,0},{dims.x,dims.y}}; }
 };    
 
 // A scene contract defines the common functionality of a group of items which will be drawn together. It
@@ -261,17 +266,15 @@ class scene_contract
 {
     friend class scene_material;
     std::shared_ptr<context> ctx;
-    std::vector<std::shared_ptr<const render_pass>> render_passes;    // List of possible render passes that pipelines obeying this contract can participate in
-    VkDescriptorSetLayout per_scene_layout;     // Descriptors which are shared by the entire scene
-    VkDescriptorSetLayout per_view_layout;      // Descriptors which vary per unique view into the scene
-    VkPipelineLayout example_layout;            // Layout for a pipeline which has no per-object descriptor set
+    std::vector<std::shared_ptr<const render_pass>> render_passes;  // List of possible render passes that pipelines obeying this contract can participate in
+    std::vector<VkDescriptorSetLayout> shared_layouts;              // Descriptor sets which are shared across multiple draw calls (such as per-scene or per-view sets)
+    VkPipelineLayout example_layout;                                // Layout for a pipeline which has no per-object descriptor set
 public:
-    scene_contract(std::shared_ptr<context> ctx, array_view<std::shared_ptr<const render_pass>> render_passes, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings);
+    scene_contract(std::shared_ptr<context> ctx, array_view<std::shared_ptr<const render_pass>> render_passes, array_view<array_view<VkDescriptorSetLayoutBinding>> shared_descriptor_sets);
     ~scene_contract();
 
     size_t get_render_pass_index(const render_pass & pass) const { for(size_t i=0; i<render_passes.size(); ++i) if(render_passes[i].get() == &pass) return i; throw std::logic_error("render pass not part of contract"); }
-    VkDescriptorSetLayout get_per_scene_layout() const { return per_scene_layout; }
-    VkDescriptorSetLayout get_per_view_layout() const { return per_view_layout; }
+    const std::vector<VkDescriptorSetLayout> & get_shared_layouts() const { return shared_layouts; }
     VkPipelineLayout get_example_layout() const { return example_layout; }
 };
 
@@ -281,14 +284,13 @@ public:
 // interchangeable fashion.
 class scene_material
 {
-    friend class scene_descriptor_set;
     std::shared_ptr<context> ctx;
     std::shared_ptr<scene_contract> contract;
     VkDescriptorSetLayout per_object_layout;
     VkPipelineLayout pipeline_layout;
     std::vector<VkPipeline> pipelines;
 public:
-    scene_material(std::shared_ptr<context> ctx, std::shared_ptr<scene_contract> contract, array_view<VkDescriptorSetLayoutBinding> per_object_bindings, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending);
+    scene_material(std::shared_ptr<context> ctx, std::shared_ptr<scene_contract> contract, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending);
     ~scene_material();
 
     const scene_contract & get_contract() const { return *contract; }
@@ -306,9 +308,9 @@ public:
 private:
     shader_compiler compiler;
 public:
-    renderer();
+    renderer(std::function<void(const char *)> debug_callback);
 
-    VkDevice get_device();
+    void wait_until_device_idle();
     VkFormat get_swapchain_surface_format() const;
 
     std::shared_ptr<render_pass> create_render_pass(array_view<VkAttachmentDescription> color_attachments, std::optional<VkAttachmentDescription> depth_attachment);
@@ -316,8 +318,8 @@ public:
 
     std::shared_ptr<shader> create_shader(VkShaderStageFlagBits stage, const char * filename);
     std::shared_ptr<vertex_format> create_vertex_format(array_view<VkVertexInputBindingDescription> bindings, array_view<VkVertexInputAttributeDescription> attributes);
-    std::shared_ptr<scene_contract> create_contract(array_view<std::shared_ptr<const render_pass>> render_passes, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings);
-    std::shared_ptr<scene_material> create_material(std::shared_ptr<scene_contract> contract, array_view<VkDescriptorSetLayoutBinding> per_object_bindings, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending);
+    std::shared_ptr<scene_contract> create_contract(array_view<std::shared_ptr<const render_pass>> render_passes, array_view<array_view<VkDescriptorSetLayoutBinding>> shared_descriptor_sets);
+    std::shared_ptr<scene_material> create_material(std::shared_ptr<scene_contract> contract, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending);
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -327,11 +329,15 @@ public:
 class scene_descriptor_set
 {
     const scene_material * material;
+    VkDescriptorSetLayout layout;
     VkDescriptorSet set;
+    VkDevice device;
 public:
-    scene_descriptor_set(transient_resource_pool & pool, const scene_material & material) : material{&material}, set{pool.allocate_descriptor_set(material.get_per_object_descriptor_set_layout())} {}
+    scene_descriptor_set(transient_resource_pool & pool, VkDescriptorSetLayout layout);
+    scene_descriptor_set(transient_resource_pool & pool, const scene_material & material);
 
     const scene_material & get_material() const { return *material; }
+    VkDescriptorSetLayout get_descriptor_set_layout() const { return layout; }
     VkDescriptorSet get_descriptor_set() const { return set; }
 
     void write_uniform_buffer(uint32_t binding, uint32_t array_element, VkDescriptorBufferInfo info);
@@ -365,13 +371,14 @@ struct draw_list
     template<class T> void write_instance(const T & instance) { pool.write_instance(instance); }
     VkDescriptorBufferInfo end_instances() { return pool.end_instances(); }
 
-    scene_descriptor_set descriptor_set(const scene_material & material) { return {pool, material}; }    
+    scene_descriptor_set shared_descriptor_set(size_t index) { return {pool, contract.get_shared_layouts()[index]}; }
+    scene_descriptor_set descriptor_set(const scene_material & material) { return {pool, material}; }  
 
     void draw(const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls, VkDescriptorBufferInfo instances, size_t instance_stride);
     void draw(const scene_descriptor_set & descriptors, const gfx_mesh & mesh, VkDescriptorBufferInfo instances, size_t instance_stride);
     void draw(const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls);
     void draw(const scene_descriptor_set & descriptors, const gfx_mesh & mesh);
-    void write_commands(VkCommandBuffer cmd, const render_pass & render_pass) const;
+    void write_commands(VkCommandBuffer cmd, const render_pass & render_pass, array_view<scene_descriptor_set> shared_descriptors) const;
 };
 
 #endif

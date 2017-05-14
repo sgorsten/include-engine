@@ -171,6 +171,64 @@ void game::state::advance(float timestep)
 // game::resources //
 /////////////////////
 
+std::ostream & operator << (std::ostream & out, shader_info::scalar_type s)
+{
+    switch(s)
+    {
+    case shader_info::int_: return out << "int";
+    case shader_info::uint_: return out << "uint";
+    case shader_info::float_: return out << "float";
+    case shader_info::double_: return out << "double";
+    default: return out << "???";
+    }
+}
+std::ostream & print_indent(std::ostream & out, int indent) { for(int i=0; i<indent; ++i) out << "  "; return out; }
+std::ostream & print_type(std::ostream & out, const shader_info::type & type, int indent = 0)
+{
+    if(auto * s = std::get_if<shader_info::sampler>(&type.contents)) 
+    {
+        switch(s->view_type)
+        {
+        case VK_IMAGE_VIEW_TYPE_1D: out << "sampler1D"; break;
+        case VK_IMAGE_VIEW_TYPE_2D: out << "sampler2D"; break;
+        case VK_IMAGE_VIEW_TYPE_3D: out << "sampler3D"; break;
+        case VK_IMAGE_VIEW_TYPE_CUBE: out << "samplerCube"; break;
+        case VK_IMAGE_VIEW_TYPE_1D_ARRAY: out << "sampler1DArray"; break;
+        case VK_IMAGE_VIEW_TYPE_2D_ARRAY: out << "sampler2DArray"; break;
+        case VK_IMAGE_VIEW_TYPE_CUBE_ARRAY: out << "samplerCubeArray"; break;
+        }
+        return out << (s->multisampled ? "MS" : "") << (s->shadow ? "Shadow" : "") << "<" << s->channel << ">";
+    }
+    if(auto * a = std::get_if<shader_info::array>(&type.contents))
+    {
+        print_type(out, *a->element, indent) << '[' << a->length << ']';
+        if(a->stride) out << "/*stride=" << *a->stride << "*/";
+        return out;
+    }
+    if(auto * n = std::get_if<shader_info::numeric>(&type.contents))
+    {
+        out << n->scalar;
+        if(n->row_count > 1) out << n->row_count;
+        if(n->column_count > 1) out << 'x' << n->column_count;
+        if(n->matrix_layout) out << "/*stride=" << n->matrix_layout->stride << (n->matrix_layout->row_major ? ",row_major*/" : ",col_major*/");
+        return out;
+    }
+    if(auto * s = std::get_if<shader_info::structure>(&type.contents))
+    {
+        out << "struct " << s->name << " {";
+        for(auto & m : s->members) 
+        {
+            print_indent(out << "\n", indent+1);
+            if(m.offset) out << "layout(offset=" << *m.offset << ") ";
+            print_type(out << m.name << " : ", *m.type, indent+1) << ";";
+        }
+        return print_indent(out << "\n", indent) << "}";
+    }
+    return out << "unknown";
+}
+
+#include <iostream>
+
 game::resources::resources(renderer & r, std::shared_ptr<scene_contract> contract)
 {
     // Load meshes
@@ -202,6 +260,8 @@ game::resources::resources(renderer & r, std::shared_ptr<scene_contract> contrac
     // Set up our shader pipeline
     auto vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/static.vert");
     auto frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/shader.frag");
+    std::cout << "assets/shader.frag:\n";
+    for(auto & d : frag_shader->get_descriptors()) print_type(std::cout << "  layout(set=" << d.set << ", binding=" << d.binding << ") uniform " << d.name << " : ", d.type, 1) << ";\n";
 
     auto glow_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/glow.frag");
     auto particle_vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/particle.vert");
@@ -217,13 +277,8 @@ game::resources::resources(renderer & r, std::shared_ptr<scene_contract> contrac
         {6, 0, VK_FORMAT_R32G32B32A32_UINT, offsetof(mesh::vertex, bone_indices)},
         {7, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(mesh::vertex, bone_weights)}
     });
-    standard_mtl = r.create_material(contract, {
-        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT},    
-        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
-    }, mesh_vertex_format, {vert_shader, frag_shader}, true, true, false);
-    glow_mtl = r.create_material(contract, {
-        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT}
-    }, mesh_vertex_format, {vert_shader, glow_shader}, true, true, false);
+    standard_mtl = r.create_material(contract, mesh_vertex_format, {vert_shader, frag_shader}, true, true, false);
+    glow_mtl = r.create_material(contract, mesh_vertex_format, {vert_shader, glow_shader}, true, true, false);
 
     auto particle_vertex_format = r.create_vertex_format({
         {0, sizeof(particle_vertex), VK_VERTEX_INPUT_RATE_VERTEX},
@@ -235,9 +290,7 @@ game::resources::resources(renderer & r, std::shared_ptr<scene_contract> contrac
         {3, 1, VK_FORMAT_R32_SFLOAT, offsetof(particle_instance, size)},
         {4, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(particle_instance, color)},
     });
-    particle_mtl = r.create_material(contract, {
-        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
-    }, particle_vertex_format, {particle_vert_shader, particle_frag_shader}, false, true, true);
+    particle_mtl = r.create_material(contract, particle_vertex_format, {particle_vert_shader, particle_frag_shader}, false, true, true);
 }
 
 /////////////////////
