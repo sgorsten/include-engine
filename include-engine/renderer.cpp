@@ -1,6 +1,6 @@
 #include "renderer.h"
+#include "utility.h"
 #include <stdexcept>
-#include <iostream>
 
 struct physical_device_selection
 {
@@ -14,6 +14,7 @@ struct physical_device_selection
 
 struct context
 {
+    std::function<void(const char *)> debug_callback;
     VkInstance instance {};
     PFN_vkDestroyDebugReportCallbackEXT vkDestroyDebugReportCallbackEXT {};
     VkDebugReportCallbackEXT callback {};
@@ -27,7 +28,7 @@ struct context
     void * mapped_staging_memory {};
     VkCommandPool staging_pool {};
 
-    context();
+    context(std::function<void(const char *)> debug_callback);
     ~context();
 
     uint32_t select_memory_type(const VkMemoryRequirements & reqs, VkMemoryPropertyFlags props) const;
@@ -87,12 +88,6 @@ void check(VkResult result)
     {
         throw std::system_error(std::error_code(result, vulkan_error::instance()), "VkResult");
     }
-}
-
-static VkBool32 VKAPI_PTR debug_callback(VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT object_type, uint64_t object, size_t location, int32_t message_code, const char * layer_prefix, const char * message, void * user_data)
-{
-    std::cerr << "validation layer: " << message << std::endl;
-    return VK_FALSE;
 }
 
 bool has_extension(const std::vector<VkExtensionProperties> & extensions, std::string_view name)
@@ -167,7 +162,7 @@ physical_device_selection select_physical_device(VkInstance instance, const std:
 // context //
 /////////////
 
-context::context()
+context::context(std::function<void(const char *)> debug_callback) : debug_callback{debug_callback}
 {
     if(glfwInit() == GLFW_FALSE) throw std::runtime_error("glfwInit() failed");
     uint32_t extension_count = 0;
@@ -182,7 +177,13 @@ context::context()
     auto vkCreateDebugReportCallbackEXT = reinterpret_cast<PFN_vkCreateDebugReportCallbackEXT>(vkGetInstanceProcAddr(instance, "vkCreateDebugReportCallbackEXT"));
     vkDestroyDebugReportCallbackEXT = reinterpret_cast<PFN_vkDestroyDebugReportCallbackEXT>(vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT"));
 
-    const VkDebugReportCallbackCreateInfoEXT callback_info {VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT, nullptr, VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT, debug_callback, nullptr};
+    const VkDebugReportCallbackCreateInfoEXT callback_info {VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT, nullptr, VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT, 
+        [](VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT object_type, uint64_t object, size_t location, int32_t message_code, const char * layer_prefix, const char * message, void * user_data) -> VkBool32
+        {
+            auto & ctx = *reinterpret_cast<context *>(user_data);
+            if(ctx.debug_callback) ctx.debug_callback(message);
+            return VK_FALSE;
+        }, this};
     check(vkCreateDebugReportCallbackEXT(instance, &callback_info, nullptr, &callback));
 
     std::vector<const char *> device_extensions {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
@@ -966,21 +967,6 @@ void vkCmdBeginRenderPass(VkCommandBuffer cmd, VkRenderPass renderPass, VkFrameb
     vkCmdSetScissor(cmd, renderArea);
 }
 
-/////////////////
-// fail_fast() //
-/////////////////
-
-#define NOMINMAX
-#include <Windows.h>
-
-void fail_fast()
-{
-    if(IsDebuggerPresent()) DebugBreak();
-    std::cerr << "fail_fast() called." << std::endl;
-    std::exit(EXIT_FAILURE);
-}
-
-
 vertex_format::vertex_format(array_view<VkVertexInputBindingDescription> bindings, array_view<VkVertexInputAttributeDescription> attributes) :
     bindings{bindings.begin(), bindings.end()}, attributes{attributes.begin(), attributes.end()}
 {
@@ -1411,7 +1397,7 @@ void draw_list::write_commands(VkCommandBuffer cmd, const render_pass & render_p
 // renderer //
 //////////////
 
-renderer::renderer() : ctx{std::make_shared<context>()} 
+renderer::renderer(std::function<void(const char *)> debug_callback) : ctx{std::make_shared<context>(debug_callback)} 
 {
 
 }

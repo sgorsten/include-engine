@@ -232,6 +232,7 @@ std::ostream & print_type(std::ostream & out, const type & type, int indent = 0)
     }
     return out << "unknown";
 }
+
 #include <iostream>
 
 game::resources::resources(renderer & r, std::shared_ptr<scene_contract> contract)

@@ -80,7 +80,6 @@ mesh invert_faces(mesh m)
 }
 
 #include "fbx.h"
-#include <iostream>
 
 std::vector<mesh> load_meshes_from_fbx(coord_system target, const char * filename)
 {

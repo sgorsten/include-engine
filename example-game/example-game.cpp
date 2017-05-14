@@ -1,10 +1,8 @@
 #include "renderer.h"
 #include "load.h"
 #include "fbx.h"
-#include <fstream>
 #include <iostream>
 #include <chrono>
-#include <memory>
 
 struct per_scene_uniforms
 {
@@ -62,7 +60,7 @@ int main() try
     constexpr coord_system vk_coords {coord_axis::right, coord_axis::down, coord_axis::forward};
     constexpr coord_system cubemap_coords {coord_axis::right, coord_axis::up, coord_axis::back};
 
-    renderer r;
+    renderer r {[](const char * message) { std::cerr << "validation layer: " << message << std::endl; }};
 
     // Create our textures
     texture_2d black_tex(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({0,0,0,255}));

@@ -2,11 +2,10 @@
 #define RENDERER_H
 
 #include "data-types.h"
-
+#include <functional>
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 
-[[noreturn]] void fail_fast();
 const char * to_string(VkResult result);
 void check(VkResult result);
 
@@ -325,7 +324,7 @@ public:
 private:
     shader_compiler compiler;
 public:
-    renderer();
+    renderer(std::function<void(const char *)> debug_callback);
 
     void wait_until_device_idle();
     VkFormat get_swapchain_surface_format() const;

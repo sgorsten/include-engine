@@ -39,7 +39,7 @@ int main() try
 
     game::state g;
 
-    renderer r;
+    renderer r {[](const char * message) { std::cerr << "validation layer: " << message << std::endl; }};
 
     gfx_mesh quad_mesh {r.ctx, generate_fullscreen_quad()};
    
