@@ -167,6 +167,9 @@ shader_compiler::~shader_compiler()
     glslang::FinalizeProcess();
 }
 
+#include <iostream>
+void analyze_spirv(array_view<uint32_t> words);
+
 std::vector<uint32_t> shader_compiler::compile_glsl(VkShaderStageFlagBits stage, const char * filename)
 {    
     glslang::TShader shader([stage]()
@@ -202,7 +205,132 @@ std::vector<uint32_t> shader_compiler::compile_glsl(VkShaderStageFlagBits stage,
 
     std::vector<uint32_t> spirv;
     glslang::GlslangToSpv(*program.getIntermediate(shader.getStage()), spirv, nullptr);
+
+    std::cout << "Successfully compiled " << filename << ":" << std::endl;
+    analyze_spirv(spirv);
     return spirv;
+}
+
+#include <vulkan/spirv.hpp>
+
+struct spirv_module
+{
+    struct type { spv::Op op; std::vector<uint32_t> contents; };
+    struct variable { uint32_t type; spv::StorageClass storage_class; };
+    struct constant { uint32_t type; std::vector<uint32_t> literals; };
+    struct entrypoint { spv::ExecutionModel execution_model; std::string name; std::vector<uint32_t> interfaces; };
+    struct metadata
+    {
+        std::string name;
+        std::map<spv::Decoration, std::vector<uint32_t>> decorations;
+        std::map<uint32_t, metadata> members;
+    };
+
+    uint32_t version_number, generator_id, schema_id;
+    std::map<uint32_t, type> types;
+    std::map<uint32_t, variable> variables;
+    std::map<uint32_t, constant> constants;
+    std::map<uint32_t, entrypoint> entrypoints;
+    std::map<uint32_t, metadata> metadatas;
+
+    spirv_module() {}
+    spirv_module(array_view<uint32_t> words)
+    {
+        if(words.size < 5) throw std::runtime_error("not SPIR-V");
+        if(words[0] != 0x07230203) throw std::runtime_error("not SPIR-V");    
+        version_number = words[1];
+        generator_id = words[2];
+        schema_id = words[4];
+        const uint32_t * it = words.begin() + 5, * binary_end = words.end();
+        while(it != binary_end)
+        {
+            auto op_code = static_cast<spv::Op>(*it & spv::OpCodeMask);
+            const uint32_t op_code_length = *it >> 16;
+            const uint32_t * op_code_end = it + op_code_length;
+            if(op_code_end > binary_end) throw std::runtime_error("incomplete opcode");
+            if(op_code == spv::OpEntryPoint)
+            {
+                auto & entrypoint = entrypoints[it[2]];
+                entrypoint.execution_model = static_cast<spv::ExecutionModel>(it[1]);
+                const char * s = reinterpret_cast<const char *>(it+2);
+                const size_t max_length = reinterpret_cast<const char *>(op_code_end) - s, length = strnlen(s, max_length);
+                if(length == max_length) throw std::runtime_error("missing null terminator");
+                entrypoint.name.assign(s, s+length);
+                entrypoint.interfaces.assign(it+2+(length+3)/4, op_code_end);
+            }
+            if(op_code >= spv::OpTypeVoid && op_code <= spv::OpTypeForwardPointer) types[it[1]] = {op_code, {it+2, op_code_end}};
+            if(op_code == spv::OpVariable) variables[it[2]] = {it[1], static_cast<spv::StorageClass>(it[3])};
+            if(op_code == spv::OpConstant) constants[it[2]] = {it[1], {it+3, op_code_end}};
+            if(op_code == spv::OpName) metadatas[it[1]].name = reinterpret_cast<const char *>(&it[2]);
+            if(op_code == spv::OpMemberName) metadatas[it[1]].members[it[2]].name = reinterpret_cast<const char *>(&it[3]);
+            if(op_code == spv::OpDecorate) metadatas[it[1]].decorations[static_cast<spv::Decoration>(it[2])].assign(it+3, op_code_end);
+            if(op_code == spv::OpMemberDecorate) metadatas[it[1]].members[it[2]].decorations[static_cast<spv::Decoration>(it[3])].assign(it+4, op_code_end);
+            it = op_code_end;
+        }
+    }
+
+    std::ostream & print_integer_constant(std::ostream & out, uint32_t id)
+    {
+        auto & constant = constants[id];
+        if(constant.literals.size() != 1) throw std::runtime_error("bad constant");
+        return out << constant.literals[0];
+    }
+    std::ostream & print_type(std::ostream & out, uint32_t id, int indent = 0)
+    {
+        auto & type = types[id];
+        switch(type.op)
+        {
+        case spv::OpTypeVoid: return out << "void";
+        case spv::OpTypeBool: return out << "bool";
+        case spv::OpTypeInt: return out << "int"; // TODO: size/signed
+        case spv::OpTypeFloat: return out << "float"; // TODO: size
+        case spv::OpTypeVector: return print_type(out, type.contents[0], indent) << type.contents[1];
+        case spv::OpTypeMatrix: return print_type(out, type.contents[0], indent) << 'x' << type.contents[1];
+        case spv::OpTypeImage: return out << "image";
+        case spv::OpTypeSampler: return out << "sampler";
+        case spv::OpTypeSampledImage: return out << "sampled_image";
+        case spv::OpTypeArray: return print_integer_constant(print_type(out, type.contents[0], indent) << '[', type.contents[1]) << ']';
+        case spv::OpTypeRuntimeArray: return print_type(out, type.contents[0], indent) << "[]";
+        case spv::OpTypeStruct: out << "struct {";
+            for(size_t i=0; i<type.contents.size(); ++i)
+            {
+                out << "\n";
+                for(int i=0; i<=indent; ++i) out << "  ";
+                print_type(out << metadatas[id].members[i].name << " : ", type.contents[i], indent+1);
+            }
+            out << "\n";
+            for(int i=0; i<indent; ++i) out << "  ";
+            return out << "}";            
+        case spv::OpTypePointer: return print_type(out << "ptr to ", type.contents[1], indent);
+        default: return out << "???";
+        }
+    }
+};
+
+void analyze_spirv(array_view<uint32_t> words)
+{
+    spirv_module mod(words);
+    for(auto & v : mod.variables)
+    {
+        auto set_it = mod.metadatas[v.first].decorations.find(spv::DecorationDescriptorSet);
+        auto binding_it = mod.metadatas[v.first].decorations.find(spv::DecorationBinding);
+        auto loc_it = mod.metadatas[v.first].decorations.find(spv::DecorationLocation);
+        std::cout << "layout(";
+        if(set_it != mod.metadatas[v.first].decorations.end()) std::cout << "set = " << set_it->second[0];
+        if(binding_it != mod.metadatas[v.first].decorations.end()) std::cout << ", binding = " << binding_it->second[0];
+        if(loc_it != mod.metadatas[v.first].decorations.end()) std::cout << "location = " << loc_it->second[0];
+        std::cout << ") ";
+        switch(v.second.storage_class)
+        {
+        case spv::StorageClassInput: std::cout << "in "; break;
+        case spv::StorageClassOutput: std::cout << "out "; break;
+        case spv::StorageClassUniform: std::cout << "uniform "; break;
+        case spv::StorageClassUniformConstant: std::cout << "uniform_constant "; break;
+        case spv::StorageClassFunction: std::cout << "local "; break;
+        default: std::cout << "??? "; break;
+        }
+        mod.print_type(std::cout << mod.metadatas[v.first].name << " : ", v.second.type) << std::endl;        
+    }
 }
 
 mesh load_mesh_from_obj(coord_system target, const char * filename)
