@@ -212,17 +212,12 @@ struct type
     struct structure_member { std::string name; std::unique_ptr<type> type; std::optional<uint32_t> offset; };
     struct unknown {};
     struct numeric { scalar_type scalar; uint32_t row_count, column_count; std::optional<matrix_layout> matrix_layout; };
-    struct sampler {}; //VkImageViewType view_type; //bool is_multisampled; //bool is_shadow;    
+    struct sampler { scalar_type channel; VkImageViewType view_type; bool multisampled, shadow; };
     struct array { std::unique_ptr<type> element; uint32_t length; std::optional<uint32_t> stride; };
     struct structure { std::string name; std::vector<structure_member> members; };
     std::variant<unknown, sampler, numeric, array, structure> contents;
 };
-struct descriptor
-{
-    uint32_t set, binding;
-    std::string name;
-    type type;
-};
+struct descriptor { uint32_t set, binding; std::string name; type type; };
 
 class shader
 {

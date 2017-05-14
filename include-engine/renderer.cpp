@@ -997,7 +997,6 @@ VkPipelineVertexInputStateCreateInfo vertex_format::get_vertex_input_state() con
 ////////////
 
 #include <vulkan/spirv.hpp>
-
 struct spirv_module
 {
     struct type { spv::Op op; std::vector<uint32_t> contents; };
@@ -1089,11 +1088,29 @@ struct spirv_module
     {
         auto & type = types[id]; auto & meta = metadatas[id];
         if(type.op >= spv::OpTypeInt && type.op <= spv::OpTypeMatrix) return {get_numeric_type(id, matrix_layout)};
-        if(type.op == spv::OpTypeSampledImage) return {::type::sampler{}};
+        if(type.op == spv::OpTypeImage) 
+        {
+            auto n = get_numeric_type(type.contents[0], matrix_layout);
+            auto dim = static_cast<spv::Dim>(type.contents[1]);
+            bool shadow = type.contents[2] == 1, arrayed = type.contents[3] == 1, multisampled = type.contents[4] == 1;
+            auto sampled = type.contents[5]; // 0 - unknown, 1 - used with sampler, 2 - used without sampler (i.e. storage image)
+            switch(dim)
+            {
+            case spv::Dim1D: return {::type::sampler{n.scalar, arrayed ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_1D, multisampled, shadow}};
+            case spv::Dim2D: return {::type::sampler{n.scalar, arrayed ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D, multisampled, shadow}};
+            case spv::Dim3D: return {::type::sampler{n.scalar, arrayed ? throw std::runtime_error("unsupported image type") : VK_IMAGE_VIEW_TYPE_3D, multisampled, shadow}};
+            case spv::DimCube: return {::type::sampler{n.scalar, arrayed ? VK_IMAGE_VIEW_TYPE_CUBE_ARRAY : VK_IMAGE_VIEW_TYPE_CUBE, multisampled, shadow}};
+            case spv::DimRect: return {::type::sampler{n.scalar, arrayed ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D, multisampled, shadow}};
+            default: throw std::runtime_error("unsupported image type"); // Buffer, SubpassData
+            }
+        }
+        if(type.op == spv::OpTypeSampledImage) return get_type(type.contents[0], matrix_layout);
         if(type.op == spv::OpTypeArray) return {::type::array{std::make_unique<::type>(get_type(type.contents[0], matrix_layout)), get_array_length(type.contents[1]), meta.get_decoration(spv::DecorationArrayStride)}};
         if(type.op == spv::OpTypeStruct)
         {
             ::type::structure s {meta.name};
+            // meta.has_decoration(spv::DecorationBlock) is true if this struct is used for VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER/VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC
+            // meta.has_decoration(spv::DecorationBufferBlock) is true if this struct is used for VK_DESCRIPTOR_TYPE_STORAGE_BUFFER/VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC
             for(size_t i=0; i<type.contents.size(); ++i)
             {
                 auto & member_meta = meta.members[i];

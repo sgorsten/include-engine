@@ -171,10 +171,34 @@ void game::state::advance(float timestep)
 // game::resources //
 /////////////////////
 
+std::ostream & operator << (std::ostream & out, type::scalar_type s)
+{
+    switch(s)
+    {
+    case type::int_: return out << "int";
+    case type::uint_: return out << "uint";
+    case type::float_: return out << "float";
+    case type::double_: return out << "double";
+    default: return out << "???";
+    }
+}
 std::ostream & print_indent(std::ostream & out, int indent) { for(int i=0; i<indent; ++i) out << "  "; return out; }
 std::ostream & print_type(std::ostream & out, const type & type, int indent = 0)
 {
-    if(auto * s = std::get_if<type::sampler>(&type.contents)) return out << "sampler";
+    if(auto * s = std::get_if<type::sampler>(&type.contents)) 
+    {
+        switch(s->view_type)
+        {
+        case VK_IMAGE_VIEW_TYPE_1D: out << "sampler1D"; break;
+        case VK_IMAGE_VIEW_TYPE_2D: out << "sampler2D"; break;
+        case VK_IMAGE_VIEW_TYPE_3D: out << "sampler3D"; break;
+        case VK_IMAGE_VIEW_TYPE_CUBE: out << "samplerCube"; break;
+        case VK_IMAGE_VIEW_TYPE_1D_ARRAY: out << "sampler1DArray"; break;
+        case VK_IMAGE_VIEW_TYPE_2D_ARRAY: out << "sampler2DArray"; break;
+        case VK_IMAGE_VIEW_TYPE_CUBE_ARRAY: out << "samplerCubeArray"; break;
+        }
+        return out << (s->multisampled ? "MS" : "") << (s->shadow ? "Shadow" : "") << "<" << s->channel << ">";
+    }
     if(auto * a = std::get_if<type::array>(&type.contents))
     {
         print_type(out, *a->element, indent) << '[' << a->length << ']';
