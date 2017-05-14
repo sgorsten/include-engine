@@ -217,13 +217,8 @@ game::resources::resources(renderer & r, std::shared_ptr<scene_contract> contrac
         {6, 0, VK_FORMAT_R32G32B32A32_UINT, offsetof(mesh::vertex, bone_indices)},
         {7, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(mesh::vertex, bone_weights)}
     });
-    standard_mtl = r.create_material(contract, {
-        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT},    
-        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
-    }, mesh_vertex_format, {vert_shader, frag_shader}, true, true, false);
-    glow_mtl = r.create_material(contract, {
-        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT}
-    }, mesh_vertex_format, {vert_shader, glow_shader}, true, true, false);
+    standard_mtl = r.create_material(contract, mesh_vertex_format, {vert_shader, frag_shader}, true, true, false);
+    glow_mtl = r.create_material(contract, mesh_vertex_format, {vert_shader, glow_shader}, true, true, false);
 
     auto particle_vertex_format = r.create_vertex_format({
         {0, sizeof(particle_vertex), VK_VERTEX_INPUT_RATE_VERTEX},
@@ -235,9 +230,7 @@ game::resources::resources(renderer & r, std::shared_ptr<scene_contract> contrac
         {3, 1, VK_FORMAT_R32_SFLOAT, offsetof(particle_instance, size)},
         {4, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(particle_instance, color)},
     });
-    particle_mtl = r.create_material(contract, {
-        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
-    }, particle_vertex_format, {particle_vert_shader, particle_frag_shader}, false, true, true);
+    particle_mtl = r.create_material(contract, particle_vertex_format, {particle_vert_shader, particle_frag_shader}, false, true, true);
 }
 
 /////////////////////

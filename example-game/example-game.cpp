@@ -105,12 +105,12 @@ int main() try
         make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED)
     );
 
-    auto contract = r.create_contract({render_pass}, {
+    auto contract = r.create_contract({render_pass}, {{
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
     }, {
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}
-    });
+    }});
     
     // Set up our shader pipeline
     auto static_vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/static.vert");
@@ -131,25 +131,10 @@ int main() try
         {7, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(mesh::vertex, bone_weights)}
     });
 
-    auto helmet_pipeline  = r.create_material(contract, {
-        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
-        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
-    }, mesh_vertex_format, {static_vert_shader, metal_shader}, true, true, false);
-    auto static_pipeline  = r.create_material(contract, {
-        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
-        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
-    }, mesh_vertex_format, {static_vert_shader, frag_shader}, true, true, false);
-    auto skinned_pipeline = r.create_material(contract, {
-        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
-        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
-    }, mesh_vertex_format, {skinned_vert_shader, frag_shader}, true, true, false);
-    auto skybox_pipeline  = r.create_material(contract, {}, mesh_vertex_format, {skybox_vert_shader, skybox_frag_shader}, false, false, false);
+    auto helmet_pipeline  = r.create_material(contract, mesh_vertex_format, {static_vert_shader, metal_shader}, true, true, false);
+    auto static_pipeline  = r.create_material(contract, mesh_vertex_format, {static_vert_shader, frag_shader}, true, true, false);
+    auto skinned_pipeline = r.create_material(contract, mesh_vertex_format, {skinned_vert_shader, frag_shader}, true, true, false);
+    auto skybox_pipeline  = r.create_material(contract, mesh_vertex_format, {skybox_vert_shader, skybox_frag_shader}, false, false, false);
 
     // Set up a window with swapchain framebuffers
     window win {r.ctx, {1280, 720}, "Example Game"};
@@ -280,24 +265,23 @@ int main() try
         pv.rotation_only_view_proj_matrix = mul(proj_matrix, inverse(pose_matrix(camera.get_orientation(game_coords), float3{0,0,0})));
         pv.eye_position = camera.position;
 
-        VkDescriptorSet per_scene = pool.allocate_descriptor_set(list.contract.get_per_scene_layout());
-        vkWriteDescriptorBufferInfo(r.get_device(), per_scene, 0, 0, pool.write_data(ps));      
-        vkWriteDescriptorCombinedImageSamplerInfo(r.get_device(), per_scene, 1, 0, {sampler.get_vk_handle(), env_tex, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        auto per_scene = list.shared_descriptor_set(0);
+        per_scene.write_uniform_buffer(0, 0, list.upload_uniforms(ps));      
+        per_scene.write_combined_image_sampler(1, 0, sampler, env_tex);
 
-        VkDescriptorSet per_view = pool.allocate_descriptor_set(list.contract.get_per_view_layout());
-        vkWriteDescriptorBufferInfo(r.get_device(), per_view, 0, 0, pool.write_data(pv));
+        auto per_view = list.shared_descriptor_set(1);
+        per_view.write_uniform_buffer(0, 0, list.upload_uniforms(pv));
 
         VkCommandBuffer cmd = pool.allocate_command_buffer();
 
         VkCommandBufferBeginInfo begin_info {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
         vkBeginCommandBuffer(cmd, &begin_info);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, list.contract.get_example_layout(), 0, {per_scene, per_view}, {});
 
         // Begin render pass
         const uint32_t index = win.begin();
         const uint2 dims = win.get_dims();
         vkCmdBeginRenderPass(cmd, render_pass->get_vk_handle(), swapchain_framebuffers[index]->get_vk_handle(), {{0,0},{dims.x,dims.y}}, {{0, 0, 0, 1}, {1.0f, 0}});
-        list.write_commands(cmd, *render_pass);
+        list.write_commands(cmd, *render_pass, {per_scene, per_view});
         vkCmdEndRenderPass(cmd); 
         check(vkEndCommandBuffer(cmd)); 
 
@@ -306,7 +290,7 @@ int main() try
         glfwPollEvents();
     }
 
-    vkDeviceWaitIdle(r.get_device()); 
+    r.wait_until_device_idle();
     return EXIT_SUCCESS;
 }
 catch(const std::exception & e)

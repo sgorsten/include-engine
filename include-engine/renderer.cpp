@@ -996,9 +996,222 @@ VkPipelineVertexInputStateCreateInfo vertex_format::get_vertex_input_state() con
 // shader //
 ////////////
 
-shader::shader(std::shared_ptr<context> ctx, VkShaderStageFlagBits stage, array_view<uint32_t> words)
-    : ctx{ctx}, stage{stage}
+#include <vulkan/spirv.hpp>
+
+struct spirv_module
 {
+    struct type { spv::Op op; std::vector<uint32_t> contents; };
+    struct variable { uint32_t type; spv::StorageClass storage_class; };
+    struct constant { uint32_t type; std::vector<uint32_t> literals; };
+    struct entrypoint { spv::ExecutionModel execution_model; std::string name; std::vector<uint32_t> interfaces; };
+    struct metadata
+    {
+        std::string name;
+        std::map<spv::Decoration, std::vector<uint32_t>> decorations;
+        std::map<uint32_t, metadata> members;
+        std::optional<uint32_t> get_decoration(spv::Decoration decoration)
+        {
+            auto it = decorations.find(decoration);
+            if(it == decorations.end() || it->second.size() != 1) return std::nullopt;
+            return it->second[0];
+        }
+    };
+
+    uint32_t version_number, generator_id, schema_id;
+    std::map<uint32_t, type> types;
+    std::map<uint32_t, variable> variables;
+    std::map<uint32_t, constant> constants;
+    std::map<uint32_t, entrypoint> entrypoints;
+    std::map<uint32_t, metadata> metadatas;
+
+    spirv_module() {}
+    spirv_module(array_view<uint32_t> words)
+    {
+        if(words.size < 5) throw std::runtime_error("not SPIR-V");
+        if(words[0] != 0x07230203) throw std::runtime_error("not SPIR-V");    
+        version_number = words[1];
+        generator_id = words[2];
+        schema_id = words[4];
+        const uint32_t * it = words.begin() + 5, * binary_end = words.end();
+        while(it != binary_end)
+        {
+            auto op_code = static_cast<spv::Op>(*it & spv::OpCodeMask);
+            const uint32_t op_code_length = *it >> 16;
+            const uint32_t * op_code_end = it + op_code_length;
+            if(op_code_end > binary_end) throw std::runtime_error("incomplete opcode");
+            if(op_code == spv::OpEntryPoint)
+            {
+                auto & entrypoint = entrypoints[it[2]];
+                entrypoint.execution_model = static_cast<spv::ExecutionModel>(it[1]);
+                const char * s = reinterpret_cast<const char *>(it+3);
+                const size_t max_length = reinterpret_cast<const char *>(op_code_end) - s, length = strnlen(s, max_length);
+                if(length == max_length) throw std::runtime_error("missing null terminator");
+                entrypoint.name.assign(s, s+length);
+                entrypoint.interfaces.assign(it+3+(length+3)/4, op_code_end);
+            }
+            if(op_code >= spv::OpTypeVoid && op_code <= spv::OpTypeForwardPointer) types[it[1]] = {op_code, {it+2, op_code_end}};
+            if(op_code == spv::OpVariable) variables[it[2]] = {it[1], static_cast<spv::StorageClass>(it[3])};
+            if(op_code == spv::OpConstant) constants[it[2]] = {it[1], {it+3, op_code_end}};
+            if(op_code == spv::OpName) metadatas[it[1]].name = reinterpret_cast<const char *>(&it[2]);
+            if(op_code == spv::OpMemberName) metadatas[it[1]].members[it[2]].name = reinterpret_cast<const char *>(&it[3]);
+            if(op_code == spv::OpDecorate) metadatas[it[1]].decorations[static_cast<spv::Decoration>(it[2])].assign(it+3, op_code_end);
+            if(op_code == spv::OpMemberDecorate) metadatas[it[1]].members[it[2]].decorations[static_cast<spv::Decoration>(it[3])].assign(it+4, op_code_end);
+            it = op_code_end;
+        }
+    }
+
+    std::ostream & print_integer_constant(std::ostream & out, uint32_t id)
+    {
+        auto & constant = constants[id];
+        if(constant.literals.size() != 1) throw std::runtime_error("bad constant");
+        return out << constant.literals[0];
+    }
+    std::ostream & print_type(std::ostream & out, uint32_t id, int indent = 0)
+    {
+        auto & type = types[id];
+        switch(type.op)
+        {
+        case spv::OpTypeVoid: return out << "void";
+        case spv::OpTypeBool: return out << "bool";
+        case spv::OpTypeInt: return out << "int"; // TODO: size/signed
+        case spv::OpTypeFloat: return out << "float"; // TODO: size
+        case spv::OpTypeVector: return print_type(out, type.contents[0], indent) << type.contents[1];
+        case spv::OpTypeMatrix: return print_type(out, type.contents[0], indent) << 'x' << type.contents[1];
+        case spv::OpTypeImage: return out << "image";
+        case spv::OpTypeSampler: return out << "sampler";
+        case spv::OpTypeSampledImage: return out << "sampled_image";
+        case spv::OpTypeArray: return print_integer_constant(print_type(out, type.contents[0], indent) << '[', type.contents[1]) << ']';
+        case spv::OpTypeRuntimeArray: return print_type(out, type.contents[0], indent) << "[]";
+        case spv::OpTypeStruct: out << "struct {";
+            for(size_t i=0; i<type.contents.size(); ++i)
+            {
+                out << "\n";
+                for(int i=0; i<=indent; ++i) out << "  ";
+                print_type(out << metadatas[id].members[i].name << " : ", type.contents[i], indent+1);
+            }
+            out << "\n";
+            for(int i=0; i<indent; ++i) out << "  ";
+            return out << "}";            
+        case spv::OpTypePointer: return print_type(out << "ptr to ", type.contents[1], indent);
+        default: return out << "???";
+        }
+    }
+};
+
+
+
+/*void analyze_spirv(array_view<uint32_t> words)
+{
+
+
+    for(auto & v : mod.variables)
+    {
+        auto & meta = mod.metadatas[v.first];
+        auto set = meta.get_decoration(spv::DecorationDescriptorSet);
+        if(!set || *set != 2) continue;
+        if(auto binding = meta.get_decoration(spv::DecorationBinding))
+        {
+            std::cout << "layout(set = " << *set << ", binding = " << *binding << ") ";
+
+            VkDescriptorSetLayoutBinding descriptor_set_layout_binding {};
+            descriptor_set_layout_binding.binding = *binding;
+            descriptor_set_layout_binding.descriptorCount = 1;
+            mod.print_type(std::cout << mod.metadatas[v.first].name << " : ", v.second.type) << std::endl;
+        }
+
+        /*auto loc_it = mod.metadatas[v.first].decorations.find(spv::DecorationLocation);
+        std::cout << "layout(";
+        if(set_it != mod.metadatas[v.first].decorations.end()) std::cout << "set = " << set_it->second[0];
+        if(binding_it != mod.metadatas[v.first].decorations.end()) std::cout << ", binding = " << binding_it->second[0];
+        if(loc_it != mod.metadatas[v.first].decorations.end()) std::cout << "location = " << loc_it->second[0];
+        std::cout << ") ";
+        switch(v.second.storage_class)
+        {
+        case spv::StorageClassInput: std::cout << "in "; break;
+        case spv::StorageClassOutput: std::cout << "out "; break;
+        case spv::StorageClassUniform: std::cout << "uniform "; break;
+        case spv::StorageClassUniformConstant: std::cout << "uniform_constant "; break;
+        case spv::StorageClassFunction: std::cout << "local "; break;
+        default: std::cout << "??? "; break;
+        }
+        mod.print_type(std::cout << mod.metadatas[v.first].name << " : ", v.second.type) << std::endl;*/        
+    //}
+
+    /*for(auto & v : mod.variables)
+    {
+        auto set_it = mod.metadatas[v.first].decorations.find(spv::DecorationDescriptorSet);
+        auto binding_it = mod.metadatas[v.first].decorations.find(spv::DecorationBinding);
+        auto loc_it = mod.metadatas[v.first].decorations.find(spv::DecorationLocation);
+        std::cout << "layout(";
+        if(set_it != mod.metadatas[v.first].decorations.end()) std::cout << "set = " << set_it->second[0];
+        if(binding_it != mod.metadatas[v.first].decorations.end()) std::cout << ", binding = " << binding_it->second[0];
+        if(loc_it != mod.metadatas[v.first].decorations.end()) std::cout << "location = " << loc_it->second[0];
+        std::cout << ") ";
+        switch(v.second.storage_class)
+        {
+        case spv::StorageClassInput: std::cout << "in "; break;
+        case spv::StorageClassOutput: std::cout << "out "; break;
+        case spv::StorageClassUniform: std::cout << "uniform "; break;
+        case spv::StorageClassUniformConstant: std::cout << "uniform_constant "; break;
+        case spv::StorageClassFunction: std::cout << "local "; break;
+        default: std::cout << "??? "; break;
+        }
+        mod.print_type(std::cout << mod.metadatas[v.first].name << " : ", v.second.type) << std::endl;        
+    }*/
+//}
+
+#include <iostream>
+shader::shader(std::shared_ptr<context> ctx, array_view<uint32_t> words)
+    : ctx{ctx}, words{words.begin(), words.end()}
+{
+    spirv_module mod(words);
+    if(mod.entrypoints.size() != 1) throw std::runtime_error("SPIR-V module should have exactly one entrypoint");
+    auto & entrypoint = mod.entrypoints.begin()->second;
+
+    switch(entrypoint.execution_model)
+    {
+    case spv::ExecutionModelVertex: stage = VK_SHADER_STAGE_VERTEX_BIT; break;
+    case spv::ExecutionModelTessellationControl: stage = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT; break;
+    case spv::ExecutionModelTessellationEvaluation: stage = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT; break;
+    case spv::ExecutionModelGeometry: stage = VK_SHADER_STAGE_GEOMETRY_BIT; break;
+    case spv::ExecutionModelFragment: stage = VK_SHADER_STAGE_FRAGMENT_BIT; break;
+    case spv::ExecutionModelGLCompute: stage = VK_SHADER_STAGE_COMPUTE_BIT; break;
+    default: throw std::runtime_error("invalid execution model");
+    }
+    name = entrypoint.name;
+
+    // Harvest
+    for(auto & v : mod.variables)
+    {
+        auto & meta = mod.metadatas[v.first];
+        if(auto set = meta.get_decoration(spv::DecorationDescriptorSet))
+        { 
+            if(auto binding = meta.get_decoration(spv::DecorationBinding))
+            {
+                auto type = v.second.type;
+                if(mod.types[type].op == spv::OpTypePointer) type = mod.types[type].contents[1]; // pointee type
+                uint32_t count = 1;
+                while(mod.types[type].op == spv::OpTypeArray)
+                {
+                    count *= mod.types[type].contents[1]; // array length
+                    type = mod.types[type].contents[0]; // element type
+                }
+                switch(mod.types[type].op)
+                {
+                case spv::OpTypeStruct:
+                    descriptor_sets[*set].push_back({*binding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, count, (VkShaderStageFlags)stage});
+                    break;
+                case spv::OpTypeSampledImage:
+                    descriptor_sets[*set].push_back({*binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, count, (VkShaderStageFlags)stage});
+                    break;
+                default:
+                    throw std::runtime_error("unknown descriptor type");
+                    break;
+                }
+            }
+        }
+    }
+
     VkShaderModuleCreateInfo create_info {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     create_info.codeSize = words.size * sizeof(uint32_t);
     create_info.pCode = words.data;
@@ -1084,23 +1297,56 @@ framebuffer::~framebuffer()
 // scene_contract //
 ////////////////////
 
-scene_contract::scene_contract(std::shared_ptr<context> ctx, array_view<std::shared_ptr<const render_pass>> render_passes, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings) : 
-    ctx{ctx}, render_passes{render_passes.begin(), render_passes.end()}, per_scene_layout{ctx->create_descriptor_set_layout(per_scene_bindings)}, per_view_layout{ctx->create_descriptor_set_layout(per_view_bindings)},
-    example_layout{ctx->create_pipeline_layout({per_scene_layout, per_view_layout})} {}
+scene_contract::scene_contract(std::shared_ptr<context> ctx, array_view<std::shared_ptr<const render_pass>> render_passes, array_view<array_view<VkDescriptorSetLayoutBinding>> shared_descriptor_sets) :
+    ctx{ctx}, render_passes{render_passes.begin(), render_passes.end()}
+{
+    for(auto & bindings : shared_descriptor_sets) shared_layouts.push_back(ctx->create_descriptor_set_layout(bindings));
+    example_layout = ctx->create_pipeline_layout(shared_layouts);
+}
 
 scene_contract::~scene_contract()
 {
     vkDestroyPipelineLayout(ctx->device, example_layout, nullptr);
-    vkDestroyDescriptorSetLayout(ctx->device, per_view_layout, nullptr);
-    vkDestroyDescriptorSetLayout(ctx->device, per_scene_layout, nullptr);
+    for(auto layout : shared_layouts) vkDestroyDescriptorSetLayout(ctx->device, layout, nullptr);
 }
+ 
+////////////////////
+// scene_material //
+////////////////////
 
-scene_material::scene_material(std::shared_ptr<context> ctx, std::shared_ptr<scene_contract> contract, array_view<VkDescriptorSetLayoutBinding> per_object_bindings, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending) : 
-    ctx{ctx}, contract{contract}, per_object_layout{ctx->create_descriptor_set_layout(per_object_bindings)},
-    pipeline_layout{ctx->create_pipeline_layout({contract->per_scene_layout, contract->per_view_layout, per_object_layout})}
+scene_material::scene_material(std::shared_ptr<context> ctx, std::shared_ptr<scene_contract> contract, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending) : 
+    ctx{ctx}, contract{contract}
 {
+    // Determine the full set of per object descriptors across all stages
+    std::vector<VkDescriptorSetLayoutBinding> per_object_bindings;
     std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
-    for(auto & s : stages) shader_stages.push_back(s->get_shader_stage());
+    const uint32_t per_object_descriptor_set_index = contract->get_shared_layouts().size();
+    for(auto & s : stages) 
+    {
+        shader_stages.push_back(s->get_shader_stage());
+        if(auto * bindings = s->get_descriptor_set(per_object_descriptor_set_index)) 
+        {
+            for(auto & sb : *bindings)
+            {
+                bool found = false;
+                for(auto & b : per_object_bindings)
+                {
+                    if(b.binding != sb.binding) continue;
+                    if(b.descriptorType != sb.descriptorType) throw std::runtime_error("descriptor type mismatch");
+                    if(b.descriptorCount != sb.descriptorCount) throw std::runtime_error("descriptor count mismatch");
+                    b.stageFlags |= sb.stageFlags;
+                    found = true;
+                    break;
+                }
+                if(!found) per_object_bindings.push_back(sb);
+            }
+        }
+    }
+
+    per_object_layout = ctx->create_descriptor_set_layout(per_object_bindings);
+    auto set_layouts = contract->shared_layouts;
+    set_layouts.push_back(per_object_layout);
+    pipeline_layout = ctx->create_pipeline_layout(set_layouts);
     for(auto & p : contract->render_passes) pipelines.push_back(make_pipeline(ctx->device, p->get_vk_handle(), pipeline_layout, format->get_vertex_input_state(), shader_stages, depth_write, depth_test, additive_blending));
 }
     
@@ -1111,15 +1357,26 @@ scene_material::~scene_material()
     vkDestroyDescriptorSetLayout(ctx->device, per_object_layout, nullptr);
 }
 
+//////////////////////////
+// scene_descriptor_set //
+//////////////////////////
+
+scene_descriptor_set::scene_descriptor_set(transient_resource_pool & pool, VkDescriptorSetLayout layout) : material{}, layout{layout}, set{pool.allocate_descriptor_set(layout)}, device{pool.get_context().device} {}
+scene_descriptor_set::scene_descriptor_set(transient_resource_pool & pool, const scene_material & material) : scene_descriptor_set(pool, material.get_per_object_descriptor_set_layout()) { this->material = &material; }
+
 void scene_descriptor_set::write_uniform_buffer(uint32_t binding, uint32_t array_element, VkDescriptorBufferInfo info)
 {
-    vkWriteDescriptorBufferInfo(material->ctx->device, set, binding, array_element, info);
+    vkWriteDescriptorBufferInfo(device, set, binding, array_element, info);
 }
 
 void scene_descriptor_set::write_combined_image_sampler(uint32_t binding, uint32_t array_element, sampler & sampler, VkImageView image_view, VkImageLayout image_layout)
 {
-    vkWriteDescriptorCombinedImageSamplerInfo(material->ctx->device, set, binding, array_element, {sampler.get_vk_handle(), image_view, image_layout});
+    vkWriteDescriptorCombinedImageSamplerInfo(device, set, binding, array_element, {sampler.get_vk_handle(), image_view, image_layout});
 }
+
+///////////////
+// draw_list //
+///////////////
 
 void draw_list::draw(const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls, VkDescriptorBufferInfo instances, size_t instance_stride)
 {
@@ -1159,27 +1416,43 @@ void draw_list::draw(const scene_descriptor_set & descriptors, const gfx_mesh & 
     draw(descriptors, mesh, {}, 0);
 }
 
-void draw_list::write_commands(VkCommandBuffer cmd, const render_pass & render_pass) const
+void draw_list::write_commands(VkCommandBuffer cmd, const render_pass & render_pass, array_view<scene_descriptor_set> shared_descriptors) const
 {
+    // Validate and bind shared descriptor sets
+    std::vector<VkDescriptorSet> sets;
+    auto & contract_layouts = contract.get_shared_layouts();
+    if(shared_descriptors.size != contract_layouts.size()) throw std::runtime_error("contract violation");
+    for(size_t i=0; i<shared_descriptors.size; ++i) 
+    {
+        if(shared_descriptors[i].get_descriptor_set_layout() != contract_layouts[i]) throw std::runtime_error("contract violation");
+        sets.push_back(shared_descriptors[i].get_descriptor_set());
+    }
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, contract.get_example_layout(), 0, sets, {});
+
+    // Issue draw calls
     auto render_pass_index = contract.get_render_pass_index(render_pass);
     for(auto & item : items)
     {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, item.material->get_pipeline(render_pass_index));
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, item.material->get_pipeline_layout(), 2, {item.set}, {});
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, item.material->get_pipeline_layout(), sets.size(), {item.set}, {});
         vkCmdBindVertexBuffers(cmd, 0, item.vertex_buffer_count, item.vertex_buffers, item.vertex_buffer_offsets);
         vkCmdBindIndexBuffer(cmd, item.index_buffer, item.index_buffer_offset, VkIndexType::VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(cmd, item.index_count, item.instance_count, item.first_index, 0, 0);
     }
 }
 
+//////////////
+// renderer //
+//////////////
+
 renderer::renderer() : ctx{std::make_shared<context>()} 
 {
 
 }
 
-VkDevice renderer::get_device()
+void renderer::wait_until_device_idle()
 {
-    return ctx->device;
+    vkDeviceWaitIdle(ctx->device);
 }
 
 VkFormat renderer::get_swapchain_surface_format() const 
@@ -1199,7 +1472,7 @@ std::shared_ptr<framebuffer> renderer::create_framebuffer(std::shared_ptr<const 
 
 std::shared_ptr<shader> renderer::create_shader(VkShaderStageFlagBits stage, const char * filename)
 {
-    return std::make_shared<shader>(ctx, stage, compiler.compile_glsl(stage, filename));
+    return std::make_shared<shader>(ctx, compiler.compile_glsl(stage, filename));
 }
 
 std::shared_ptr<vertex_format> renderer::create_vertex_format(array_view<VkVertexInputBindingDescription> bindings, array_view<VkVertexInputAttributeDescription> attributes)
@@ -1207,12 +1480,12 @@ std::shared_ptr<vertex_format> renderer::create_vertex_format(array_view<VkVerte
     return std::make_shared<vertex_format>(bindings, attributes);
 }
 
-std::shared_ptr<scene_contract> renderer::create_contract(array_view<std::shared_ptr<const render_pass>> render_passes, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings)
+std::shared_ptr<scene_contract> renderer::create_contract(array_view<std::shared_ptr<const render_pass>> render_passes, array_view<array_view<VkDescriptorSetLayoutBinding>> shared_descriptor_sets)
 {
-    return std::make_shared<scene_contract>(ctx, render_passes, per_scene_bindings, per_view_bindings);
+    return std::make_shared<scene_contract>(ctx, render_passes, shared_descriptor_sets);
 }
 
-std::shared_ptr<scene_material> renderer::create_material(std::shared_ptr<scene_contract> contract, array_view<VkDescriptorSetLayoutBinding> per_object_bindings, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending)
+std::shared_ptr<scene_material> renderer::create_material(std::shared_ptr<scene_contract> contract, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending)
 {
-    return std::make_shared<scene_material>(ctx, contract, per_object_bindings, format, stages, depth_write, depth_test, additive_blending);
+    return std::make_shared<scene_material>(ctx, contract, format, stages, depth_write, depth_test, additive_blending);
 }
