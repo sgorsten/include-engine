@@ -1009,7 +1009,8 @@ struct spirv_module
         std::string name;
         std::map<spv::Decoration, std::vector<uint32_t>> decorations;
         std::map<uint32_t, metadata> members;
-        std::optional<uint32_t> get_decoration(spv::Decoration decoration)
+        bool has_decoration(spv::Decoration decoration) const { return decorations.find(decoration) != decorations.end(); }
+        std::optional<uint32_t> get_decoration(spv::Decoration decoration) const
         {
             auto it = decorations.find(decoration);
             if(it == decorations.end() || it->second.size() != 1) return std::nullopt;
@@ -1039,8 +1040,16 @@ struct spirv_module
             const uint32_t op_code_length = *it >> 16;
             const uint32_t * op_code_end = it + op_code_length;
             if(op_code_end > binary_end) throw std::runtime_error("incomplete opcode");
-            if(op_code == spv::OpEntryPoint)
+            if(op_code >= spv::OpTypeVoid && op_code <= spv::OpTypeForwardPointer) types[it[1]] = {op_code, {it+2, op_code_end}};
+            switch(op_code)
             {
+            case spv::OpVariable: variables[it[2]] = {it[1], static_cast<spv::StorageClass>(it[3])}; break;
+            case spv::OpConstant: constants[it[2]] = {it[1], {it+3, op_code_end}}; break;
+            case spv::OpName: metadatas[it[1]].name = reinterpret_cast<const char *>(&it[2]); break;
+            case spv::OpMemberName: metadatas[it[1]].members[it[2]].name = reinterpret_cast<const char *>(&it[3]); break;
+            case spv::OpDecorate: metadatas[it[1]].decorations[static_cast<spv::Decoration>(it[2])].assign(it+3, op_code_end); break;
+            case spv::OpMemberDecorate: metadatas[it[1]].members[it[2]].decorations[static_cast<spv::Decoration>(it[3])].assign(it+4, op_code_end); break;
+            case spv::OpEntryPoint:
                 auto & entrypoint = entrypoints[it[2]];
                 entrypoint.execution_model = static_cast<spv::ExecutionModel>(it[1]);
                 const char * s = reinterpret_cast<const char *>(it+3);
@@ -1049,125 +1058,68 @@ struct spirv_module
                 entrypoint.name.assign(s, s+length);
                 entrypoint.interfaces.assign(it+3+(length+3)/4, op_code_end);
             }
-            if(op_code >= spv::OpTypeVoid && op_code <= spv::OpTypeForwardPointer) types[it[1]] = {op_code, {it+2, op_code_end}};
-            if(op_code == spv::OpVariable) variables[it[2]] = {it[1], static_cast<spv::StorageClass>(it[3])};
-            if(op_code == spv::OpConstant) constants[it[2]] = {it[1], {it+3, op_code_end}};
-            if(op_code == spv::OpName) metadatas[it[1]].name = reinterpret_cast<const char *>(&it[2]);
-            if(op_code == spv::OpMemberName) metadatas[it[1]].members[it[2]].name = reinterpret_cast<const char *>(&it[3]);
-            if(op_code == spv::OpDecorate) metadatas[it[1]].decorations[static_cast<spv::Decoration>(it[2])].assign(it+3, op_code_end);
-            if(op_code == spv::OpMemberDecorate) metadatas[it[1]].members[it[2]].decorations[static_cast<spv::Decoration>(it[3])].assign(it+4, op_code_end);
             it = op_code_end;
         }
     }
 
-    std::ostream & print_integer_constant(std::ostream & out, uint32_t id)
-    {
-        auto & constant = constants[id];
-        if(constant.literals.size() != 1) throw std::runtime_error("bad constant");
-        return out << constant.literals[0];
-    }
-    std::ostream & print_type(std::ostream & out, uint32_t id, int indent = 0)
+    ::type::numeric get_numeric_type(uint32_t id, std::optional<::type::matrix_layout> matrix_layout)
     {
         auto & type = types[id];
         switch(type.op)
         {
-        case spv::OpTypeVoid: return out << "void";
-        case spv::OpTypeBool: return out << "bool";
-        case spv::OpTypeInt: return out << "int"; // TODO: size/signed
-        case spv::OpTypeFloat: return out << "float"; // TODO: size
-        case spv::OpTypeVector: return print_type(out, type.contents[0], indent) << type.contents[1];
-        case spv::OpTypeMatrix: return print_type(out, type.contents[0], indent) << 'x' << type.contents[1];
-        case spv::OpTypeImage: return out << "image";
-        case spv::OpTypeSampler: return out << "sampler";
-        case spv::OpTypeSampledImage: return out << "sampled_image";
-        case spv::OpTypeArray: return print_integer_constant(print_type(out, type.contents[0], indent) << '[', type.contents[1]) << ']';
-        case spv::OpTypeRuntimeArray: return print_type(out, type.contents[0], indent) << "[]";
-        case spv::OpTypeStruct: out << "struct {";
+        case spv::OpTypeInt: 
+            if(type.contents[0] != 32) throw std::runtime_error("unsupported int width");
+            return {type.contents[1] ? ::type::int_ : ::type::uint_, 1, 1, matrix_layout};
+        case spv::OpTypeFloat: 
+            if(type.contents[0] == 32) return {::type::float_, 1, 1, matrix_layout};
+            if(type.contents[0] == 64) return {::type::double_, 1, 1, matrix_layout};
+            throw std::runtime_error("unsupported float width");
+        case spv::OpTypeVector: { auto t = get_numeric_type(type.contents[0], matrix_layout); t.row_count = type.contents[1]; return t; }
+        case spv::OpTypeMatrix: { auto t = get_numeric_type(type.contents[0], matrix_layout); t.column_count = type.contents[1]; return t; }
+        default: throw std::runtime_error("not a numeric type");
+        }
+    }
+    uint32_t get_array_length(uint32_t constant_id)
+    {
+        auto & constant = constants[constant_id];
+        if(constant.literals.size() != 1) throw std::runtime_error("bad constant");
+        return constant.literals[0];
+    }
+    ::type get_type(uint32_t id, std::optional<::type::matrix_layout> matrix_layout)
+    {
+        auto & type = types[id]; auto & meta = metadatas[id];
+        if(type.op >= spv::OpTypeInt && type.op <= spv::OpTypeMatrix) return {get_numeric_type(id, matrix_layout)};
+        if(type.op == spv::OpTypeSampledImage) return {::type::sampler{}};
+        if(type.op == spv::OpTypeArray) return {::type::array{std::make_unique<::type>(get_type(type.contents[0], matrix_layout)), get_array_length(type.contents[1]), meta.get_decoration(spv::DecorationArrayStride)}};
+        if(type.op == spv::OpTypeStruct)
+        {
+            ::type::structure s {meta.name};
             for(size_t i=0; i<type.contents.size(); ++i)
             {
-                out << "\n";
-                for(int i=0; i<=indent; ++i) out << "  ";
-                print_type(out << metadatas[id].members[i].name << " : ", type.contents[i], indent+1);
+                auto & member_meta = meta.members[i];
+                std::optional<::type::matrix_layout> matrix_layout;
+                if(auto stride = member_meta.get_decoration(spv::DecorationMatrixStride)) matrix_layout = ::type::matrix_layout{*stride, member_meta.has_decoration(spv::DecorationRowMajor)};
+                s.members.push_back({member_meta.name, std::make_unique<::type>(get_type(type.contents[i], matrix_layout)), member_meta.get_decoration(spv::DecorationOffset)});
             }
-            out << "\n";
-            for(int i=0; i<indent; ++i) out << "  ";
-            return out << "}";            
-        case spv::OpTypePointer: return print_type(out << "ptr to ", type.contents[1], indent);
-        default: return out << "???";
+            return {std::move(s)};
         }
+        return {::type::unknown{}};
+    }
+    ::type get_pointee_type(uint32_t id)
+    {
+        if(types[id].op != spv::OpTypePointer) throw std::runtime_error("not a pointer type");
+        return get_type(types[id].contents[1], std::nullopt);
     }
 };
 
-
-
-/*void analyze_spirv(array_view<uint32_t> words)
+shader::shader(std::shared_ptr<context> ctx, array_view<uint32_t> words) : ctx{ctx}
 {
-
-
-    for(auto & v : mod.variables)
-    {
-        auto & meta = mod.metadatas[v.first];
-        auto set = meta.get_decoration(spv::DecorationDescriptorSet);
-        if(!set || *set != 2) continue;
-        if(auto binding = meta.get_decoration(spv::DecorationBinding))
-        {
-            std::cout << "layout(set = " << *set << ", binding = " << *binding << ") ";
-
-            VkDescriptorSetLayoutBinding descriptor_set_layout_binding {};
-            descriptor_set_layout_binding.binding = *binding;
-            descriptor_set_layout_binding.descriptorCount = 1;
-            mod.print_type(std::cout << mod.metadatas[v.first].name << " : ", v.second.type) << std::endl;
-        }
-
-        /*auto loc_it = mod.metadatas[v.first].decorations.find(spv::DecorationLocation);
-        std::cout << "layout(";
-        if(set_it != mod.metadatas[v.first].decorations.end()) std::cout << "set = " << set_it->second[0];
-        if(binding_it != mod.metadatas[v.first].decorations.end()) std::cout << ", binding = " << binding_it->second[0];
-        if(loc_it != mod.metadatas[v.first].decorations.end()) std::cout << "location = " << loc_it->second[0];
-        std::cout << ") ";
-        switch(v.second.storage_class)
-        {
-        case spv::StorageClassInput: std::cout << "in "; break;
-        case spv::StorageClassOutput: std::cout << "out "; break;
-        case spv::StorageClassUniform: std::cout << "uniform "; break;
-        case spv::StorageClassUniformConstant: std::cout << "uniform_constant "; break;
-        case spv::StorageClassFunction: std::cout << "local "; break;
-        default: std::cout << "??? "; break;
-        }
-        mod.print_type(std::cout << mod.metadatas[v.first].name << " : ", v.second.type) << std::endl;*/        
-    //}
-
-    /*for(auto & v : mod.variables)
-    {
-        auto set_it = mod.metadatas[v.first].decorations.find(spv::DecorationDescriptorSet);
-        auto binding_it = mod.metadatas[v.first].decorations.find(spv::DecorationBinding);
-        auto loc_it = mod.metadatas[v.first].decorations.find(spv::DecorationLocation);
-        std::cout << "layout(";
-        if(set_it != mod.metadatas[v.first].decorations.end()) std::cout << "set = " << set_it->second[0];
-        if(binding_it != mod.metadatas[v.first].decorations.end()) std::cout << ", binding = " << binding_it->second[0];
-        if(loc_it != mod.metadatas[v.first].decorations.end()) std::cout << "location = " << loc_it->second[0];
-        std::cout << ") ";
-        switch(v.second.storage_class)
-        {
-        case spv::StorageClassInput: std::cout << "in "; break;
-        case spv::StorageClassOutput: std::cout << "out "; break;
-        case spv::StorageClassUniform: std::cout << "uniform "; break;
-        case spv::StorageClassUniformConstant: std::cout << "uniform_constant "; break;
-        case spv::StorageClassFunction: std::cout << "local "; break;
-        default: std::cout << "??? "; break;
-        }
-        mod.print_type(std::cout << mod.metadatas[v.first].name << " : ", v.second.type) << std::endl;        
-    }*/
-//}
-
-#include <iostream>
-shader::shader(std::shared_ptr<context> ctx, array_view<uint32_t> words)
-    : ctx{ctx}, words{words.begin(), words.end()}
-{
+    // Analyze SPIR-V
     spirv_module mod(words);
     if(mod.entrypoints.size() != 1) throw std::runtime_error("SPIR-V module should have exactly one entrypoint");
     auto & entrypoint = mod.entrypoints.begin()->second;
 
+    // Determine shader stage
     switch(entrypoint.execution_model)
     {
     case spv::ExecutionModelVertex: stage = VK_SHADER_STAGE_VERTEX_BIT; break;
@@ -1180,37 +1132,15 @@ shader::shader(std::shared_ptr<context> ctx, array_view<uint32_t> words)
     }
     name = entrypoint.name;
 
-    // Harvest
+    // Harvest descriptors
     for(auto & v : mod.variables)
     {
         auto & meta = mod.metadatas[v.first];
-        if(auto set = meta.get_decoration(spv::DecorationDescriptorSet))
-        { 
-            if(auto binding = meta.get_decoration(spv::DecorationBinding))
-            {
-                auto type = v.second.type;
-                if(mod.types[type].op == spv::OpTypePointer) type = mod.types[type].contents[1]; // pointee type
-                uint32_t count = 1;
-                while(mod.types[type].op == spv::OpTypeArray)
-                {
-                    count *= mod.types[type].contents[1]; // array length
-                    type = mod.types[type].contents[0]; // element type
-                }
-                switch(mod.types[type].op)
-                {
-                case spv::OpTypeStruct:
-                    descriptor_sets[*set].push_back({*binding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, count, (VkShaderStageFlags)stage});
-                    break;
-                case spv::OpTypeSampledImage:
-                    descriptor_sets[*set].push_back({*binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, count, (VkShaderStageFlags)stage});
-                    break;
-                default:
-                    throw std::runtime_error("unknown descriptor type");
-                    break;
-                }
-            }
-        }
+        auto set = meta.get_decoration(spv::DecorationDescriptorSet);
+        auto binding = meta.get_decoration(spv::DecorationBinding);
+        if(set && binding) descriptors.push_back({*set, *binding, meta.name, mod.get_pointee_type(v.second.type)});
     }
+    std::sort(begin(descriptors), end(descriptors), [](const descriptor & a, const descriptor & b) { return std::tie(a.set, a.binding) < std::tie(b.set, b.binding); });
 
     VkShaderModuleCreateInfo create_info {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     create_info.codeSize = words.size * sizeof(uint32_t);
@@ -1265,6 +1195,9 @@ render_pass::render_pass(std::shared_ptr<context> ctx, array_view<VkAttachmentDe
     render_pass_info.pSubpasses = &subpass_desc;
 
     check(vkCreateRenderPass(ctx->device, &render_pass_info, nullptr, &handle));
+
+    color_attachment_count = color_attachments.size;
+    has_depth_attachment = depth_attachment.has_value();
 }
 
 render_pass::~render_pass()
@@ -1314,32 +1247,45 @@ scene_contract::~scene_contract()
 // scene_material //
 ////////////////////
 
+VkDescriptorSetLayoutBinding get_descriptor_set_layout_binding(uint32_t binding, const type & type, VkShaderStageFlags stage_flags)
+{
+    if(auto * a = std::get_if<type::array>(&type.contents))
+    {
+        auto b = get_descriptor_set_layout_binding(binding, *a->element, stage_flags);
+        b.descriptorCount *= a->length;
+        return b;
+    }
+    if(auto * s = std::get_if<type::sampler>(&type.contents)) return {binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, stage_flags};
+    return {binding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, stage_flags};
+}
+
 scene_material::scene_material(std::shared_ptr<context> ctx, std::shared_ptr<scene_contract> contract, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending) : 
     ctx{ctx}, contract{contract}
 {
     // Determine the full set of per object descriptors across all stages
     std::vector<VkDescriptorSetLayoutBinding> per_object_bindings;
-    std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
+    std::vector<VkPipelineShaderStageCreateInfo> shader_stages, shader_stages_no_frag;
     const uint32_t per_object_descriptor_set_index = contract->get_shared_layouts().size();
     for(auto & s : stages) 
     {
         shader_stages.push_back(s->get_shader_stage());
-        if(auto * bindings = s->get_descriptor_set(per_object_descriptor_set_index)) 
+        if(s->get_shader_stage().stage != VK_SHADER_STAGE_FRAGMENT_BIT) shader_stages_no_frag.push_back(s->get_shader_stage());
+        for(auto & descriptor : s->get_descriptors())
         {
-            for(auto & sb : *bindings)
+            if(descriptor.set != per_object_descriptor_set_index) continue;
+            auto db = get_descriptor_set_layout_binding(descriptor.binding, descriptor.type, s->get_shader_stage().stage);
+            
+            bool found = false;
+            for(auto & b : per_object_bindings)
             {
-                bool found = false;
-                for(auto & b : per_object_bindings)
-                {
-                    if(b.binding != sb.binding) continue;
-                    if(b.descriptorType != sb.descriptorType) throw std::runtime_error("descriptor type mismatch");
-                    if(b.descriptorCount != sb.descriptorCount) throw std::runtime_error("descriptor count mismatch");
-                    b.stageFlags |= sb.stageFlags;
-                    found = true;
-                    break;
-                }
-                if(!found) per_object_bindings.push_back(sb);
+                if(b.binding != db.binding) continue;
+                if(b.descriptorType != db.descriptorType) throw std::runtime_error("descriptor type mismatch");
+                if(b.descriptorCount != db.descriptorCount) throw std::runtime_error("descriptor count mismatch");
+                b.stageFlags |= db.stageFlags;
+                found = true;
+                break;
             }
+            if(!found) per_object_bindings.push_back(db);
         }
     }
 
@@ -1347,7 +1293,10 @@ scene_material::scene_material(std::shared_ptr<context> ctx, std::shared_ptr<sce
     auto set_layouts = contract->shared_layouts;
     set_layouts.push_back(per_object_layout);
     pipeline_layout = ctx->create_pipeline_layout(set_layouts);
-    for(auto & p : contract->render_passes) pipelines.push_back(make_pipeline(ctx->device, p->get_vk_handle(), pipeline_layout, format->get_vertex_input_state(), shader_stages, depth_write, depth_test, additive_blending));
+    for(auto & p : contract->render_passes)
+    {
+        pipelines.push_back(make_pipeline(ctx->device, p->get_vk_handle(), pipeline_layout, format->get_vertex_input_state(), p->has_color_attachments() ? shader_stages : shader_stages_no_frag, depth_write, depth_test, additive_blending));
+    }
 }
     
 scene_material::~scene_material()

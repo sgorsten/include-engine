@@ -171,6 +171,45 @@ void game::state::advance(float timestep)
 // game::resources //
 /////////////////////
 
+std::ostream & print_indent(std::ostream & out, int indent) { for(int i=0; i<indent; ++i) out << "  "; return out; }
+std::ostream & print_type(std::ostream & out, const type & type, int indent = 0)
+{
+    if(auto * s = std::get_if<type::sampler>(&type.contents)) return out << "sampler";
+    if(auto * a = std::get_if<type::array>(&type.contents))
+    {
+        print_type(out, *a->element, indent) << '[' << a->length << ']';
+        if(a->stride) out << "/*stride=" << *a->stride << "*/";
+        return out;
+    }
+    if(auto * n = std::get_if<type::numeric>(&type.contents))
+    {
+        switch(n->scalar)
+        {
+        case type::int_: out << "int"; break;
+        case type::uint_: out << "uint"; break;
+        case type::float_: out << "float"; break;
+        case type::double_: out << "double"; break;
+        }
+        if(n->row_count > 1) out << n->row_count;
+        if(n->column_count > 1) out << 'x' << n->column_count;
+        if(n->matrix_layout) out << "/*stride=" << n->matrix_layout->stride << (n->matrix_layout->row_major ? ",row_major*/" : ",col_major*/");
+        return out;
+    }
+    if(auto * s = std::get_if<type::structure>(&type.contents))
+    {
+        out << "struct " << s->name << " {";
+        for(auto & m : s->members) 
+        {
+            print_indent(out << "\n", indent+1);
+            if(m.offset) out << "layout(offset=" << *m.offset << ") ";
+            print_type(out << m.name << " : ", *m.type, indent+1) << ";";
+        }
+        return print_indent(out << "\n", indent) << "}";
+    }
+    return out << "unknown";
+}
+#include <iostream>
+
 game::resources::resources(renderer & r, std::shared_ptr<scene_contract> contract)
 {
     // Load meshes
@@ -202,6 +241,8 @@ game::resources::resources(renderer & r, std::shared_ptr<scene_contract> contrac
     // Set up our shader pipeline
     auto vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/static.vert");
     auto frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/shader.frag");
+    std::cout << "assets/shader.frag:\n";
+    for(auto & d : frag_shader->get_descriptors()) print_type(std::cout << "  layout(set=" << d.set << ", binding=" << d.binding << ") uniform " << d.name << " : ", d.type, 1) << ";\n";
 
     auto glow_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/glow.frag");
     auto particle_vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/particle.vert");
