@@ -24,12 +24,12 @@ struct fps_camera
     float4x4 get_view_matrix(const coord_system & c) const { return pose_matrix(inverse(get_pose(c))); }
 };
 
-void draw_fullscreen_pass(VkCommandBuffer cmd, VkRenderPass render_pass, framebuffer & fb, scene_pipeline & pipeline, VkDescriptorSet descriptors, const gfx_mesh & fullscreen_quad)
+void draw_fullscreen_pass(VkCommandBuffer cmd, framebuffer & fb, const scene_descriptor_set & descriptors, const gfx_mesh & fullscreen_quad)
 {
     const auto dims = fb.get_dimensions();
-    vkCmdBeginRenderPass(cmd, render_pass, fb.get_vk_handle(), {{0,0}, {dims.x,dims.y}}, {});  
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.get_pipeline(pipeline.get_contract().get_render_pass_index(render_pass)));
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.get_pipeline_layout(), 2, {descriptors}, {});
+    vkCmdBeginRenderPass(cmd, fb.get_render_pass().get_vk_handle(), fb.get_vk_handle(), {{0,0}, {dims.x,dims.y}}, {});  
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, descriptors.get_material().get_pipeline(descriptors.get_material().get_contract().get_render_pass_index(fb.get_render_pass())));
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, descriptors.get_material().get_pipeline_layout(), 2, {descriptors.get_descriptor_set()}, {});
     vkCmdBindVertexBuffers(cmd, 0, {*fullscreen_quad.vertex_buffer}, {0});
     vkCmdBindIndexBuffer(cmd, *fullscreen_quad.index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
     vkCmdDrawIndexed(cmd, fullscreen_quad.index_count, 1, 0, 0, 0);
@@ -58,25 +58,24 @@ int main() try
     sampler image_sampler {r.ctx, image_sampler_info};
 
     // Set up scene contract
-    render_pass fb_render_pass {r.ctx,
+    auto fb_render_pass = r.create_render_pass(
         {make_attachment_description(VK_FORMAT_R16G16B16A16_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)},
         make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED)
-    };
-    render_pass post_render_pass {r.ctx,
+    );
+    auto post_render_pass = r.create_render_pass(
         {make_attachment_description(VK_FORMAT_R16G16B16A16_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)},
         std::nullopt
-    };
-    render_pass final_render_pass {r.ctx,
+    );
+    auto final_render_pass = r.create_render_pass(
         {make_attachment_description(r.get_swapchain_surface_format(), VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)},
         std::nullopt
-    };
+    );
 
-    auto post_contract = r.create_contract({post_render_pass.get_vk_handle(), final_render_pass.get_vk_handle()}, {}, {});
+    auto post_contract = r.create_contract({post_render_pass, final_render_pass}, {}, {});
 
-    auto gauss_layout = r.create_pipeline_layout(post_contract, {{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}});
-    auto add_layout = r.create_pipeline_layout(post_contract, {
-        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
+    auto image_vertex_format = r.create_vertex_format({{0, sizeof(mesh::vertex), VK_VERTEX_INPUT_RATE_VERTEX}}, {
+        {0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(mesh::vertex, position)}, 
+        {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(mesh::vertex, texcoord)}
     });
 
     auto image_vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/image.vert");
@@ -84,19 +83,17 @@ int main() try
     auto hgauss_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/hgauss.frag");
     auto vgauss_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/vgauss.frag");
     auto add_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/add.frag");
-
-    auto image_vertex_format = r.create_vertex_format({{0, sizeof(mesh::vertex), VK_VERTEX_INPUT_RATE_VERTEX}}, {
-        {0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(mesh::vertex, position)}, 
-        {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(mesh::vertex, texcoord)}
-    });
     
-    auto hipass_pipe = r.create_pipeline(gauss_layout, image_vertex_format, {image_vert_shader, hipass_frag_shader}, false, false, false);
-    auto hgauss_pipe = r.create_pipeline(gauss_layout, image_vertex_format, {image_vert_shader, hgauss_frag_shader}, false, false, false);
-    auto vgauss_pipe = r.create_pipeline(gauss_layout, image_vertex_format, {image_vert_shader, vgauss_frag_shader}, false, false, false);
-    auto add_pipe = r.create_pipeline(add_layout, image_vertex_format, {image_vert_shader, add_frag_shader}, false, false, false);
+    auto hipass_mtl = r.create_material(post_contract, {{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, image_vertex_format, {image_vert_shader, hipass_frag_shader}, false, false, false);
+    auto hgauss_mtl = r.create_material(post_contract, {{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, image_vertex_format, {image_vert_shader, hgauss_frag_shader}, false, false, false);
+    auto vgauss_mtl = r.create_material(post_contract, {{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, image_vertex_format, {image_vert_shader, vgauss_frag_shader}, false, false, false);
+    auto add_mtl = r.create_material(post_contract, {
+        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
+    }, image_vertex_format, {image_vert_shader, add_frag_shader}, false, false, false);
     
     // Load our game resources
-    auto contract = r.create_contract({fb_render_pass.get_vk_handle()}, {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, 
+    auto contract = r.create_contract({fb_render_pass}, {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, 
         {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}});
     const game::resources res {r, contract};
 
@@ -108,11 +105,11 @@ int main() try
     auto depth = make_depth_buffer(r.ctx, win.get_dims());
 
     // Create framebuffers
-    auto main_framebuffer = r.create_framebuffer(fb_render_pass.get_vk_handle(), {color.get_image_view(), depth.get_image_view()}, win.get_dims());
-    auto aux_framebuffer1 = r.create_framebuffer(post_render_pass.get_vk_handle(), {color1.get_image_view()}, win.get_dims());
-    auto aux_framebuffer2 = r.create_framebuffer(post_render_pass.get_vk_handle(), {color2.get_image_view()}, win.get_dims());
+    auto main_framebuffer = r.create_framebuffer(fb_render_pass, {color.get_image_view(), depth.get_image_view()}, win.get_dims());
+    auto aux_framebuffer1 = r.create_framebuffer(post_render_pass, {color1.get_image_view()}, win.get_dims());
+    auto aux_framebuffer2 = r.create_framebuffer(post_render_pass, {color2.get_image_view()}, win.get_dims());
     std::vector<std::shared_ptr<framebuffer>> swapchain_framebuffers;
-    for(auto & view : win.get_swapchain_image_views()) swapchain_framebuffers.push_back(r.create_framebuffer(final_render_pass.get_vk_handle(), {view}, win.get_dims()));
+    for(auto & view : win.get_swapchain_image_views()) swapchain_framebuffers.push_back(r.create_framebuffer(final_render_pass, {view}, win.get_dims()));
 
     // Set up our transient resource pools
     const VkDescriptorPoolSize pool_sizes[]
@@ -200,27 +197,27 @@ int main() try
 
         // Begin render pass
         VkRect2D render_area {{0,0},{win.get_dims().x,win.get_dims().y}};
-        vkCmdBeginRenderPass(cmd, fb_render_pass.get_vk_handle(), main_framebuffer->get_vk_handle(), render_area, {{0, 0, 0, 1}, {1.0f, 0}});
-        list.write_commands(cmd, fb_render_pass.get_vk_handle());
+        vkCmdBeginRenderPass(cmd, fb_render_pass->get_vk_handle(), main_framebuffer->get_vk_handle(), render_area, {{0, 0, 0, 1}, {1.0f, 0}});
+        list.write_commands(cmd, *fb_render_pass);
         vkCmdEndRenderPass(cmd); 
 
-        scene_descriptor_set hipass_descriptors {pool, *gauss_layout};
-        hipass_descriptors.write_combined_image_sampler(0, 0, image_sampler.get_vk_handle(), color.get_image_view());
-        draw_fullscreen_pass(cmd, post_render_pass.get_vk_handle(), *aux_framebuffer1, *hipass_pipe, hipass_descriptors.get_descriptor_set(), quad_mesh);
+        scene_descriptor_set hipass {pool, *hipass_mtl};
+        hipass.write_combined_image_sampler(0, 0, image_sampler, color.get_image_view());
+        draw_fullscreen_pass(cmd, *aux_framebuffer1, hipass, quad_mesh);
 
-        scene_descriptor_set hgauss_descriptors {pool, *gauss_layout};
-        hgauss_descriptors.write_combined_image_sampler(0, 0, image_sampler.get_vk_handle(), color1.get_image_view());
-        draw_fullscreen_pass(cmd, post_render_pass.get_vk_handle(), *aux_framebuffer2, *hgauss_pipe, hgauss_descriptors.get_descriptor_set(), quad_mesh);
+        scene_descriptor_set hgauss {pool, *hgauss_mtl};
+        hgauss.write_combined_image_sampler(0, 0, image_sampler, color1.get_image_view());
+        draw_fullscreen_pass(cmd, *aux_framebuffer2, hgauss, quad_mesh);
 
-        scene_descriptor_set vgauss_descriptors {pool, *gauss_layout};
-        vgauss_descriptors.write_combined_image_sampler(0, 0, image_sampler.get_vk_handle(), color2.get_image_view());
-        draw_fullscreen_pass(cmd, post_render_pass.get_vk_handle(), *aux_framebuffer1, *vgauss_pipe, vgauss_descriptors.get_descriptor_set(), quad_mesh);
+        scene_descriptor_set vgauss {pool, *vgauss_mtl};
+        vgauss.write_combined_image_sampler(0, 0, image_sampler, color2.get_image_view());
+        draw_fullscreen_pass(cmd, *aux_framebuffer1, vgauss, quad_mesh);
 
-        scene_descriptor_set add_descriptors {pool, *add_layout};
-        add_descriptors.write_combined_image_sampler(0, 0, image_sampler.get_vk_handle(), color.get_image_view());
-        add_descriptors.write_combined_image_sampler(1, 0, image_sampler.get_vk_handle(), color1.get_image_view());
+        scene_descriptor_set add {pool, *add_mtl};
+        add.write_combined_image_sampler(0, 0, image_sampler, color.get_image_view());
+        add.write_combined_image_sampler(1, 0, image_sampler, color1.get_image_view());
         const uint32_t index = win.begin();
-        draw_fullscreen_pass(cmd, final_render_pass.get_vk_handle(), *swapchain_framebuffers[index], *add_pipe, add_descriptors.get_descriptor_set(), quad_mesh);
+        draw_fullscreen_pass(cmd, *swapchain_framebuffers[index], add, quad_mesh);
         check(vkEndCommandBuffer(cmd));
         win.end(index, {cmd}, pool.get_fence());
     }

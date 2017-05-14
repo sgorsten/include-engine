@@ -65,9 +65,9 @@ namespace game
     // Immutable GPU resources used during rendering
     struct resources
     {
-        std::shared_ptr<scene_pipeline> pipeline;
-        std::shared_ptr<scene_pipeline> glow_pipeline;
-        std::shared_ptr<scene_pipeline> particle_pipeline;
+        std::shared_ptr<scene_material> standard_mtl;
+        std::shared_ptr<scene_material> glow_mtl;
+        std::shared_ptr<scene_material> particle_mtl;
         std::shared_ptr<gfx_mesh> terrain_mesh;
         std::shared_ptr<gfx_mesh> unit0_mesh;
         std::shared_ptr<gfx_mesh> unit1_mesh;

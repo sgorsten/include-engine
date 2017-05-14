@@ -100,24 +100,17 @@ int main() try
     gfx_mesh sands_mesh {r.ctx, load_mesh_from_obj(game_coords, "assets/sands location.obj")};
 
     // Set up scene contract
-    render_pass render_pass {r.ctx,
+    auto render_pass = r.create_render_pass(
         {make_attachment_description(r.get_swapchain_surface_format(), VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)},
         make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED)
-    };
+    );
 
-    auto contract = r.create_contract({render_pass.get_vk_handle()}, {
+    auto contract = r.create_contract({render_pass}, {
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
     }, {
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}
     });
-    auto metallic_layout = r.create_pipeline_layout(contract, {
-        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
-        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
-    });
-    auto skybox_layout = r.create_pipeline_layout(contract, {});
     
     // Set up our shader pipeline
     auto static_vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/static.vert");
@@ -138,10 +131,25 @@ int main() try
         {7, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(mesh::vertex, bone_weights)}
     });
 
-    auto helmet_pipeline  = r.create_pipeline(metallic_layout, mesh_vertex_format, {static_vert_shader, metal_shader}, true, true, false);
-    auto static_pipeline  = r.create_pipeline(metallic_layout, mesh_vertex_format, {static_vert_shader, frag_shader}, true, true, false);
-    auto skinned_pipeline = r.create_pipeline(metallic_layout, mesh_vertex_format, {skinned_vert_shader, frag_shader}, true, true, false);
-    auto skybox_pipeline  = r.create_pipeline(skybox_layout,   mesh_vertex_format, {skybox_vert_shader, skybox_frag_shader}, false, false, false);
+    auto helmet_pipeline  = r.create_material(contract, {
+        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
+    }, mesh_vertex_format, {static_vert_shader, metal_shader}, true, true, false);
+    auto static_pipeline  = r.create_material(contract, {
+        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
+    }, mesh_vertex_format, {static_vert_shader, frag_shader}, true, true, false);
+    auto skinned_pipeline = r.create_material(contract, {
+        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
+    }, mesh_vertex_format, {skinned_vert_shader, frag_shader}, true, true, false);
+    auto skybox_pipeline  = r.create_material(contract, {}, mesh_vertex_format, {skybox_vert_shader, skybox_frag_shader}, false, false, false);
 
     // Set up a window with swapchain framebuffers
     window win {r.ctx, {1280, 720}, "Example Game"};
@@ -149,7 +157,7 @@ int main() try
 
     // Create framebuffers
     std::vector<std::shared_ptr<framebuffer>> swapchain_framebuffers;
-    for(auto & view : win.get_swapchain_image_views()) swapchain_framebuffers.push_back(r.create_framebuffer(render_pass.get_vk_handle(), {view, depth.get_image_view()}, win.get_dims()));
+    for(auto & view : win.get_swapchain_image_views()) swapchain_framebuffers.push_back(r.create_framebuffer(render_pass, {view, depth.get_image_view()}, win.get_dims()));
 
     // Set up our transient resource pools
     const VkDescriptorPoolSize pool_sizes[]
@@ -209,14 +217,14 @@ int main() try
         draw_list list {pool, *contract};
         {
             scene_descriptor_set skybox_descriptors {pool, *skybox_pipeline};
-            list.draw(*skybox_pipeline, skybox_descriptors, skybox_mesh);
+            list.draw(skybox_descriptors, skybox_mesh);
 
             scene_descriptor_set helmet_descriptors {pool, *helmet_pipeline};
             helmet_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{30, 0, 20}), helmet_mesh.m.bones[0].initial_pose.get_local_transform(), helmet_mesh.m.bones[0].model_to_bone_matrix)}));
-            helmet_descriptors.write_combined_image_sampler(1, 0, sampler.get_vk_handle(), helmet_albedo);
-            helmet_descriptors.write_combined_image_sampler(2, 0, sampler.get_vk_handle(), helmet_normal);
-            helmet_descriptors.write_combined_image_sampler(3, 0, sampler.get_vk_handle(), helmet_metallic);
-            list.draw(*helmet_pipeline, helmet_descriptors, helmet_mesh);
+            helmet_descriptors.write_combined_image_sampler(1, 0, sampler, helmet_albedo);
+            helmet_descriptors.write_combined_image_sampler(2, 0, sampler, helmet_normal);
+            helmet_descriptors.write_combined_image_sampler(3, 0, sampler, helmet_metallic);
+            list.draw(helmet_descriptors, helmet_mesh);
 
             if(++anim_frame >= mutant_mesh.m.animations[0].keyframes.size()) anim_frame = 0;
             auto & kf = mutant_mesh.m.animations[0].keyframes[anim_frame];
@@ -225,38 +233,38 @@ int main() try
             for(size_t i=0; i<mutant_mesh.m.bones.size(); ++i) po.bone_matrices[i] = mul(mutant_mesh.m.get_bone_pose(kf.local_transforms, i), mutant_mesh.m.bones[i].model_to_bone_matrix);
             auto podata = pool.write_data(po);
 
-            scene_descriptor_set mutant_descriptors {pool, *skinned_pipeline};
-            mutant_descriptors.write_uniform_buffer(0, 0, podata);
-            mutant_descriptors.write_combined_image_sampler(1, 0, sampler.get_vk_handle(), mutant_albedo);
-            mutant_descriptors.write_combined_image_sampler(2, 0, sampler.get_vk_handle(), mutant_normal);
-            mutant_descriptors.write_combined_image_sampler(3, 0, sampler.get_vk_handle(), black_tex);
-            list.draw(*skinned_pipeline, mutant_descriptors, mutant_mesh, {0,1,3});
+            auto mutant = list.descriptor_set(*skinned_pipeline);
+            mutant.write_uniform_buffer(0, 0, podata);
+            mutant.write_combined_image_sampler(1, 0, sampler, mutant_albedo);
+            mutant.write_combined_image_sampler(2, 0, sampler, mutant_normal);
+            mutant.write_combined_image_sampler(3, 0, sampler, black_tex);
+            list.draw(mutant, mutant_mesh, {0,1,3});
 
-            scene_descriptor_set akai_descriptors {pool, *skinned_pipeline};
-            akai_descriptors.write_uniform_buffer(0, 0, podata);
-            akai_descriptors.write_combined_image_sampler(1, 0, sampler.get_vk_handle(), akai_albedo);
-            akai_descriptors.write_combined_image_sampler(2, 0, sampler.get_vk_handle(), akai_normal);
-            akai_descriptors.write_combined_image_sampler(3, 0, sampler.get_vk_handle(), black_tex);
-            list.draw(*skinned_pipeline, akai_descriptors, mutant_mesh, {2});
+            auto akai = list.descriptor_set(*skinned_pipeline);
+            akai.write_uniform_buffer(0, 0, podata);
+            akai.write_combined_image_sampler(1, 0, sampler, akai_albedo);
+            akai.write_combined_image_sampler(2, 0, sampler, akai_normal);
+            akai.write_combined_image_sampler(3, 0, sampler, black_tex);
+            list.draw(akai, mutant_mesh, {2});
        
-            scene_descriptor_set box_descriptors {pool, *static_pipeline};
-            box_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{-30,0,20}), scaling_matrix(float3{4,4,4}))}));
-            box_descriptors.write_combined_image_sampler(1, 0, sampler.get_vk_handle(), gray_tex);
-            box_descriptors.write_combined_image_sampler(2, 0, sampler.get_vk_handle(), flat_tex);
-            box_descriptors.write_combined_image_sampler(3, 0, sampler.get_vk_handle(), black_tex);
-            list.draw(*static_pipeline, box_descriptors, box_mesh);
+            auto box = list.descriptor_set(*static_pipeline);
+            box.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{-30,0,20}), scaling_matrix(float3{4,4,4}))}));
+            box.write_combined_image_sampler(1, 0, sampler, gray_tex);
+            box.write_combined_image_sampler(2, 0, sampler, flat_tex);
+            box.write_combined_image_sampler(3, 0, sampler, black_tex);
+            list.draw(box, box_mesh);
         
             for(size_t i=0; i<sands_mesh.m.materials.size(); ++i)
             {
-                scene_descriptor_set sands_descriptors {pool, *static_pipeline};
-                sands_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{0,27,-64}), scaling_matrix(float3{10,10,10}))}));
-                if(sands_mesh.m.materials[i].name == "map_2_island1") sands_descriptors.write_combined_image_sampler(1, 0, sampler.get_vk_handle(), map_2_island);
-                else if(sands_mesh.m.materials[i].name == "map_2_object1") sands_descriptors.write_combined_image_sampler(1, 0, sampler.get_vk_handle(), map_2_objects);
-                else if(sands_mesh.m.materials[i].name == "map_2_terrain1") sands_descriptors.write_combined_image_sampler(1, 0, sampler.get_vk_handle(), map_2_terrain);
-                else sands_descriptors.write_combined_image_sampler(1, 0, sampler.get_vk_handle(), gray_tex);
-                sands_descriptors.write_combined_image_sampler(2, 0, sampler.get_vk_handle(), flat_tex);
-                sands_descriptors.write_combined_image_sampler(3, 0, sampler.get_vk_handle(), black_tex);
-                list.draw(*static_pipeline, sands_descriptors, sands_mesh, {i});
+                auto sands = list.descriptor_set(*static_pipeline);
+                sands.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{0,27,-64}), scaling_matrix(float3{10,10,10}))}));
+                if(sands_mesh.m.materials[i].name == "map_2_island1") sands.write_combined_image_sampler(1, 0, sampler, map_2_island);
+                else if(sands_mesh.m.materials[i].name == "map_2_object1") sands.write_combined_image_sampler(1, 0, sampler, map_2_objects);
+                else if(sands_mesh.m.materials[i].name == "map_2_terrain1") sands.write_combined_image_sampler(1, 0, sampler, map_2_terrain);
+                else sands.write_combined_image_sampler(1, 0, sampler, gray_tex);
+                sands.write_combined_image_sampler(2, 0, sampler, flat_tex);
+                sands.write_combined_image_sampler(3, 0, sampler, black_tex);
+                list.draw(sands, sands_mesh, {i});
             }
         }
 
@@ -288,8 +296,8 @@ int main() try
         // Begin render pass
         const uint32_t index = win.begin();
         const uint2 dims = win.get_dims();
-        vkCmdBeginRenderPass(cmd, render_pass.get_vk_handle(), swapchain_framebuffers[index]->get_vk_handle(), {{0,0},{dims.x,dims.y}}, {{0, 0, 0, 1}, {1.0f, 0}});
-        list.write_commands(cmd, render_pass.get_vk_handle());
+        vkCmdBeginRenderPass(cmd, render_pass->get_vk_handle(), swapchain_framebuffers[index]->get_vk_handle(), {{0,0},{dims.x,dims.y}}, {{0, 0, 0, 1}, {1.0f, 0}});
+        list.write_commands(cmd, *render_pass);
         vkCmdEndRenderPass(cmd); 
         check(vkEndCommandBuffer(cmd)); 
 

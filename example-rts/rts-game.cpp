@@ -198,16 +198,7 @@ game::resources::resources(renderer & r, std::shared_ptr<scene_contract> contrac
     sampler_info.maxLod = 11;
     sampler_info.minLod = 0;
     linear_sampler = std::make_shared<sampler>(r.ctx, sampler_info);
-
-    // Create our scene contract
-    auto layout = r.create_pipeline_layout(contract, {
-        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT},    
-        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
-    });
-    auto glow_layout = r.create_pipeline_layout(contract, {
-        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT}
-    });
-    
+        
     // Set up our shader pipeline
     auto vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/static.vert");
     auto frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/shader.frag");
@@ -226,12 +217,14 @@ game::resources::resources(renderer & r, std::shared_ptr<scene_contract> contrac
         {6, 0, VK_FORMAT_R32G32B32A32_UINT, offsetof(mesh::vertex, bone_indices)},
         {7, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(mesh::vertex, bone_weights)}
     });
-    pipeline = r.create_pipeline(layout, mesh_vertex_format, {vert_shader, frag_shader}, true, true, false);
-    glow_pipeline = r.create_pipeline(layout, mesh_vertex_format, {vert_shader, glow_shader}, true, true, false);
+    standard_mtl = r.create_material(contract, {
+        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT},    
+        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
+    }, mesh_vertex_format, {vert_shader, frag_shader}, true, true, false);
+    glow_mtl = r.create_material(contract, {
+        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT}
+    }, mesh_vertex_format, {vert_shader, glow_shader}, true, true, false);
 
-    auto particle_layout = r.create_pipeline_layout(contract, {
-        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
-    });
     auto particle_vertex_format = r.create_vertex_format({
         {0, sizeof(particle_vertex), VK_VERTEX_INPUT_RATE_VERTEX},
         {1, sizeof(particle_instance), VK_VERTEX_INPUT_RATE_INSTANCE}
@@ -242,7 +235,9 @@ game::resources::resources(renderer & r, std::shared_ptr<scene_contract> contrac
         {3, 1, VK_FORMAT_R32_SFLOAT, offsetof(particle_instance, size)},
         {4, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(particle_instance, color)},
     });
-    particle_pipeline = r.create_pipeline(particle_layout, particle_vertex_format, {particle_vert_shader, particle_frag_shader}, false, true, true);
+    particle_mtl = r.create_material(contract, {
+        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}
+    }, particle_vertex_format, {particle_vert_shader, particle_frag_shader}, false, true, true);
 }
 
 /////////////////////
@@ -252,10 +247,10 @@ game::resources::resources(renderer & r, std::shared_ptr<scene_contract> contrac
 void game::draw(draw_list & list, per_scene_uniforms & ps, const resources & r, const state & s)
 {
     {
-        auto descriptors = list.descriptor_set(*r.pipeline);
+        auto descriptors = list.descriptor_set(*r.standard_mtl);
         descriptors.write_uniform_buffer(0, 0, list.upload_uniforms(per_static_object{translation_matrix(float3{0,0,0})}));
-        descriptors.write_combined_image_sampler(1, 0, r.linear_sampler->get_vk_handle(), *r.terrain_tex);
-        list.draw(*r.pipeline, descriptors, *r.terrain_mesh);
+        descriptors.write_combined_image_sampler(1, 0, *r.linear_sampler, *r.terrain_tex);
+        list.draw(descriptors, *r.terrain_mesh);
     }
 
     for(auto & f : s.flashes)
@@ -265,23 +260,23 @@ void game::draw(draw_list & list, per_scene_uniforms & ps, const resources & r, 
 
     for(auto & u : s.units)
     {
-        auto descriptors = list.descriptor_set(*r.pipeline);
+        auto descriptors = list.descriptor_set(*r.standard_mtl);
         descriptors.write_uniform_buffer(0, 0, list.upload_uniforms(per_static_object{u.get_model_matrix(), game::team_colors[u.owner]*std::max(u.cooldown*4-1.5f,0.0f)}));
-        descriptors.write_combined_image_sampler(1, 0, r.linear_sampler->get_vk_handle(), u.owner ? *r.unit1_tex : *r.unit0_tex);
-        list.draw(*r.pipeline, descriptors, u.owner ? *r.unit1_mesh : *r.unit0_mesh);
+        descriptors.write_combined_image_sampler(1, 0, *r.linear_sampler, u.owner ? *r.unit1_tex : *r.unit0_tex);
+        list.draw(descriptors, u.owner ? *r.unit1_mesh : *r.unit0_mesh);
     }
 
     for(auto & b : s.bullets)
     {
-        auto descriptors = list.descriptor_set(*r.glow_pipeline);
+        auto descriptors = list.descriptor_set(*r.glow_mtl);
         descriptors.write_uniform_buffer(0, 0, list.upload_uniforms(per_static_object{b.get_model_matrix()}));
-        list.draw(*r.glow_pipeline, descriptors, *r.bullet_mesh);
+        list.draw(descriptors, *r.bullet_mesh);
         if(ps.u_num_point_lights < 64) ps.u_point_lights[ps.u_num_point_lights++] = {b.get_position(), game::team_colors[b.owner]};
     }
 
-    auto particle_descriptors = list.descriptor_set(*r.particle_pipeline);
-    particle_descriptors.write_combined_image_sampler(0, 0, r.linear_sampler->get_vk_handle(), *r.particle_tex);
+    auto particle_descriptors = list.descriptor_set(*r.particle_mtl);
+    particle_descriptors.write_combined_image_sampler(0, 0, *r.linear_sampler, *r.particle_tex);
     list.begin_instances();
     for(auto & p : s.particles) list.write_instance(particle_instance{p.position, p.life/3, p.color});           
-    list.draw(*r.particle_pipeline, particle_descriptors, *r.particle_mesh, list.end_instances(), sizeof(particle_instance));
+    list.draw(particle_descriptors, *r.particle_mesh, list.end_instances(), sizeof(particle_instance));
 }

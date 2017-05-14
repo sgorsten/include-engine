@@ -98,13 +98,6 @@ public:
     operator VkBuffer () { return buffer; }
 };
 
-template<class T> struct reserved_range
-{
-    VkDescriptorBufferInfo info;
-    T * mapped_memory;
-    T & operator[] (size_t i) { return mapped_memory[i]; }
-};
-
 class dynamic_buffer
 {
     std::shared_ptr<context> ctx;
@@ -248,96 +241,63 @@ public:
 class framebuffer
 {
     std::shared_ptr<context> ctx;
+    std::shared_ptr<const render_pass> pass;
     VkFramebuffer handle;
     uint2 dims;
 public:
-    framebuffer(std::shared_ptr<context> ctx, VkRenderPass render_pass, array_view<VkImageView> attachments, uint2 dims);
+    framebuffer(std::shared_ptr<context> ctx, std::shared_ptr<const render_pass> pass, array_view<VkImageView> attachments, uint2 dims);
     ~framebuffer();
 
+    const render_pass & get_render_pass() const { return *pass; }
     VkFramebuffer get_vk_handle() const { return handle; }
     uint2 get_dimensions() const { return dims; }
 };    
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////
-// A scene contract defines the common behavior of a bunch of draw calls which belong to the same scene. //
-// They must occur within a single render pass, and must use the same layouts for per-scene and per-view //
-// descriptor sets.                                                                                      //
-///////////////////////////////////////////////////////////////////////////////////////////////////////////
-
+// A scene contract defines the common functionality of a group of items which will be drawn together. It
+// defines the set of possible render passes these items could be drawn in (such as to a color buffer or
+// to a shadow buffer), as well as the descriptor sets that will be used in common by all shaders executing
+// under this contract.
 class scene_contract
 {
-    friend class scene_pipeline_layout;
+    friend class scene_material;
     std::shared_ptr<context> ctx;
-    std::vector<VkRenderPass> render_passes;    // List of possible render passes that pipelines obeying this contract can participate in
+    std::vector<std::shared_ptr<const render_pass>> render_passes;    // List of possible render passes that pipelines obeying this contract can participate in
     VkDescriptorSetLayout per_scene_layout;     // Descriptors which are shared by the entire scene
     VkDescriptorSetLayout per_view_layout;      // Descriptors which vary per unique view into the scene
     VkPipelineLayout example_layout;            // Layout for a pipeline which has no per-object descriptor set
 public:
-    scene_contract(std::shared_ptr<context> ctx, array_view<VkRenderPass> render_passes, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings);
+    scene_contract(std::shared_ptr<context> ctx, array_view<std::shared_ptr<const render_pass>> render_passes, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings);
     ~scene_contract();
 
-    std::vector<VkRenderPass> get_render_passes() const { return render_passes; }
-    size_t get_render_pass_index(VkRenderPass pass) const { for(size_t i=0; i<render_passes.size(); ++i) if(render_passes[i] == pass) return i; throw std::logic_error("render pass not part of contract"); }
+    size_t get_render_pass_index(const render_pass & pass) const { for(size_t i=0; i<render_passes.size(); ++i) if(render_passes[i].get() == &pass) return i; throw std::logic_error("render pass not part of contract"); }
     VkDescriptorSetLayout get_per_scene_layout() const { return per_scene_layout; }
     VkDescriptorSetLayout get_per_view_layout() const { return per_view_layout; }
     VkPipelineLayout get_example_layout() const { return example_layout; }
 };
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-// A scene pipeline layout defines the common behavior of pipelines which conform to the same scene //
-// contract, and additionally use the same layout for per-object descriptor sets.                   //
-//////////////////////////////////////////////////////////////////////////////////////////////////////
-
-class scene_pipeline_layout
+// A scene material consists of a set of shader stages known to conform to a specific scene contract.
+// For each material, several pipelines will be precomputed, based on the render passes described in
+// the contract, but these pipelines will all share a common layout, allowing them to be used in an
+// interchangeable fashion.
+class scene_material
 {
+    friend class scene_descriptor_set;
+    std::shared_ptr<context> ctx;
     std::shared_ptr<scene_contract> contract;
     VkDescriptorSetLayout per_object_layout;
     VkPipelineLayout pipeline_layout;
-public:
-    scene_pipeline_layout(std::shared_ptr<scene_contract> contract, array_view<VkDescriptorSetLayoutBinding> per_object_bindings);
-    ~scene_pipeline_layout();
-
-    const scene_contract & get_contract() const { return *contract; }
-    VkDevice get_device() const;
-    VkDescriptorSetLayout get_per_object_descriptor_set_layout() const { return per_object_layout; }
-    VkPipelineLayout get_pipeline_layout() const { return pipeline_layout; }
-};
-
-////////////////////////////////////////////////////////////////////////////////////////////////
-// A scene pipeline defines a pipeline that is known to conform to a specific scene contract. //
-////////////////////////////////////////////////////////////////////////////////////////////////
-
-class scene_pipeline
-{
-    std::shared_ptr<scene_pipeline_layout> layout;
     std::vector<VkPipeline> pipelines;
 public:
-    scene_pipeline(std::shared_ptr<scene_pipeline_layout> layout, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending);
-    ~scene_pipeline();
+    scene_material(std::shared_ptr<context> ctx, std::shared_ptr<scene_contract> contract, array_view<VkDescriptorSetLayoutBinding> per_object_bindings, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending);
+    ~scene_material();
 
-    const scene_contract & get_contract() const { return layout->get_contract(); }
-    const scene_pipeline_layout & get_layout() const { return *layout; }
-    VkPipeline get_pipeline(size_t render_pass_index) const { return pipelines[render_pass_index]; }
-    VkPipelineLayout get_pipeline_layout() const { return layout->get_pipeline_layout(); }
-    VkDescriptorSetLayout get_per_object_descriptor_set_layout() const { return layout->get_per_object_descriptor_set_layout(); }
+    const scene_contract & get_contract() const { return *contract; }
+    VkDescriptorSetLayout get_per_object_descriptor_set_layout() const { return per_object_layout; }
+    VkPipelineLayout get_pipeline_layout() const { return pipeline_layout; }
+    VkPipeline get_pipeline(size_t render_pass_index) const { return pipelines[render_pass_index]; }    
 };
 
 /////////
-
-class scene_descriptor_set
-{
-    const scene_pipeline_layout * layout;
-    VkDescriptorSet set;
-public:
-    scene_descriptor_set(transient_resource_pool & pool, const scene_pipeline_layout & layout) : layout{&layout}, set{pool.allocate_descriptor_set(layout.get_per_object_descriptor_set_layout())} {}
-    scene_descriptor_set(transient_resource_pool & pool, const scene_pipeline & pipeline) : scene_descriptor_set{pool, pipeline.get_layout()} {}
-
-    const scene_pipeline_layout & get_pipeline_layout() const { return *layout; }
-    VkDescriptorSet get_descriptor_set() const { return set; }
-
-    void write_uniform_buffer(uint32_t binding, uint32_t array_element, VkDescriptorBufferInfo info);
-    void write_combined_image_sampler(uint32_t binding, uint32_t array_element, VkSampler sampler, VkImageView image_view, VkImageLayout image_layout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-};
 
 class renderer
 {
@@ -351,22 +311,36 @@ public:
     VkDevice get_device();
     VkFormat get_swapchain_surface_format() const;
 
-    std::shared_ptr<framebuffer> create_framebuffer(VkRenderPass render_pass, array_view<VkImageView> attachments, uint2 dims);
+    std::shared_ptr<render_pass> create_render_pass(array_view<VkAttachmentDescription> color_attachments, std::optional<VkAttachmentDescription> depth_attachment);
+    std::shared_ptr<framebuffer> create_framebuffer(std::shared_ptr<const render_pass> render_pass, array_view<VkImageView> attachments, uint2 dims);
 
     std::shared_ptr<shader> create_shader(VkShaderStageFlagBits stage, const char * filename);
     std::shared_ptr<vertex_format> create_vertex_format(array_view<VkVertexInputBindingDescription> bindings, array_view<VkVertexInputAttributeDescription> attributes);
-    std::shared_ptr<scene_contract> create_contract(array_view<VkRenderPass> render_passes, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings);
-    std::shared_ptr<scene_pipeline_layout> create_pipeline_layout(std::shared_ptr<scene_contract> contract, array_view<VkDescriptorSetLayoutBinding> per_object_bindings);
-    std::shared_ptr<scene_pipeline> create_pipeline(std::shared_ptr<scene_pipeline_layout> layout, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending);
+    std::shared_ptr<scene_contract> create_contract(array_view<std::shared_ptr<const render_pass>> render_passes, array_view<VkDescriptorSetLayoutBinding> per_scene_bindings, array_view<VkDescriptorSetLayoutBinding> per_view_bindings);
+    std::shared_ptr<scene_material> create_material(std::shared_ptr<scene_contract> contract, array_view<VkDescriptorSetLayoutBinding> per_object_bindings, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending);
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // A draw list records draw calls, which can be sorted and written into multiple command buffers. //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+class scene_descriptor_set
+{
+    const scene_material * material;
+    VkDescriptorSet set;
+public:
+    scene_descriptor_set(transient_resource_pool & pool, const scene_material & material) : material{&material}, set{pool.allocate_descriptor_set(material.get_per_object_descriptor_set_layout())} {}
+
+    const scene_material & get_material() const { return *material; }
+    VkDescriptorSet get_descriptor_set() const { return set; }
+
+    void write_uniform_buffer(uint32_t binding, uint32_t array_element, VkDescriptorBufferInfo info);
+    void write_combined_image_sampler(uint32_t binding, uint32_t array_element, sampler & sampler, VkImageView image_view, VkImageLayout image_layout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+};
+
 struct draw_item 
 {
-    const scene_pipeline * pipeline;
+    const scene_material * material;
     VkDescriptorSet set;
     uint32_t vertex_buffer_count;
     VkBuffer vertex_buffers[4];
@@ -376,6 +350,7 @@ struct draw_item
     size_t first_index, index_count;
     size_t instance_count;
 };
+
 struct draw_list
 {
     transient_resource_pool & pool;
@@ -390,13 +365,13 @@ struct draw_list
     template<class T> void write_instance(const T & instance) { pool.write_instance(instance); }
     VkDescriptorBufferInfo end_instances() { return pool.end_instances(); }
 
-    scene_descriptor_set descriptor_set(const scene_pipeline & pipeline) { return {pool, pipeline}; }    
+    scene_descriptor_set descriptor_set(const scene_material & material) { return {pool, material}; }    
 
-    void draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls, VkDescriptorBufferInfo instances, size_t instance_stride);
-    void draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, VkDescriptorBufferInfo instances, size_t instance_stride);
-    void draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls);
-    void draw(const scene_pipeline & pipeline, const scene_descriptor_set & descriptors, const gfx_mesh & mesh);
-    void write_commands(VkCommandBuffer cmd, VkRenderPass render_pass) const;
+    void draw(const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls, VkDescriptorBufferInfo instances, size_t instance_stride);
+    void draw(const scene_descriptor_set & descriptors, const gfx_mesh & mesh, VkDescriptorBufferInfo instances, size_t instance_stride);
+    void draw(const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls);
+    void draw(const scene_descriptor_set & descriptors, const gfx_mesh & mesh);
+    void write_commands(VkCommandBuffer cmd, const render_pass & render_pass) const;
 };
 
 #endif
