@@ -982,7 +982,7 @@ VkPipelineVertexInputStateCreateInfo vertex_format::get_vertex_input_state() con
 // shader //
 ////////////
 
-shader::shader(std::shared_ptr<context> ctx, array_view<uint32_t> words) : ctx{ctx}, info{words}
+shader::shader(std::shared_ptr<context> ctx, array_view<uint32_t> words) : ctx{ctx}, info{load_shader_info_from_spirv(words)}
 {
     VkShaderModuleCreateInfo create_info {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     create_info.codeSize = words.size * sizeof(uint32_t);

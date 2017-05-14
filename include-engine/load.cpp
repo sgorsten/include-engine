@@ -315,7 +315,7 @@ struct spirv_module
     }
 };
 
-shader_info::shader_info(array_view<uint32_t> words)
+shader_info load_shader_info_from_spirv(array_view<uint32_t> words)
 {
     // Analyze SPIR-V
     spirv_module mod(words);
@@ -323,17 +323,18 @@ shader_info::shader_info(array_view<uint32_t> words)
     auto & entrypoint = mod.entrypoints.begin()->second;
 
     // Determine shader stage
+    shader_info info {};
     switch(entrypoint.execution_model)
     {
-    case spv::ExecutionModelVertex: stage = VK_SHADER_STAGE_VERTEX_BIT; break;
-    case spv::ExecutionModelTessellationControl: stage = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT; break;
-    case spv::ExecutionModelTessellationEvaluation: stage = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT; break;
-    case spv::ExecutionModelGeometry: stage = VK_SHADER_STAGE_GEOMETRY_BIT; break;
-    case spv::ExecutionModelFragment: stage = VK_SHADER_STAGE_FRAGMENT_BIT; break;
-    case spv::ExecutionModelGLCompute: stage = VK_SHADER_STAGE_COMPUTE_BIT; break;
+    case spv::ExecutionModelVertex: info.stage = VK_SHADER_STAGE_VERTEX_BIT; break;
+    case spv::ExecutionModelTessellationControl: info.stage = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT; break;
+    case spv::ExecutionModelTessellationEvaluation: info.stage = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT; break;
+    case spv::ExecutionModelGeometry: info.stage = VK_SHADER_STAGE_GEOMETRY_BIT; break;
+    case spv::ExecutionModelFragment: info.stage = VK_SHADER_STAGE_FRAGMENT_BIT; break;
+    case spv::ExecutionModelGLCompute: info.stage = VK_SHADER_STAGE_COMPUTE_BIT; break;
     default: throw std::runtime_error("invalid execution model");
     }
-    name = entrypoint.name;
+    info.name = entrypoint.name;
 
     // Harvest descriptors
     for(auto & v : mod.variables)
@@ -341,9 +342,10 @@ shader_info::shader_info(array_view<uint32_t> words)
         auto & meta = mod.metadatas[v.first];
         auto set = meta.get_decoration(spv::DecorationDescriptorSet);
         auto binding = meta.get_decoration(spv::DecorationBinding);
-        if(set && binding) descriptors.push_back({*set, *binding, meta.name, mod.get_pointee_type(v.second.type)});
+        if(set && binding) info.descriptors.push_back({*set, *binding, meta.name, mod.get_pointee_type(v.second.type)});
     }
-    std::sort(begin(descriptors), end(descriptors), [](const descriptor & a, const descriptor & b) { return std::tie(a.set, a.binding) < std::tie(b.set, b.binding); });
+    std::sort(begin(info.descriptors), end(info.descriptors), [](const shader_info::descriptor & a, const shader_info::descriptor & b) { return std::tie(a.set, a.binding) < std::tie(b.set, b.binding); });
+    return info;
 }
 
 /////////////////////

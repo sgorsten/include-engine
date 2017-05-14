@@ -15,26 +15,7 @@ mesh apply_vertex_color(mesh m, const float3 & color);
 mesh invert_faces(mesh m);
 std::vector<mesh> load_meshes_from_fbx(coord_system target, const char * filename);
 mesh load_mesh_from_obj(coord_system target, const char * filename);
-
-struct shader_info
-{
-    struct type;
-    enum scalar_type { uint_, int_, float_, double_ };
-    struct matrix_layout { uint32_t stride; bool row_major; };
-    struct structure_member { std::string name; std::unique_ptr<const type> type; std::optional<uint32_t> offset; };
-    struct numeric { scalar_type scalar; uint32_t row_count, column_count; std::optional<matrix_layout> matrix_layout; };
-    struct sampler { scalar_type channel; VkImageViewType view_type; bool multisampled, shadow; };
-    struct array { std::unique_ptr<const type> element; uint32_t length; std::optional<uint32_t> stride; };
-    struct structure { std::string name; std::vector<structure_member> members; };
-    struct type { std::variant<sampler, numeric, array, structure> contents; };
-    struct descriptor { uint32_t set, binding; std::string name; type type; };
-
-    VkShaderStageFlagBits stage;
-    std::string name;
-    std::vector<descriptor> descriptors;
-
-    shader_info(array_view<uint32_t> words);
-};
+shader_info load_shader_info_from_spirv(array_view<uint32_t> words);
 
 class shader_compiler
 {

@@ -1,12 +1,13 @@
 #ifndef DATA_TYPES_H
 #define DATA_TYPES_H
 
-#include "linalg.h"
+#include <memory>           // For std::unique_ptr<T>, std::shared_ptr<T>
+#include <vector>           // For std::vector<T>
+#include <variant>          // For std::variant<T...>
+#include <optional>         // For std::optional<T>
+#include <vulkan/vulkan.h>  // For VkImageViewType, etc...
+#include "linalg.h"         // For float3, etc...
 using namespace linalg::aliases;
-
-#include <memory>
-#include <vector>
-#include <optional>
 
 // Abstract over determining the number of elements in a collection
 template<class T, uint32_t N> constexpr uint32_t countof(const T (&)[N]) { return N; }
@@ -147,5 +148,24 @@ template<class Transform> mesh transform(const Transform & t, mesh m)
     for(auto & a : m.animations) for(auto & k : a.keyframes) for(auto & lt : k.local_transforms) lt = transform(t, lt);
     return m;
 }
+
+// Reflection information for a single shader
+struct shader_info
+{
+    struct type;
+    enum scalar_type { uint_, int_, float_, double_ };
+    struct matrix_layout { uint32_t stride; bool row_major; };
+    struct structure_member { std::string name; std::unique_ptr<const type> type; std::optional<uint32_t> offset; };
+    struct numeric { scalar_type scalar; uint32_t row_count, column_count; std::optional<matrix_layout> matrix_layout; };
+    struct sampler { scalar_type channel; VkImageViewType view_type; bool multisampled, shadow; };
+    struct array { std::unique_ptr<const type> element; uint32_t length; std::optional<uint32_t> stride; };
+    struct structure { std::string name; std::vector<structure_member> members; };
+    struct type { std::variant<sampler, numeric, array, structure> contents; };
+    struct descriptor { uint32_t set, binding; std::string name; type type; };
+
+    VkShaderStageFlagBits stage;
+    std::string name;
+    std::vector<descriptor> descriptors;
+};
 
 #endif
