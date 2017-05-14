@@ -171,21 +171,21 @@ void game::state::advance(float timestep)
 // game::resources //
 /////////////////////
 
-std::ostream & operator << (std::ostream & out, type::scalar_type s)
+std::ostream & operator << (std::ostream & out, shader_info::scalar_type s)
 {
     switch(s)
     {
-    case type::int_: return out << "int";
-    case type::uint_: return out << "uint";
-    case type::float_: return out << "float";
-    case type::double_: return out << "double";
+    case shader_info::int_: return out << "int";
+    case shader_info::uint_: return out << "uint";
+    case shader_info::float_: return out << "float";
+    case shader_info::double_: return out << "double";
     default: return out << "???";
     }
 }
 std::ostream & print_indent(std::ostream & out, int indent) { for(int i=0; i<indent; ++i) out << "  "; return out; }
-std::ostream & print_type(std::ostream & out, const type & type, int indent = 0)
+std::ostream & print_type(std::ostream & out, const shader_info::type & type, int indent = 0)
 {
-    if(auto * s = std::get_if<type::sampler>(&type.contents)) 
+    if(auto * s = std::get_if<shader_info::sampler>(&type.contents)) 
     {
         switch(s->view_type)
         {
@@ -199,27 +199,21 @@ std::ostream & print_type(std::ostream & out, const type & type, int indent = 0)
         }
         return out << (s->multisampled ? "MS" : "") << (s->shadow ? "Shadow" : "") << "<" << s->channel << ">";
     }
-    if(auto * a = std::get_if<type::array>(&type.contents))
+    if(auto * a = std::get_if<shader_info::array>(&type.contents))
     {
         print_type(out, *a->element, indent) << '[' << a->length << ']';
         if(a->stride) out << "/*stride=" << *a->stride << "*/";
         return out;
     }
-    if(auto * n = std::get_if<type::numeric>(&type.contents))
+    if(auto * n = std::get_if<shader_info::numeric>(&type.contents))
     {
-        switch(n->scalar)
-        {
-        case type::int_: out << "int"; break;
-        case type::uint_: out << "uint"; break;
-        case type::float_: out << "float"; break;
-        case type::double_: out << "double"; break;
-        }
+        out << n->scalar;
         if(n->row_count > 1) out << n->row_count;
         if(n->column_count > 1) out << 'x' << n->column_count;
         if(n->matrix_layout) out << "/*stride=" << n->matrix_layout->stride << (n->matrix_layout->row_major ? ",row_major*/" : ",col_major*/");
         return out;
     }
-    if(auto * s = std::get_if<type::structure>(&type.contents))
+    if(auto * s = std::get_if<shader_info::structure>(&type.contents))
     {
         out << "struct " << s->name << " {";
         for(auto & m : s->members) 

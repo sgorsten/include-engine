@@ -204,33 +204,17 @@ struct gfx_mesh
     }
 };
 
-struct type
-{
-    enum scalar_type { uint_, int_, float_, double_ };
-    struct matrix_layout { uint32_t stride; bool row_major; };
-    struct structure_member { std::string name; std::unique_ptr<type> type; std::optional<uint32_t> offset; };
-    struct unknown {};
-    struct numeric { scalar_type scalar; uint32_t row_count, column_count; std::optional<matrix_layout> matrix_layout; };
-    struct sampler { scalar_type channel; VkImageViewType view_type; bool multisampled, shadow; };
-    struct array { std::unique_ptr<type> element; uint32_t length; std::optional<uint32_t> stride; };
-    struct structure { std::string name; std::vector<structure_member> members; };
-    std::variant<unknown, sampler, numeric, array, structure> contents;
-};
-struct descriptor { uint32_t set, binding; std::string name; type type; };
-
 class shader
 {
     std::shared_ptr<context> ctx;
     VkShaderModule module;
-    VkShaderStageFlagBits stage;
-    std::string name;
-    std::vector<descriptor> descriptors;
+    shader_info info;
 public:
     shader(std::shared_ptr<context> ctx, array_view<uint32_t> words);
     ~shader();
 
-    VkPipelineShaderStageCreateInfo get_shader_stage() const { return {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, stage, module, name.c_str()}; }
-    const std::vector<descriptor> & get_descriptors() const { return descriptors; }
+    VkPipelineShaderStageCreateInfo get_shader_stage() const { return {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, info.stage, module, info.name.c_str()}; }
+    const std::vector<shader_info::descriptor> & get_descriptors() const { return info.descriptors; }
 };
 
 class sampler

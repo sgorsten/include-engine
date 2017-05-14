@@ -982,169 +982,8 @@ VkPipelineVertexInputStateCreateInfo vertex_format::get_vertex_input_state() con
 // shader //
 ////////////
 
-#include <vulkan/spirv.hpp>
-struct spirv_module
+shader::shader(std::shared_ptr<context> ctx, array_view<uint32_t> words) : ctx{ctx}, info{words}
 {
-    struct type { spv::Op op; std::vector<uint32_t> contents; };
-    struct variable { uint32_t type; spv::StorageClass storage_class; };
-    struct constant { uint32_t type; std::vector<uint32_t> literals; };
-    struct entrypoint { spv::ExecutionModel execution_model; std::string name; std::vector<uint32_t> interfaces; };
-    struct metadata
-    {
-        std::string name;
-        std::map<spv::Decoration, std::vector<uint32_t>> decorations;
-        std::map<uint32_t, metadata> members;
-        bool has_decoration(spv::Decoration decoration) const { return decorations.find(decoration) != decorations.end(); }
-        std::optional<uint32_t> get_decoration(spv::Decoration decoration) const
-        {
-            auto it = decorations.find(decoration);
-            if(it == decorations.end() || it->second.size() != 1) return std::nullopt;
-            return it->second[0];
-        }
-    };
-
-    uint32_t version_number, generator_id, schema_id;
-    std::map<uint32_t, type> types;
-    std::map<uint32_t, variable> variables;
-    std::map<uint32_t, constant> constants;
-    std::map<uint32_t, entrypoint> entrypoints;
-    std::map<uint32_t, metadata> metadatas;
-
-    spirv_module() {}
-    spirv_module(array_view<uint32_t> words)
-    {
-        if(words.size < 5) throw std::runtime_error("not SPIR-V");
-        if(words[0] != 0x07230203) throw std::runtime_error("not SPIR-V");    
-        version_number = words[1];
-        generator_id = words[2];
-        schema_id = words[4];
-        const uint32_t * it = words.begin() + 5, * binary_end = words.end();
-        while(it != binary_end)
-        {
-            auto op_code = static_cast<spv::Op>(*it & spv::OpCodeMask);
-            const uint32_t op_code_length = *it >> 16;
-            const uint32_t * op_code_end = it + op_code_length;
-            if(op_code_end > binary_end) throw std::runtime_error("incomplete opcode");
-            if(op_code >= spv::OpTypeVoid && op_code <= spv::OpTypeForwardPointer) types[it[1]] = {op_code, {it+2, op_code_end}};
-            switch(op_code)
-            {
-            case spv::OpVariable: variables[it[2]] = {it[1], static_cast<spv::StorageClass>(it[3])}; break;
-            case spv::OpConstant: constants[it[2]] = {it[1], {it+3, op_code_end}}; break;
-            case spv::OpName: metadatas[it[1]].name = reinterpret_cast<const char *>(&it[2]); break;
-            case spv::OpMemberName: metadatas[it[1]].members[it[2]].name = reinterpret_cast<const char *>(&it[3]); break;
-            case spv::OpDecorate: metadatas[it[1]].decorations[static_cast<spv::Decoration>(it[2])].assign(it+3, op_code_end); break;
-            case spv::OpMemberDecorate: metadatas[it[1]].members[it[2]].decorations[static_cast<spv::Decoration>(it[3])].assign(it+4, op_code_end); break;
-            case spv::OpEntryPoint:
-                auto & entrypoint = entrypoints[it[2]];
-                entrypoint.execution_model = static_cast<spv::ExecutionModel>(it[1]);
-                const char * s = reinterpret_cast<const char *>(it+3);
-                const size_t max_length = reinterpret_cast<const char *>(op_code_end) - s, length = strnlen(s, max_length);
-                if(length == max_length) throw std::runtime_error("missing null terminator");
-                entrypoint.name.assign(s, s+length);
-                entrypoint.interfaces.assign(it+3+(length+3)/4, op_code_end);
-            }
-            it = op_code_end;
-        }
-    }
-
-    ::type::numeric get_numeric_type(uint32_t id, std::optional<::type::matrix_layout> matrix_layout)
-    {
-        auto & type = types[id];
-        switch(type.op)
-        {
-        case spv::OpTypeInt: 
-            if(type.contents[0] != 32) throw std::runtime_error("unsupported int width");
-            return {type.contents[1] ? ::type::int_ : ::type::uint_, 1, 1, matrix_layout};
-        case spv::OpTypeFloat: 
-            if(type.contents[0] == 32) return {::type::float_, 1, 1, matrix_layout};
-            if(type.contents[0] == 64) return {::type::double_, 1, 1, matrix_layout};
-            throw std::runtime_error("unsupported float width");
-        case spv::OpTypeVector: { auto t = get_numeric_type(type.contents[0], matrix_layout); t.row_count = type.contents[1]; return t; }
-        case spv::OpTypeMatrix: { auto t = get_numeric_type(type.contents[0], matrix_layout); t.column_count = type.contents[1]; return t; }
-        default: throw std::runtime_error("not a numeric type");
-        }
-    }
-    uint32_t get_array_length(uint32_t constant_id)
-    {
-        auto & constant = constants[constant_id];
-        if(constant.literals.size() != 1) throw std::runtime_error("bad constant");
-        return constant.literals[0];
-    }
-    ::type get_type(uint32_t id, std::optional<::type::matrix_layout> matrix_layout)
-    {
-        auto & type = types[id]; auto & meta = metadatas[id];
-        if(type.op >= spv::OpTypeInt && type.op <= spv::OpTypeMatrix) return {get_numeric_type(id, matrix_layout)};
-        if(type.op == spv::OpTypeImage) 
-        {
-            auto n = get_numeric_type(type.contents[0], matrix_layout);
-            auto dim = static_cast<spv::Dim>(type.contents[1]);
-            bool shadow = type.contents[2] == 1, arrayed = type.contents[3] == 1, multisampled = type.contents[4] == 1;
-            auto sampled = type.contents[5]; // 0 - unknown, 1 - used with sampler, 2 - used without sampler (i.e. storage image)
-            switch(dim)
-            {
-            case spv::Dim1D: return {::type::sampler{n.scalar, arrayed ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_1D, multisampled, shadow}};
-            case spv::Dim2D: return {::type::sampler{n.scalar, arrayed ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D, multisampled, shadow}};
-            case spv::Dim3D: return {::type::sampler{n.scalar, arrayed ? throw std::runtime_error("unsupported image type") : VK_IMAGE_VIEW_TYPE_3D, multisampled, shadow}};
-            case spv::DimCube: return {::type::sampler{n.scalar, arrayed ? VK_IMAGE_VIEW_TYPE_CUBE_ARRAY : VK_IMAGE_VIEW_TYPE_CUBE, multisampled, shadow}};
-            case spv::DimRect: return {::type::sampler{n.scalar, arrayed ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D, multisampled, shadow}};
-            default: throw std::runtime_error("unsupported image type"); // Buffer, SubpassData
-            }
-        }
-        if(type.op == spv::OpTypeSampledImage) return get_type(type.contents[0], matrix_layout);
-        if(type.op == spv::OpTypeArray) return {::type::array{std::make_unique<::type>(get_type(type.contents[0], matrix_layout)), get_array_length(type.contents[1]), meta.get_decoration(spv::DecorationArrayStride)}};
-        if(type.op == spv::OpTypeStruct)
-        {
-            ::type::structure s {meta.name};
-            // meta.has_decoration(spv::DecorationBlock) is true if this struct is used for VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER/VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC
-            // meta.has_decoration(spv::DecorationBufferBlock) is true if this struct is used for VK_DESCRIPTOR_TYPE_STORAGE_BUFFER/VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC
-            for(size_t i=0; i<type.contents.size(); ++i)
-            {
-                auto & member_meta = meta.members[i];
-                std::optional<::type::matrix_layout> matrix_layout;
-                if(auto stride = member_meta.get_decoration(spv::DecorationMatrixStride)) matrix_layout = ::type::matrix_layout{*stride, member_meta.has_decoration(spv::DecorationRowMajor)};
-                s.members.push_back({member_meta.name, std::make_unique<::type>(get_type(type.contents[i], matrix_layout)), member_meta.get_decoration(spv::DecorationOffset)});
-            }
-            return {std::move(s)};
-        }
-        return {::type::unknown{}};
-    }
-    ::type get_pointee_type(uint32_t id)
-    {
-        if(types[id].op != spv::OpTypePointer) throw std::runtime_error("not a pointer type");
-        return get_type(types[id].contents[1], std::nullopt);
-    }
-};
-
-shader::shader(std::shared_ptr<context> ctx, array_view<uint32_t> words) : ctx{ctx}
-{
-    // Analyze SPIR-V
-    spirv_module mod(words);
-    if(mod.entrypoints.size() != 1) throw std::runtime_error("SPIR-V module should have exactly one entrypoint");
-    auto & entrypoint = mod.entrypoints.begin()->second;
-
-    // Determine shader stage
-    switch(entrypoint.execution_model)
-    {
-    case spv::ExecutionModelVertex: stage = VK_SHADER_STAGE_VERTEX_BIT; break;
-    case spv::ExecutionModelTessellationControl: stage = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT; break;
-    case spv::ExecutionModelTessellationEvaluation: stage = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT; break;
-    case spv::ExecutionModelGeometry: stage = VK_SHADER_STAGE_GEOMETRY_BIT; break;
-    case spv::ExecutionModelFragment: stage = VK_SHADER_STAGE_FRAGMENT_BIT; break;
-    case spv::ExecutionModelGLCompute: stage = VK_SHADER_STAGE_COMPUTE_BIT; break;
-    default: throw std::runtime_error("invalid execution model");
-    }
-    name = entrypoint.name;
-
-    // Harvest descriptors
-    for(auto & v : mod.variables)
-    {
-        auto & meta = mod.metadatas[v.first];
-        auto set = meta.get_decoration(spv::DecorationDescriptorSet);
-        auto binding = meta.get_decoration(spv::DecorationBinding);
-        if(set && binding) descriptors.push_back({*set, *binding, meta.name, mod.get_pointee_type(v.second.type)});
-    }
-    std::sort(begin(descriptors), end(descriptors), [](const descriptor & a, const descriptor & b) { return std::tie(a.set, a.binding) < std::tie(b.set, b.binding); });
-
     VkShaderModuleCreateInfo create_info {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     create_info.codeSize = words.size * sizeof(uint32_t);
     create_info.pCode = words.data;
@@ -1250,15 +1089,15 @@ scene_contract::~scene_contract()
 // scene_material //
 ////////////////////
 
-VkDescriptorSetLayoutBinding get_descriptor_set_layout_binding(uint32_t binding, const type & type, VkShaderStageFlags stage_flags)
+VkDescriptorSetLayoutBinding get_descriptor_set_layout_binding(uint32_t binding, const shader_info::type & type, VkShaderStageFlags stage_flags)
 {
-    if(auto * a = std::get_if<type::array>(&type.contents))
+    if(auto * a = std::get_if<shader_info::array>(&type.contents))
     {
         auto b = get_descriptor_set_layout_binding(binding, *a->element, stage_flags);
         b.descriptorCount *= a->length;
         return b;
     }
-    if(auto * s = std::get_if<type::sampler>(&type.contents)) return {binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, stage_flags};
+    if(auto * s = std::get_if<shader_info::sampler>(&type.contents)) return {binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, stage_flags};
     return {binding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, stage_flags};
 }
 
