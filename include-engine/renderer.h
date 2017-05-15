@@ -2,9 +2,6 @@
 #define RENDERER_H
 
 #include "data-types.h"
-#include <functional>
-#include <vulkan/vulkan.h>
-#include <GLFW/glfw3.h>
 
 const char * to_string(VkResult result);
 void check(VkResult result);
@@ -353,8 +350,8 @@ struct draw_item
     VkDeviceSize vertex_buffer_offsets[4];
     VkBuffer index_buffer;
     VkDeviceSize index_buffer_offset;
-    size_t first_index, index_count;
-    size_t instance_count;
+    uint32_t first_index, index_count;
+    uint32_t instance_count;
 };
 
 struct draw_list

@@ -2,9 +2,6 @@
 #define FBX_H
 
 #include "data-types.h"
-#include <string>
-#include <variant>
-#include <optional>
 
 namespace fbx
 {

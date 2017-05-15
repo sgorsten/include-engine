@@ -1,11 +1,9 @@
-#include "renderer.h"
-#include "load.h"
-#include "fbx.h"
 #include "rts-game.h"
-#include <fstream>
+#include "utility.h"
+#include "load.h"
+
 #include <iostream>
 #include <chrono>
-#include <memory>
 
 VkAttachmentDescription make_attachment_description(VkFormat format, VkSampleCountFlagBits samples, VkAttachmentLoadOp load_op, VkImageLayout initial_layout=VK_IMAGE_LAYOUT_UNDEFINED, VkAttachmentStoreOp store_op=VK_ATTACHMENT_STORE_OP_DONT_CARE, VkImageLayout final_layout=VK_IMAGE_LAYOUT_UNDEFINED)
 {
@@ -26,7 +24,7 @@ void draw_fullscreen_pass(VkCommandBuffer cmd, framebuffer & fb, const scene_des
 {
     vkCmdBeginRenderPass(cmd, fb.get_render_pass().get_vk_handle(), fb.get_vk_handle(), fb.get_bounds(), {});  
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, descriptors.get_material().get_pipeline(descriptors.get_material().get_contract().get_render_pass_index(fb.get_render_pass())));
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, descriptors.get_material().get_pipeline_layout(), descriptors.get_material().get_contract().get_shared_layouts().size(), {descriptors.get_descriptor_set()}, {});
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, descriptors.get_material().get_pipeline_layout(), narrow(descriptors.get_material().get_contract().get_shared_layouts().size()), {descriptors.get_descriptor_set()}, {});
     vkCmdBindVertexBuffers(cmd, 0, {*fullscreen_quad.vertex_buffer}, {0});
     vkCmdBindIndexBuffer(cmd, *fullscreen_quad.index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
     vkCmdDrawIndexed(cmd, fullscreen_quad.index_count, 1, 0, 0, 0);

@@ -4,7 +4,6 @@
 // fail_fast() //
 /////////////////
 
-#define NOMINMAX
 #include <Windows.h>
 #include <iostream>
 

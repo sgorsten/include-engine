@@ -2,27 +2,33 @@
 #define DATA_TYPES_H
 
 #include <memory>           // For std::unique_ptr<T>, std::shared_ptr<T>
+#include <string>           // For std::string
 #include <vector>           // For std::vector<T>
 #include <variant>          // For std::variant<T...>
 #include <optional>         // For std::optional<T>
+#include <functional>       // For std::function<T>
+
 #include <vulkan/vulkan.h>  // For VkImageViewType, etc...
+#include <GLFW/glfw3.h>     // For input enums, etc.
+
+#include "utility.h"        // For narrow(...)
 #include "linalg.h"         // For float3, etc...
 using namespace linalg::aliases;
 
 // Abstract over determining the number of elements in a collection
-template<class T, uint32_t N> constexpr uint32_t countof(const T (&)[N]) { return N; }
-template<class T, uint32_t N> constexpr uint32_t countof(const std::array<T,N> &) { return N; }
-template<class T> constexpr uint32_t countof(const std::initializer_list<T> & ilist) { return static_cast<uint32_t>(ilist.size()); }
-template<class T> constexpr uint32_t countof(const std::vector<T> & vec) { return static_cast<uint32_t>(vec.size()); }
+template<class T, size_t N> constexpr size_t countof(const T (&)[N]) { return N; }
+template<class T, size_t N> constexpr size_t countof(const std::array<T,N> &) { return N; }
+template<class T> constexpr size_t countof(const std::initializer_list<T> & ilist) { return ilist.size(); }
+template<class T> constexpr size_t countof(const std::vector<T> & vec) { return vec.size(); }
 
 // A lightweight non-owning reference type for passing contiguous chunks of memory to a function
 template<class T> struct array_view
 {
     const T * data;
-    uint32_t size;
+    size_t size;
 
-    template<uint32_t N> array_view(const T (& array)[N]) : data{array}, size{countof(array)} {}
-    template<uint32_t N> array_view(const std::array<T,N> & array) : data{array.data()}, size{countof(array)} {}
+    template<size_t N> array_view(const T (& array)[N]) : data{array}, size{countof(array)} {}
+    template<size_t N> array_view(const std::array<T,N> & array) : data{array.data()}, size{countof(array)} {}
     array_view(std::initializer_list<T> ilist) : data{ilist.begin()}, size{countof(ilist)} {}
     array_view(const std::vector<T> & vec) : data{vec.data()}, size{countof(vec)} {}
     const T & operator [] (int i) const { return data[i]; }

@@ -172,7 +172,7 @@ context::context(std::function<void(const char *)> debug_callback) : debug_callb
     const VkApplicationInfo app_info {VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "simple-scene", VK_MAKE_VERSION(1,0,0), "No Engine", VK_MAKE_VERSION(0,0,0), VK_API_VERSION_1_0};
     const char * layers[] {"VK_LAYER_LUNARG_standard_validation"};
     extensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
-    const VkInstanceCreateInfo instance_info {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, nullptr, {}, &app_info, countof(layers), layers, countof(extensions), extensions.data()};
+    const VkInstanceCreateInfo instance_info {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, nullptr, {}, &app_info, narrow(countof(layers)), layers, narrow(countof(extensions)), extensions.data()};
     check(vkCreateInstance(&instance_info, nullptr, &instance));
     auto vkCreateDebugReportCallbackEXT = reinterpret_cast<PFN_vkCreateDebugReportCallbackEXT>(vkGetInstanceProcAddr(instance, "vkCreateDebugReportCallbackEXT"));
     vkDestroyDebugReportCallbackEXT = reinterpret_cast<PFN_vkDestroyDebugReportCallbackEXT>(vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT"));
@@ -189,8 +189,8 @@ context::context(std::function<void(const char *)> debug_callback) : debug_callb
     std::vector<const char *> device_extensions {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
     selection = select_physical_device(instance, device_extensions);
     const float queue_priorities[] {1.0f};
-    const VkDeviceQueueCreateInfo queue_infos[] {{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, nullptr, {}, selection.queue_family, countof(queue_priorities), queue_priorities}};
-    const VkDeviceCreateInfo device_info {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, nullptr, {}, countof(queue_infos), queue_infos, countof(layers), layers, countof(device_extensions), device_extensions.data()};
+    const VkDeviceQueueCreateInfo queue_infos[] {{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, nullptr, {}, selection.queue_family, narrow(countof(queue_priorities)), queue_priorities}};
+    const VkDeviceCreateInfo device_info {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, nullptr, {}, narrow(countof(queue_infos)), queue_infos, narrow(countof(layers)), layers, narrow(countof(device_extensions)), device_extensions.data()};
     check(vkCreateDevice(selection.physical_device, &device_info, nullptr, &device));
     vkGetDeviceQueue(device, selection.queue_family, 0, &queue);
     vkGetPhysicalDeviceMemoryProperties(selection.physical_device, &mem_props);
@@ -255,7 +255,7 @@ VkDeviceMemory context::allocate(const VkMemoryRequirements & reqs, VkMemoryProp
 VkDescriptorSetLayout context::create_descriptor_set_layout(array_view<VkDescriptorSetLayoutBinding> bindings)
 {
     VkDescriptorSetLayoutCreateInfo create_info {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    create_info.bindingCount = bindings.size;
+    create_info.bindingCount = narrow(bindings.size);
     create_info.pBindings = bindings.data;
 
     VkDescriptorSetLayout descriptor_set_layout;
@@ -266,7 +266,7 @@ VkDescriptorSetLayout context::create_descriptor_set_layout(array_view<VkDescrip
 VkPipelineLayout context::create_pipeline_layout(array_view<VkDescriptorSetLayout> descriptor_sets)
 {
     VkPipelineLayoutCreateInfo create_info {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    create_info.setLayoutCount = descriptor_sets.size;
+    create_info.setLayoutCount = narrow(descriptor_sets.size);
     create_info.pSetLayouts = descriptor_sets.data;
 
     VkPipelineLayout pipeline_layout;
@@ -392,7 +392,7 @@ void window::end(uint32_t index, array_view<VkCommandBuffer> commands, VkFence f
     submit_info.waitSemaphoreCount = 1;
     submit_info.pWaitSemaphores = &image_available;
     submit_info.pWaitDstStageMask = wait_stages;
-    submit_info.commandBufferCount = commands.size;
+    submit_info.commandBufferCount = narrow(commands.size);
     submit_info.pCommandBuffers = commands.data;
     submit_info.signalSemaphoreCount = 1;
     submit_info.pSignalSemaphores = &render_finished;
@@ -714,7 +714,7 @@ transient_resource_pool::transient_resource_pool(std::shared_ptr<context> ctx, a
     check(vkCreateCommandPool(ctx->device, &command_pool_info, nullptr, &command_pool));
 
     VkDescriptorPoolCreateInfo descriptor_pool_info {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    descriptor_pool_info.poolSizeCount = descriptor_pool_sizes.size;
+    descriptor_pool_info.poolSizeCount = narrow(descriptor_pool_sizes.size);
     descriptor_pool_info.pPoolSizes = descriptor_pool_sizes.data;
     descriptor_pool_info.maxSets = max_descriptor_sets;
     descriptor_pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
@@ -738,13 +738,13 @@ void transient_resource_pool::reset()
     check(vkResetFences(ctx->device, 1, &fence));
     if(!command_buffers.empty())
     {
-        vkFreeCommandBuffers(ctx->device, command_pool, command_buffers.size(), command_buffers.data());
+        vkFreeCommandBuffers(ctx->device, command_pool, narrow(command_buffers.size()), command_buffers.data());
         command_buffers.clear();
     }
     check(vkResetCommandPool(ctx->device, command_pool, 0));
     if(!descriptor_sets.empty())
     {
-        vkFreeDescriptorSets(ctx->device, descriptor_pool, descriptor_sets.size(), descriptor_sets.data());
+        vkFreeDescriptorSets(ctx->device, descriptor_pool, narrow(descriptor_sets.size()), descriptor_sets.data());
         descriptor_sets.clear();
     }
     check(vkResetDescriptorPool(ctx->device, descriptor_pool, 0));
@@ -882,7 +882,7 @@ VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLa
 
     const VkDynamicState dynamic_states[] {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo dynamicState {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-    dynamicState.dynamicStateCount = countof(dynamic_states);
+    dynamicState.dynamicStateCount = narrow(countof(dynamic_states));
     dynamicState.pDynamicStates = dynamic_states;
 
     VkPipelineDepthStencilStateCreateInfo depth_stencil_state {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
@@ -891,7 +891,7 @@ VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLa
     depth_stencil_state.depthCompareOp = VK_COMPARE_OP_LESS;
 
     VkGraphicsPipelineCreateInfo pipelineInfo {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-    pipelineInfo.stageCount = stages.size;
+    pipelineInfo.stageCount = narrow(stages.size);
     pipelineInfo.pStages = stages.data;
     pipelineInfo.pVertexInputState = &vertex_input_state;
     pipelineInfo.pInputAssemblyState = &inputAssembly;
@@ -918,7 +918,7 @@ VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLa
 
 void vkUpdateDescriptorSets(VkDevice device, array_view<VkWriteDescriptorSet> descriptorWrites, array_view<VkCopyDescriptorSet> descriptorCopies)
 {
-    vkUpdateDescriptorSets(device, descriptorWrites.size, descriptorWrites.data, descriptorCopies.size, descriptorCopies.data);
+    vkUpdateDescriptorSets(device, narrow(descriptorWrites.size), descriptorWrites.data, narrow(descriptorCopies.size), descriptorCopies.data);
 }
 
 void vkWriteDescriptorBufferInfo(VkDevice device, VkDescriptorSet set, uint32_t binding, uint32_t array_element, VkDescriptorBufferInfo info)
@@ -933,20 +933,20 @@ void vkWriteDescriptorCombinedImageSamplerInfo(VkDevice device, VkDescriptorSet 
 
 void vkCmdBindDescriptorSets(VkCommandBuffer commandBuffer, VkPipelineBindPoint pipelineBindPoint, VkPipelineLayout layout, uint32_t firstSet, array_view<VkDescriptorSet> descriptorSets, array_view<uint32_t> dynamicOffsets)
 {
-    vkCmdBindDescriptorSets(commandBuffer, pipelineBindPoint, layout, firstSet, descriptorSets.size, descriptorSets.data, dynamicOffsets.size, dynamicOffsets.data);
+    vkCmdBindDescriptorSets(commandBuffer, pipelineBindPoint, layout, firstSet, narrow(descriptorSets.size), descriptorSets.data, narrow(dynamicOffsets.size), dynamicOffsets.data);
 }
 
 void vkCmdBindVertexBuffers(VkCommandBuffer commandBuffer, uint32_t firstBinding, array_view<VkBuffer> buffers, array_view<VkDeviceSize> offsets)
 {
     if(buffers.size != offsets.size) fail_fast();
-    vkCmdBindVertexBuffers(commandBuffer, firstBinding, buffers.size, buffers.data, offsets.data);
+    vkCmdBindVertexBuffers(commandBuffer, firstBinding, narrow(buffers.size), buffers.data, offsets.data);
 }
 
 void vkCmdSetViewport(VkCommandBuffer commandBuffer, VkRect2D viewport)
 {
     const VkViewport viewports[] {{static_cast<float>(viewport.offset.x), static_cast<float>(viewport.offset.y), 
         static_cast<float>(viewport.extent.width), static_cast<float>(viewport.extent.height), 0.0f, 1.0f}};
-    vkCmdSetViewport(commandBuffer, 0, countof(viewports), viewports);
+    vkCmdSetViewport(commandBuffer, 0, narrow(countof(viewports)), viewports);
 }
 
 void vkCmdSetScissor(VkCommandBuffer commandBuffer, VkRect2D scissor)
@@ -960,7 +960,7 @@ void vkCmdBeginRenderPass(VkCommandBuffer cmd, VkRenderPass renderPass, VkFrameb
     pass_begin_info.renderPass = renderPass;
     pass_begin_info.framebuffer = framebuffer;
     pass_begin_info.renderArea = renderArea;
-    pass_begin_info.clearValueCount = clearValues.size;
+    pass_begin_info.clearValueCount = narrow(clearValues.size);
     pass_begin_info.pClearValues = clearValues.data;
     vkCmdBeginRenderPass(cmd, &pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdSetViewport(cmd, renderArea);
@@ -1024,14 +1024,14 @@ render_pass::render_pass(std::shared_ptr<context> ctx, array_view<VkAttachmentDe
     if(depth_attachment)
     {
         attachments.push_back(*depth_attachment);
-        attachment_refs.push_back({color_attachments.size, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL});
+        attachment_refs.push_back({narrow(color_attachments.size), VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL});
         subpass_desc.pDepthStencilAttachment = &attachment_refs[color_attachments.size];
     }
-    subpass_desc.colorAttachmentCount = color_attachments.size;
+    subpass_desc.colorAttachmentCount = narrow(color_attachments.size);
     subpass_desc.pColorAttachments = attachment_refs.data();
     
     VkRenderPassCreateInfo render_pass_info {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
-    render_pass_info.attachmentCount = countof(attachments);
+    render_pass_info.attachmentCount = narrow(countof(attachments));
     render_pass_info.pAttachments = attachments.data();
     render_pass_info.subpassCount = 1;
     render_pass_info.pSubpasses = &subpass_desc;
@@ -1055,7 +1055,7 @@ framebuffer::framebuffer(std::shared_ptr<context> ctx, std::shared_ptr<const ren
 {
     VkFramebufferCreateInfo framebuffer_info {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
     framebuffer_info.renderPass = pass->get_vk_handle();
-    framebuffer_info.attachmentCount = attachments.size;
+    framebuffer_info.attachmentCount = narrow(attachments.size);
     framebuffer_info.pAttachments = attachments.data;
     framebuffer_info.width = dims.x;
     framebuffer_info.height = dims.y;
@@ -1107,7 +1107,7 @@ scene_material::scene_material(std::shared_ptr<context> ctx, std::shared_ptr<sce
     // Determine the full set of per object descriptors across all stages
     std::vector<VkDescriptorSetLayoutBinding> per_object_bindings;
     std::vector<VkPipelineShaderStageCreateInfo> shader_stages, shader_stages_no_frag;
-    const uint32_t per_object_descriptor_set_index = contract->get_shared_layouts().size();
+    const uint32_t per_object_descriptor_set_index = narrow(contract->get_shared_layouts().size());
     for(auto & s : stages) 
     {
         shader_stages.push_back(s->get_shader_stage());
@@ -1181,11 +1181,11 @@ void draw_list::draw(const scene_descriptor_set & descriptors, const gfx_mesh & 
     item.vertex_buffer_offsets[1] = instances.offset;
     item.index_buffer = *mesh.index_buffer;
     item.index_buffer_offset = 0;
-    item.instance_count = instance_stride ? instances.range / instance_stride : 1;
+    item.instance_count = narrow(instance_stride ? instances.range / instance_stride : 1);
     for(auto mtl : mtls)
     {
-        item.first_index = mesh.m.materials[mtl].first_triangle*3;
-        item.index_count = mesh.m.materials[mtl].num_triangles*3;
+        item.first_index = narrow(mesh.m.materials[mtl].first_triangle*3);
+        item.index_count = narrow(mesh.m.materials[mtl].num_triangles*3);
         items.push_back(item);
     }
 }
@@ -1213,7 +1213,7 @@ void draw_list::write_commands(VkCommandBuffer cmd, const render_pass & render_p
     std::vector<VkDescriptorSet> sets;
     auto & contract_layouts = contract.get_shared_layouts();
     if(shared_descriptors.size != contract_layouts.size()) throw std::runtime_error("contract violation");
-    for(size_t i=0; i<shared_descriptors.size; ++i) 
+    for(uint32_t i=0; i<shared_descriptors.size; ++i) 
     {
         if(shared_descriptors[i].get_descriptor_set_layout() != contract_layouts[i]) throw std::runtime_error("contract violation");
         sets.push_back(shared_descriptors[i].get_descriptor_set());
@@ -1225,7 +1225,7 @@ void draw_list::write_commands(VkCommandBuffer cmd, const render_pass & render_p
     for(auto & item : items)
     {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, item.material->get_pipeline(render_pass_index));
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, item.material->get_pipeline_layout(), sets.size(), {item.set}, {});
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, item.material->get_pipeline_layout(), narrow(sets.size()), {item.set}, {});
         vkCmdBindVertexBuffers(cmd, 0, item.vertex_buffer_count, item.vertex_buffers, item.vertex_buffer_offsets);
         vkCmdBindIndexBuffer(cmd, item.index_buffer, item.index_buffer_offset, VkIndexType::VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(cmd, item.index_count, item.instance_count, item.first_index, 0, 0);

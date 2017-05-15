@@ -1,6 +1,6 @@
 #ifndef RTS_GAME_H
 #define RTS_GAME_H
-#include "data-types.h"
+
 #include "renderer.h"
 #include <random>
 
