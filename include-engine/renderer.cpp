@@ -703,9 +703,11 @@ VkDescriptorBufferInfo dynamic_buffer::upload(size_t size, const void * data)
 // transient_resource_pool //
 /////////////////////////////
 
-transient_resource_pool::transient_resource_pool(std::shared_ptr<context> ctx, array_view<VkDescriptorPoolSize> descriptor_pool_sizes, uint32_t max_descriptor_sets)
-    : ctx{ctx}, uniform_buffer{ctx, 1024*1024, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT}, 
-        vertex_buffer{ctx, 1024*1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT}
+transient_resource_pool::transient_resource_pool(std::shared_ptr<context> ctx, array_view<VkDescriptorPoolSize> descriptor_pool_sizes, uint32_t max_descriptor_sets) : 
+    ctx{ctx}, 
+    uniform_buffer{ctx, 1024*1024, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT}, 
+    vertex_buffer{ctx, 1024*1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT},
+    index_buffer{ctx, 1024*1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT}
 {
     VkCommandPoolCreateInfo command_pool_info {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     command_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -750,6 +752,7 @@ void transient_resource_pool::reset()
     check(vkResetDescriptorPool(ctx->device, descriptor_pool, 0));
     uniform_buffer.reset();
     vertex_buffer.reset();
+    index_buffer.reset();
 }
 
 VkCommandBuffer transient_resource_pool::allocate_command_buffer()
@@ -820,7 +823,7 @@ void transition_layout(VkCommandBuffer command_buffer, VkImage image, uint32_t m
 }
 
 
-VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout layout, VkPipelineVertexInputStateCreateInfo vertex_input_state, array_view<VkPipelineShaderStageCreateInfo> stages, bool depth_write, bool depth_test, bool additive_blending)
+VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout layout, VkPipelineVertexInputStateCreateInfo vertex_input_state, array_view<VkPipelineShaderStageCreateInfo> stages, bool depth_write, bool depth_test, VkBlendFactor src_factor, VkBlendFactor dst_factor)
 {
     VkPipelineInputAssemblyStateCreateInfo inputAssembly {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -856,19 +859,13 @@ VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLa
 
     VkPipelineColorBlendAttachmentState colorBlendAttachment {};
     colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    colorBlendAttachment.blendEnable = VK_FALSE;
-    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
-    colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+    colorBlendAttachment.blendEnable = src_factor != VK_BLEND_FACTOR_ONE || dst_factor != VK_BLEND_FACTOR_ZERO;
+    colorBlendAttachment.srcColorBlendFactor = src_factor;
+    colorBlendAttachment.dstColorBlendFactor = dst_factor;
     colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
-    colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
-    colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+    colorBlendAttachment.srcAlphaBlendFactor = src_factor; // Optional
+    colorBlendAttachment.dstAlphaBlendFactor = dst_factor; // Optional
     colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
-    if(additive_blending)
-    {
-        colorBlendAttachment.blendEnable = VK_TRUE;
-        colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-        colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
-    }
 
     VkPipelineColorBlendStateCreateInfo colorBlending {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
     colorBlending.logicOpEnable = VK_FALSE;
@@ -1101,7 +1098,7 @@ VkDescriptorSetLayoutBinding get_descriptor_set_layout_binding(uint32_t binding,
     return {binding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, stage_flags};
 }
 
-scene_material::scene_material(std::shared_ptr<context> ctx, std::shared_ptr<scene_contract> contract, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending) : 
+scene_material::scene_material(std::shared_ptr<context> ctx, std::shared_ptr<scene_contract> contract, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, VkBlendFactor src_factor, VkBlendFactor dst_factor) : 
     ctx{ctx}, contract{contract}
 {
     // Determine the full set of per object descriptors across all stages
@@ -1137,7 +1134,7 @@ scene_material::scene_material(std::shared_ptr<context> ctx, std::shared_ptr<sce
     pipeline_layout = ctx->create_pipeline_layout(set_layouts);
     for(auto & p : contract->render_passes)
     {
-        pipelines.push_back(make_pipeline(ctx->device, p->get_vk_handle(), pipeline_layout, format->get_vertex_input_state(), p->has_color_attachments() ? shader_stages : shader_stages_no_frag, depth_write, depth_test, additive_blending));
+        pipelines.push_back(make_pipeline(ctx->device, p->get_vk_handle(), pipeline_layout, format->get_vertex_input_state(), p->has_color_attachments() ? shader_stages : shader_stages_no_frag, depth_write, depth_test, src_factor, dst_factor));
     }
 }
     
@@ -1160,7 +1157,7 @@ void scene_descriptor_set::write_uniform_buffer(uint32_t binding, uint32_t array
     vkWriteDescriptorBufferInfo(device, set, binding, array_element, info);
 }
 
-void scene_descriptor_set::write_combined_image_sampler(uint32_t binding, uint32_t array_element, sampler & sampler, VkImageView image_view, VkImageLayout image_layout)
+void scene_descriptor_set::write_combined_image_sampler(uint32_t binding, uint32_t array_element, const sampler & sampler, VkImageView image_view, VkImageLayout image_layout)
 {
     vkWriteDescriptorCombinedImageSamplerInfo(device, set, binding, array_element, {sampler.get_vk_handle(), image_view, image_layout});
 }
@@ -1168,6 +1165,25 @@ void scene_descriptor_set::write_combined_image_sampler(uint32_t binding, uint32
 ///////////////
 // draw_list //
 ///////////////
+
+void draw_list::draw(const scene_descriptor_set & descriptors, std::initializer_list<VkDescriptorBufferInfo> vertex_buffers, VkDescriptorBufferInfo index_buffer, size_t index_count, size_t instance_count)
+{
+    if(&descriptors.get_material().get_contract() != &contract) fail_fast();
+
+    draw_item item {&descriptors.get_material(), descriptors.get_descriptor_set()};
+    item.vertex_buffer_count = vertex_buffers.size();
+    for(size_t i=0; i<vertex_buffers.size() && i<4; ++i)
+    {
+        item.vertex_buffers[i] = vertex_buffers.begin()[i].buffer;
+        item.vertex_buffer_offsets[i] = vertex_buffers.begin()[i].offset;
+    }
+    item.index_buffer = index_buffer.buffer;
+    item.index_buffer_offset = index_buffer.offset;
+    item.first_index = 0;
+    item.index_count = narrow(index_count);
+    item.instance_count = narrow(instance_count);
+    items.push_back(item);
+}
 
 void draw_list::draw(const scene_descriptor_set & descriptors, const gfx_mesh & mesh, std::vector<size_t> mtls, VkDescriptorBufferInfo instances, size_t instance_stride)
 {
@@ -1210,22 +1226,25 @@ void draw_list::draw(const scene_descriptor_set & descriptors, const gfx_mesh & 
 void draw_list::write_commands(VkCommandBuffer cmd, const render_pass & render_pass, array_view<scene_descriptor_set> shared_descriptors) const
 {
     // Validate and bind shared descriptor sets
-    std::vector<VkDescriptorSet> sets;
     auto & contract_layouts = contract.get_shared_layouts();
     if(shared_descriptors.size != contract_layouts.size()) throw std::runtime_error("contract violation");
-    for(uint32_t i=0; i<shared_descriptors.size; ++i) 
+    if(shared_descriptors.size > 0)
     {
-        if(shared_descriptors[i].get_descriptor_set_layout() != contract_layouts[i]) throw std::runtime_error("contract violation");
-        sets.push_back(shared_descriptors[i].get_descriptor_set());
+        std::vector<VkDescriptorSet> sets;    
+        for(uint32_t i=0; i<shared_descriptors.size; ++i) 
+        {
+            if(shared_descriptors[i].get_descriptor_set_layout() != contract_layouts[i]) throw std::runtime_error("contract violation");
+            sets.push_back(shared_descriptors[i].get_descriptor_set());
+        }
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, contract.get_example_layout(), 0, sets, {});
     }
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, contract.get_example_layout(), 0, sets, {});
 
     // Issue draw calls
     auto render_pass_index = contract.get_render_pass_index(render_pass);
     for(auto & item : items)
     {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, item.material->get_pipeline(render_pass_index));
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, item.material->get_pipeline_layout(), narrow(sets.size()), {item.set}, {});
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, item.material->get_pipeline_layout(), narrow(shared_descriptors.size), {item.set}, {});
         vkCmdBindVertexBuffers(cmd, 0, item.vertex_buffer_count, item.vertex_buffers, item.vertex_buffer_offsets);
         vkCmdBindIndexBuffer(cmd, item.index_buffer, item.index_buffer_offset, VkIndexType::VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(cmd, item.index_count, item.instance_count, item.first_index, 0, 0);
@@ -1276,7 +1295,7 @@ std::shared_ptr<scene_contract> renderer::create_contract(array_view<std::shared
     return std::make_shared<scene_contract>(ctx, render_passes, shared_descriptor_sets);
 }
 
-std::shared_ptr<scene_material> renderer::create_material(std::shared_ptr<scene_contract> contract, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, bool additive_blending)
+std::shared_ptr<scene_material> renderer::create_material(std::shared_ptr<scene_contract> contract, std::shared_ptr<vertex_format> format, array_view<std::shared_ptr<shader>> stages, bool depth_write, bool depth_test, VkBlendFactor src_factor, VkBlendFactor dst_factor)
 {
-    return std::make_shared<scene_material>(ctx, contract, format, stages, depth_write, depth_test, additive_blending);
+    return std::make_shared<scene_material>(ctx, contract, format, stages, depth_write, depth_test, src_factor, dst_factor);
 }

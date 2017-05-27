@@ -5,6 +5,14 @@
 #include <iostream>
 #include <chrono>
 
+#define STB_TRUETYPE_IMPLEMENTATION  // force following include to generate implementation
+#include "../3rdparty/stb/stb_truetype.h"
+
+unsigned char ttf_buffer[1<<20];
+unsigned char temp_bitmap[512*512];
+
+stbtt_bakedchar cdata[96]; // ASCII 32..126 is 95 glyphs
+
 VkAttachmentDescription make_attachment_description(VkFormat format, VkSampleCountFlagBits samples, VkAttachmentLoadOp load_op, VkImageLayout initial_layout=VK_IMAGE_LAYOUT_UNDEFINED, VkAttachmentStoreOp store_op=VK_ATTACHMENT_STORE_OP_DONT_CARE, VkImageLayout final_layout=VK_IMAGE_LAYOUT_UNDEFINED)
 {
     return {0, format, samples, load_op, store_op, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE, initial_layout, final_layout};
@@ -20,16 +28,86 @@ struct fps_camera
     float4x4 get_view_matrix(const coord_system & c) const { return pose_matrix(inverse(get_pose(c))); }
 };
 
-void draw_fullscreen_pass(VkCommandBuffer cmd, framebuffer & fb, const scene_descriptor_set & descriptors, const gfx_mesh & fullscreen_quad)
+void begin_render_pass(VkCommandBuffer cmd, framebuffer & fb)
 {
-    vkCmdBeginRenderPass(cmd, fb.get_render_pass().get_vk_handle(), fb.get_vk_handle(), fb.get_bounds(), {});  
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, descriptors.get_material().get_pipeline(descriptors.get_material().get_contract().get_render_pass_index(fb.get_render_pass())));
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, descriptors.get_material().get_pipeline_layout(), narrow(descriptors.get_material().get_contract().get_shared_layouts().size()), {descriptors.get_descriptor_set()}, {});
+    vkCmdBeginRenderPass(cmd, fb.get_render_pass().get_vk_handle(), fb.get_vk_handle(), fb.get_bounds(), {});
+}
+
+void draw_fullscreen_quad(VkCommandBuffer cmd, const render_pass & pass, const scene_descriptor_set & descriptors, const gfx_mesh & fullscreen_quad)
+{
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, descriptors.get_pipeline_for_render_pass(pass));
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, descriptors.get_pipeline_layout(), descriptors.get_descriptor_set_offset(), {descriptors.get_descriptor_set()}, {});
     vkCmdBindVertexBuffers(cmd, 0, {*fullscreen_quad.vertex_buffer}, {0});
     vkCmdBindIndexBuffer(cmd, *fullscreen_quad.index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
     vkCmdDrawIndexed(cmd, fullscreen_quad.index_count, 1, 0, 0, 0);
+}
+
+void draw_fullscreen_pass(VkCommandBuffer cmd, framebuffer & fb, const scene_descriptor_set & descriptors, const gfx_mesh & fullscreen_quad)
+{
+    begin_render_pass(cmd, fb);
+    draw_fullscreen_quad(cmd, fb.get_render_pass(), descriptors, fullscreen_quad);
     vkCmdEndRenderPass(cmd); 
 }
+
+struct image_vertex { float2 position, texcoord; float4 color; };
+struct gui_context
+{
+    draw_list & list;
+    uint2 dims;
+    uint32_t num_quads;
+
+    gui_context(draw_list & list, const uint2 & dims) : list{list}, dims{dims} {}
+
+    void begin_frame()
+    {
+        list.begin_vertices();
+        list.begin_indices();
+        num_quads = 0;
+    }
+
+    void draw_rect(const float4 & color, int x0, int y0, int x1, int y1, float s0, float t0, float s1, float t1)
+    {
+        const float fx0 = x0*2.0f/dims.x-1;
+        const float fy0 = y0*2.0f/dims.y-1;
+        const float fx1 = x1*2.0f/dims.x-1;
+        const float fy1 = y1*2.0f/dims.y-1;
+        list.write_vertex(image_vertex{{fx0,fy0},{s0,t0},color});
+        list.write_vertex(image_vertex{{fx0,fy1},{s0,t1},color});
+        list.write_vertex(image_vertex{{fx1,fy1},{s1,t1},color});
+        list.write_vertex(image_vertex{{fx1,fy0},{s1,t0},color});
+        list.write_indices(num_quads*4+uint3{0,1,2});
+        list.write_indices(num_quads*4+uint3{0,2,3});
+        ++num_quads;
+    }
+
+    void draw_text(const float4 & color, int x, int y, std::string_view text)
+    {
+        for(auto ch : text)
+        {
+            if(ch < 32 || ch > 126) continue;
+            const auto & b = cdata[ch-32];
+            const int x0 = x + b.xoff, y0 = y + b.yoff, x1 = x0 + b.x1 - b.x0, y1 = y0 + b.y1 - b.y0;
+            const float s0 = (float)b.x0/512, t0 = (float)b.y0/512, s1 = (float)b.x1/512, t1 = (float)b.y1/512;
+            draw_rect(color, x0, y0, x1, y1, s0, t0, s1, t1);
+            x += b.xadvance;
+        }
+    }
+
+    void draw_shadowed_text(const float4 & color, int x, int y, std::string_view text)
+    {
+        draw_text({0,0,0,color.w},x+1,y+1,text);
+        draw_text(color,x,y,text);
+    }
+
+    void end_frame(const scene_material & mtl, const sampler & samp, const texture_2d & font_tex)
+    {
+        auto vertex_info = list.end_vertices();
+        auto index_info = list.end_indices();
+        auto desc = list.descriptor_set(mtl);
+        desc.write_combined_image_sampler(0, 0, samp, font_tex);
+        list.draw(desc, {vertex_info}, index_info, num_quads*6, 1);
+    }
+};
 
 int main() try
 {
@@ -38,9 +116,11 @@ int main() try
     game::state g;
 
     renderer r {[](const char * message) { std::cerr << "validation layer: " << message << std::endl; }};
+  
+    fread(ttf_buffer, 1, 1<<20, fopen("c:/windows/fonts/arial.ttf", "rb"));
+    stbtt_BakeFontBitmap(ttf_buffer,0, 32.0, temp_bitmap,512,512, 32,96, cdata); // no guarantee this fits!
+    texture_2d font_tex(r.ctx, 512, 512, VK_FORMAT_R8_UNORM, temp_bitmap);
 
-    gfx_mesh quad_mesh {r.ctx, generate_fullscreen_quad()};
-   
     // Create our sampler
     VkSamplerCreateInfo image_sampler_info {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     image_sampler_info.magFilter = VK_FILTER_LINEAR;
@@ -64,21 +144,27 @@ int main() try
     });
     auto post_contract = r.create_contract({post_render_pass, final_render_pass}, {});
 
-    auto image_vertex_format = r.create_vertex_format({{0, sizeof(mesh::vertex), VK_VERTEX_INPUT_RATE_VERTEX}}, {
-        {0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(mesh::vertex, position)}, 
-        {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(mesh::vertex, texcoord)}
+    auto image_vertex_format = r.create_vertex_format({{0, sizeof(image_vertex), VK_VERTEX_INPUT_RATE_VERTEX}}, {
+        {0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(image_vertex, position)}, 
+        {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(image_vertex, texcoord)},
+        {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(image_vertex, color)},
     });
+    std::vector<image_vertex> quad_verts {{{-1,-1},{0,0},{1,1,1,1}}, {{-1,+1},{0,1},{1,1,1,1}}, {{+1,+1},{1,1},{1,1,1,1}}, {{+1,-1},{1,0},{1,1,1,1}}};
+    std::vector<uint3> quad_tris {{0,1,2},{0,2,3}};
+    gfx_mesh quad_mesh {r.ctx, quad_verts, quad_tris};
 
     auto image_vert_shader = r.create_shader(VK_SHADER_STAGE_VERTEX_BIT, "assets/image.vert");
+    auto image_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/image.frag");
     auto hipass_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/hipass.frag");
     auto hgauss_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/hgauss.frag");
     auto vgauss_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/vgauss.frag");
     auto add_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/add.frag");
     
-    auto hipass_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, hipass_frag_shader}, false, false, false);
-    auto hgauss_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, hgauss_frag_shader}, false, false, false);
-    auto vgauss_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, vgauss_frag_shader}, false, false, false);
-    auto add_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, add_frag_shader}, false, false, false);
+    auto image_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, image_frag_shader}, false, false, VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
+    auto hipass_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, hipass_frag_shader}, false, false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
+    auto hgauss_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, hgauss_frag_shader}, false, false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
+    auto vgauss_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, vgauss_frag_shader}, false, false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
+    auto add_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, add_frag_shader}, false, false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
     
     // Load our game resources
     const game::resources res {r, contract};
@@ -162,6 +248,12 @@ int main() try
         draw_list list {pool, *contract};
         game::draw(list, ps, res, g);
 
+        draw_list gui_list {pool, *post_contract};
+        gui_context gui {gui_list, win.get_dims()};
+        gui.begin_frame();
+        gui.draw_shadowed_text({1,1,1,1}, 50, 50, "This is a test of font rendering");
+        gui.end_frame(*image_mtl, image_sampler, font_tex);
+
         // Set up per-scene and per-view descriptor sets
         game::per_view_uniforms pv;
         pv.view_proj_matrix = mul(proj_matrix, camera.get_view_matrix(game::coords));
@@ -201,7 +293,10 @@ int main() try
         add.write_combined_image_sampler(1, 0, image_sampler, color1.get_image_view());
 
         const uint32_t index = win.begin();
-        draw_fullscreen_pass(cmd, *swapchain_framebuffers[index], add, quad_mesh);
+        begin_render_pass(cmd, *swapchain_framebuffers[index]);
+        draw_fullscreen_quad(cmd, swapchain_framebuffers[index]->get_render_pass(), add, quad_mesh);
+        gui_list.write_commands(cmd, swapchain_framebuffers[index]->get_render_pass(), {});
+        vkCmdEndRenderPass(cmd); 
         check(vkEndCommandBuffer(cmd));
         win.end(index, {cmd}, pool.get_fence());
     }

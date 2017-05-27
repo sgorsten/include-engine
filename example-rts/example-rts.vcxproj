@@ -159,6 +159,7 @@
     <None Include="assets\hgauss.frag" />
     <None Include="assets\glow.frag" />
     <None Include="assets\hipass.frag" />
+    <None Include="assets\image.frag" />
     <None Include="assets\image.vert" />
     <None Include="assets\particle.vert" />
     <None Include="assets\scene.glsl" />

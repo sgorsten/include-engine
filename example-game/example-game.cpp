@@ -129,10 +129,10 @@ int main() try
         {7, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(mesh::vertex, bone_weights)}
     });
 
-    auto helmet_pipeline  = r.create_material(contract, mesh_vertex_format, {static_vert_shader, metal_shader}, true, true, false);
-    auto static_pipeline  = r.create_material(contract, mesh_vertex_format, {static_vert_shader, frag_shader}, true, true, false);
-    auto skinned_pipeline = r.create_material(contract, mesh_vertex_format, {skinned_vert_shader, frag_shader}, true, true, false);
-    auto skybox_pipeline  = r.create_material(contract, mesh_vertex_format, {skybox_vert_shader, skybox_frag_shader}, false, false, false);
+    auto helmet_pipeline  = r.create_material(contract, mesh_vertex_format, {static_vert_shader, metal_shader}, true, true, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
+    auto static_pipeline  = r.create_material(contract, mesh_vertex_format, {static_vert_shader, frag_shader}, true, true, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
+    auto skinned_pipeline = r.create_material(contract, mesh_vertex_format, {skinned_vert_shader, frag_shader}, true, true, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
+    auto skybox_pipeline  = r.create_material(contract, mesh_vertex_format, {skybox_vert_shader, skybox_frag_shader}, false, false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
 
     // Set up a window with swapchain framebuffers
     window win {r.ctx, {1280, 720}, "Example Game"};
