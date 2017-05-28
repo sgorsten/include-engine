@@ -1,20 +1,10 @@
 #include "rts-game.h"
+#include "sprite.h"
 #include "utility.h"
 #include "load.h"
 
 #include <iostream>
 #include <chrono>
-
-#define STB_TRUETYPE_IMPLEMENTATION  // force following include to generate implementation
-#include "../3rdparty/stb/stb_truetype.h"
-
-typedef struct
-{
-   int x0,y0,x1,y1; // coordinates of bbox in bitmap
-   int xoff,yoff;
-   int xadvance;
-} glyph_info;
-glyph_info cdata[96]; // ASCII 32..126 is 95 glyphs
 
 VkAttachmentDescription make_attachment_description(VkFormat format, VkSampleCountFlagBits samples, VkAttachmentLoadOp load_op, VkImageLayout initial_layout=VK_IMAGE_LAYOUT_UNDEFINED, VkAttachmentStoreOp store_op=VK_ATTACHMENT_STORE_OP_DONT_CARE, VkImageLayout final_layout=VK_IMAGE_LAYOUT_UNDEFINED)
 {
@@ -52,102 +42,6 @@ void draw_fullscreen_pass(VkCommandBuffer cmd, framebuffer & fb, const scene_des
     vkCmdEndRenderPass(cmd); 
 }
 
-struct image_vertex { float2 position, texcoord; float4 color; };
-struct gui_context
-{
-    draw_list & list;
-    uint2 dims;
-    uint32_t num_quads;
-
-    gui_context(draw_list & list, const uint2 & dims) : list{list}, dims{dims} {}
-
-    void begin_frame()
-    {
-        list.begin_vertices();
-        list.begin_indices();
-        num_quads = 0;
-    }
-
-    void draw_rect(const float4 & color, int x0, int y0, int x1, int y1, float s0, float t0, float s1, float t1)
-    {
-        const float fx0 = x0*2.0f/dims.x-1;
-        const float fy0 = y0*2.0f/dims.y-1;
-        const float fx1 = x1*2.0f/dims.x-1;
-        const float fy1 = y1*2.0f/dims.y-1;
-        list.write_vertex(image_vertex{{fx0,fy0},{s0,t0},color});
-        list.write_vertex(image_vertex{{fx0,fy1},{s0,t1},color});
-        list.write_vertex(image_vertex{{fx1,fy1},{s1,t1},color});
-        list.write_vertex(image_vertex{{fx1,fy0},{s1,t0},color});
-        list.write_indices(num_quads*4+uint3{0,1,2});
-        list.write_indices(num_quads*4+uint3{0,2,3});
-        ++num_quads;
-    }
-
-    void draw_text(const float4 & color, int x, int y, std::string_view text)
-    {
-        for(auto ch : text)
-        {
-            if(ch < 32 || ch > 126) continue;
-            const auto & b = cdata[ch-32];
-            const int x0 = x + b.xoff, y0 = y + b.yoff, x1 = x0 + b.x1 - b.x0, y1 = y0 + b.y1 - b.y0;
-            const float s0 = (float)b.x0/512, t0 = (float)b.y0/512, s1 = (float)b.x1/512, t1 = (float)b.y1/512;
-            draw_rect(color, x0, y0, x1, y1, s0, t0, s1, t1);
-            x += b.xadvance;
-        }
-    }
-
-    void draw_shadowed_text(const float4 & color, int x, int y, std::string_view text)
-    {
-        draw_text({0,0,0,color.w},x+1,y+1,text);
-        draw_text(color,x,y,text);
-    }
-
-    void end_frame(const scene_material & mtl, const sampler & samp, const texture_2d & font_tex)
-    {
-        auto vertex_info = list.end_vertices();
-        auto index_info = list.end_indices();
-        auto desc = list.descriptor_set(mtl);
-        desc.write_combined_image_sampler(0, 0, samp, font_tex);
-        list.draw(desc, {vertex_info}, index_info, num_quads*6, 1);
-    }
-};
-
-static image bake_font_bitmap(float pixel_height, int first_char, int num_chars)
-{
-    image im {{512,512}, VK_FORMAT_R8_UNORM};
-    auto data = load_binary_file("C:/windows/fonts/arial.ttf");
-    stbtt_fontinfo f {};
-    if(!stbtt_InitFont(&f, data.data(), 0)) throw std::runtime_error("stbtt_InitFont(...) failed");
-    memset(im.get_pixels(), 0, im.get_width()*im.get_height());
-    const float scale = stbtt_ScaleForPixelHeight(&f, pixel_height);
-    int x=1, y=1, bottom_y=1;
-    for(int i=0; i<num_chars; ++i)
-    {
-        const int g = stbtt_FindGlyphIndex(&f, first_char + i);
-        int advance, lsb, x0,y0,x1,y1;
-        stbtt_GetGlyphHMetrics(&f, g, &advance, &lsb);
-        stbtt_GetGlyphBitmapBox(&f, g, scale,scale, &x0,&y0,&x1,&y1);
-
-        const int gw = x1-x0, gh = y1-y0;
-        if(x + gw + 1 >= im.get_width()) y = bottom_y, x = 1; // advance to next row
-        if(y + gh + 1 >= im.get_height()) throw std::runtime_error("out of space in image");
-        STBTT_assert(x+gw < pw);
-        STBTT_assert(y+gh < ph);
-
-        stbtt_MakeGlyphBitmap(&f, reinterpret_cast<uint8_t *>(im.get_pixels()+x+y*im.get_width()), gw,gh, im.get_width(), scale,scale, g);
-        cdata[i].x0 = x;
-        cdata[i].y0 = y;
-        cdata[i].x1 = x + gw;
-        cdata[i].y1 = y + gh;
-        cdata[i].xoff = x0;
-        cdata[i].yoff = y0;
-        cdata[i].xadvance = static_cast<int>(std::round(scale * advance));
-        x += gw + 1;
-        if(y+gh+1 > bottom_y) bottom_y = y+gh+1;
-    }
-    return im;
-}
-
 int main() try
 {
     constexpr coord_system vk_coords {coord_axis::right, coord_axis::down, coord_axis::forward};
@@ -156,7 +50,8 @@ int main() try
 
     renderer r {[](const char * message) { std::cerr << "validation layer: " << message << std::endl; }};
   
-    texture_2d font_tex(r.ctx, bake_font_bitmap(32.0, 32, 96));
+    auto sprites = bake_font_bitmap(32.0, 32, 96);
+    sprites.texture = r.create_texture_2d(sprites.sheet);
 
     // Create our sampler
     VkSamplerCreateInfo image_sampler_info {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -286,10 +181,10 @@ int main() try
         game::draw(list, ps, res, g);
 
         draw_list gui_list {pool, *post_contract};
-        gui_context gui {gui_list, win.get_dims()};
+        gui_context gui {sprites, gui_list, win.get_dims()};
         gui.begin_frame();
         gui.draw_shadowed_text({1,1,1,1}, 50, 50, "This is a test of font rendering");
-        gui.end_frame(*image_mtl, image_sampler, font_tex);
+        gui.end_frame(*image_mtl, image_sampler);
 
         // Set up per-scene and per-view descriptor sets
         game::per_view_uniforms pv;

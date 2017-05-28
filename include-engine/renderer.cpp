@@ -1270,6 +1270,11 @@ VkFormat renderer::get_swapchain_surface_format() const
     return ctx->selection.surface_format.format;
 }
 
+std::shared_ptr<texture_2d> renderer::create_texture_2d(uint32_t width, uint32_t height, VkFormat format, const void * initial_data)
+{
+    return std::make_shared<texture_2d>(ctx, width, height, format, initial_data);
+}
+
 std::shared_ptr<render_pass> renderer::create_render_pass(array_view<VkAttachmentDescription> color_attachments, std::optional<VkAttachmentDescription> depth_attachment)
 {
     return std::make_shared<render_pass>(ctx, color_attachments, depth_attachment);
