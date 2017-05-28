@@ -13,7 +13,7 @@ struct glyph_info
 struct sprite_sheet
 {
     image sheet;
-    std::shared_ptr<texture_2d> texture;
+    std::shared_ptr<texture> texture;
     std::map<int, glyph_info> glyphs;
 };
 sprite_sheet bake_font_bitmap(float pixel_height, int first_char, int num_chars);

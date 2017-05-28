@@ -53,31 +53,17 @@ public:
 
 inline render_target make_depth_buffer(std::shared_ptr<context> ctx, uint2 dims) { return {ctx, dims, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT}; }
 
-class texture_2d
+class texture
 {
     std::shared_ptr<context> ctx;
     VkImage image;
     VkImageView image_view;
     VkDeviceMemory device_memory;
 public:
-    texture_2d(std::shared_ptr<context> ctx, uint32_t width, uint32_t height, VkFormat format, const void * initial_data);
-    ~texture_2d();
+    texture(std::shared_ptr<context> ctx, VkFormat format, VkExtent3D extent, array_view<const void *> layer_data, VkImageViewType view_type);
+    ~texture();
 
     VkImage get_image() { return image; }
-    operator VkImageView () const { return image_view; }
-};
-
-class texture_cube
-{
-    std::shared_ptr<context> ctx;
-    VkImage img;
-    VkImageView image_view;
-    VkDeviceMemory device_memory;
-public:
-    texture_cube(std::shared_ptr<context> ctx, VkFormat format, const image & posx, const image & negx, const image & posy, const image & negy, const image & posz, const image & negz);
-    ~texture_cube();
-
-    VkImage get_image() { return img; }
     operator VkImageView () const { return image_view; }
 };
 
@@ -320,8 +306,10 @@ public:
     void wait_until_device_idle();
     VkFormat get_swapchain_surface_format() const;
 
-    std::shared_ptr<texture_2d> create_texture_2d(uint32_t width, uint32_t height, VkFormat format, const void * initial_data);
-    std::shared_ptr<texture_2d> create_texture_2d(const image & contents) { return create_texture_2d(contents.get_width(), contents.get_height(), contents.get_format(), contents.get_pixels()); }
+    std::shared_ptr<texture> create_texture_2d(uint32_t width, uint32_t height, VkFormat format, const void * initial_data);
+    std::shared_ptr<texture> create_texture_2d(const image & contents) { return create_texture_2d(contents.get_width(), contents.get_height(), contents.get_format(), contents.get_pixels()); }
+    std::shared_ptr<texture> create_texture_cube(const image & posx, const image & negx, const image & posy, const image & negy, const image & posz, const image & negz);
+
     std::shared_ptr<render_pass> create_render_pass(array_view<VkAttachmentDescription> color_attachments, std::optional<VkAttachmentDescription> depth_attachment);
     std::shared_ptr<framebuffer> create_framebuffer(std::shared_ptr<const render_pass> render_pass, array_view<VkImageView> attachments, uint2 dims);
 

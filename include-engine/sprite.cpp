@@ -79,8 +79,6 @@ sprite_sheet bake_font_bitmap(float pixel_height, int first_char, int num_chars)
         const int gw = x1-x0, gh = y1-y0;
         if(x + gw + 1 >= sprites.sheet.get_width()) y = bottom_y, x = 1; // advance to next row
         if(y + gh + 1 >= sprites.sheet.get_height()) throw std::runtime_error("out of space in image");
-        STBTT_assert(x+gw < pw);
-        STBTT_assert(y+gh < ph);
 
         stbtt_MakeGlyphBitmap(&f, reinterpret_cast<uint8_t *>(sprites.sheet.get_pixels()+x+y*sprites.sheet.get_width()), gw,gh, sprites.sheet.get_width(), scale,scale, g);
         sprites.glyphs[first_char+i].x0 = x;

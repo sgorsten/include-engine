@@ -73,11 +73,11 @@ namespace game
         std::shared_ptr<gfx_mesh> unit1_mesh;
         std::shared_ptr<gfx_mesh> bullet_mesh;
         std::shared_ptr<gfx_mesh> particle_mesh;
-        std::shared_ptr<texture_2d> terrain_tex;
-        std::shared_ptr<texture_2d> unit0_tex;
-        std::shared_ptr<texture_2d> unit1_tex;
-        std::shared_ptr<texture_2d> bullet_tex;
-        std::shared_ptr<texture_2d> particle_tex;
+        std::shared_ptr<texture> terrain_tex;
+        std::shared_ptr<texture> unit0_tex;
+        std::shared_ptr<texture> unit1_tex;
+        std::shared_ptr<texture> bullet_tex;
+        std::shared_ptr<texture> particle_tex;
         std::shared_ptr<sampler> linear_sampler;
 
         resources(renderer & r, std::shared_ptr<scene_contract> contract);

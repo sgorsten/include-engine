@@ -63,23 +63,23 @@ int main() try
     renderer r {[](const char * message) { std::cerr << "validation layer: " << message << std::endl; }};
 
     // Create our textures
-    texture_2d black_tex(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({0,0,0,255}));
-    texture_2d gray_tex(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({128,128,128,255}));
-    texture_2d flat_tex(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({128,128,255,255}));
-    texture_2d helmet_albedo(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-albedo.jpg"));
-    texture_2d helmet_normal(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-normal.jpg"));
-    texture_2d helmet_metallic(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/helmet-metallic.jpg"));
-    texture_2d mutant_albedo(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/mutant-albedo.jpg"));
-    texture_2d mutant_normal(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/mutant-normal.jpg"));
-    texture_2d akai_albedo(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/akai-albedo.jpg"));
-    texture_2d akai_normal(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/akai-normal.jpg"));
-    texture_2d map_2_island(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/map_2_island.jpg"));
-    texture_2d map_2_objects(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/map_2_objects.jpg"));
-    texture_2d map_2_terrain(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/map_2_terrain.jpg"));
-    texture_cube env_tex(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, 
-        load_image("assets/posx.jpg"), load_image("assets/negx.jpg"), 
-        load_image("assets/posy.jpg"), load_image("assets/negy.jpg"),
-        load_image("assets/posz.jpg"), load_image("assets/negz.jpg"));
+    auto black_tex = r.create_texture_2d(generate_single_color_image({0,0,0,255}));
+    auto gray_tex = r.create_texture_2d(generate_single_color_image({128,128,128,255}));
+    auto flat_tex = r.create_texture_2d(generate_single_color_image({128,128,255,255}));
+    auto helmet_albedo = r.create_texture_2d(load_image("assets/helmet-albedo.jpg", true));
+    auto helmet_normal = r.create_texture_2d(load_image("assets/helmet-normal.jpg", true));
+    auto helmet_metallic = r.create_texture_2d(load_image("assets/helmet-metallic.jpg", true));
+    auto mutant_albedo = r.create_texture_2d(load_image("assets/mutant-albedo.jpg", true));
+    auto mutant_normal = r.create_texture_2d(load_image("assets/mutant-normal.jpg", true));
+    auto akai_albedo = r.create_texture_2d(load_image("assets/akai-albedo.jpg", true));
+    auto akai_normal = r.create_texture_2d(load_image("assets/akai-normal.jpg", true));
+    auto map_2_island = r.create_texture_2d(load_image("assets/map_2_island.jpg", true));
+    auto map_2_objects = r.create_texture_2d(load_image("assets/map_2_objects.jpg", true));
+    auto map_2_terrain = r.create_texture_2d(load_image("assets/map_2_terrain.jpg", true));
+    auto env_tex = r.create_texture_cube(
+        load_image("assets/posx.jpg", true), load_image("assets/negx.jpg", true), 
+        load_image("assets/posy.jpg", true), load_image("assets/negy.jpg", true),
+        load_image("assets/posz.jpg", true), load_image("assets/negz.jpg", true));
 
     // Create our sampler
     VkSamplerCreateInfo sampler_info = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -204,9 +204,9 @@ int main() try
 
             scene_descriptor_set helmet_descriptors {pool, *helmet_pipeline};
             helmet_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{30, 0, 20}), helmet_mesh.m.bones[0].initial_pose.get_local_transform(), helmet_mesh.m.bones[0].model_to_bone_matrix)}));
-            helmet_descriptors.write_combined_image_sampler(1, 0, sampler, helmet_albedo);
-            helmet_descriptors.write_combined_image_sampler(2, 0, sampler, helmet_normal);
-            helmet_descriptors.write_combined_image_sampler(3, 0, sampler, helmet_metallic);
+            helmet_descriptors.write_combined_image_sampler(1, 0, sampler, *helmet_albedo);
+            helmet_descriptors.write_combined_image_sampler(2, 0, sampler, *helmet_normal);
+            helmet_descriptors.write_combined_image_sampler(3, 0, sampler, *helmet_metallic);
             list.draw(helmet_descriptors, helmet_mesh);
 
             if(++anim_frame >= mutant_mesh.m.animations[0].keyframes.size()) anim_frame = 0;
@@ -218,35 +218,35 @@ int main() try
 
             auto mutant = list.descriptor_set(*skinned_pipeline);
             mutant.write_uniform_buffer(0, 0, podata);
-            mutant.write_combined_image_sampler(1, 0, sampler, mutant_albedo);
-            mutant.write_combined_image_sampler(2, 0, sampler, mutant_normal);
-            mutant.write_combined_image_sampler(3, 0, sampler, black_tex);
+            mutant.write_combined_image_sampler(1, 0, sampler, *mutant_albedo);
+            mutant.write_combined_image_sampler(2, 0, sampler, *mutant_normal);
+            mutant.write_combined_image_sampler(3, 0, sampler, *black_tex);
             list.draw(mutant, mutant_mesh, {0,1,3});
 
             auto akai = list.descriptor_set(*skinned_pipeline);
             akai.write_uniform_buffer(0, 0, podata);
-            akai.write_combined_image_sampler(1, 0, sampler, akai_albedo);
-            akai.write_combined_image_sampler(2, 0, sampler, akai_normal);
-            akai.write_combined_image_sampler(3, 0, sampler, black_tex);
+            akai.write_combined_image_sampler(1, 0, sampler, *akai_albedo);
+            akai.write_combined_image_sampler(2, 0, sampler, *akai_normal);
+            akai.write_combined_image_sampler(3, 0, sampler, *black_tex);
             list.draw(akai, mutant_mesh, {2});
        
             auto box = list.descriptor_set(*static_pipeline);
             box.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{-30,0,20}), scaling_matrix(float3{4,4,4}))}));
-            box.write_combined_image_sampler(1, 0, sampler, gray_tex);
-            box.write_combined_image_sampler(2, 0, sampler, flat_tex);
-            box.write_combined_image_sampler(3, 0, sampler, black_tex);
+            box.write_combined_image_sampler(1, 0, sampler, *gray_tex);
+            box.write_combined_image_sampler(2, 0, sampler, *flat_tex);
+            box.write_combined_image_sampler(3, 0, sampler, *black_tex);
             list.draw(box, box_mesh);
         
             for(size_t i=0; i<sands_mesh.m.materials.size(); ++i)
             {
                 auto sands = list.descriptor_set(*static_pipeline);
                 sands.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{0,27,-64}), scaling_matrix(float3{10,10,10}))}));
-                if(sands_mesh.m.materials[i].name == "map_2_island1") sands.write_combined_image_sampler(1, 0, sampler, map_2_island);
-                else if(sands_mesh.m.materials[i].name == "map_2_object1") sands.write_combined_image_sampler(1, 0, sampler, map_2_objects);
-                else if(sands_mesh.m.materials[i].name == "map_2_terrain1") sands.write_combined_image_sampler(1, 0, sampler, map_2_terrain);
-                else sands.write_combined_image_sampler(1, 0, sampler, gray_tex);
-                sands.write_combined_image_sampler(2, 0, sampler, flat_tex);
-                sands.write_combined_image_sampler(3, 0, sampler, black_tex);
+                if(sands_mesh.m.materials[i].name == "map_2_island1") sands.write_combined_image_sampler(1, 0, sampler, *map_2_island);
+                else if(sands_mesh.m.materials[i].name == "map_2_object1") sands.write_combined_image_sampler(1, 0, sampler, *map_2_objects);
+                else if(sands_mesh.m.materials[i].name == "map_2_terrain1") sands.write_combined_image_sampler(1, 0, sampler, *map_2_terrain);
+                else sands.write_combined_image_sampler(1, 0, sampler, *gray_tex);
+                sands.write_combined_image_sampler(2, 0, sampler, *flat_tex);
+                sands.write_combined_image_sampler(3, 0, sampler, *black_tex);
                 list.draw(sands, sands_mesh, {i});
             }
         }
@@ -265,7 +265,7 @@ int main() try
 
         auto per_scene = list.shared_descriptor_set(0);
         per_scene.write_uniform_buffer(0, 0, list.upload_uniforms(ps));      
-        per_scene.write_combined_image_sampler(1, 0, sampler, env_tex);
+        per_scene.write_combined_image_sampler(1, 0, sampler, *env_tex);
 
         auto per_view = list.shared_descriptor_set(1);
         per_view.write_uniform_buffer(0, 0, list.upload_uniforms(pv));
