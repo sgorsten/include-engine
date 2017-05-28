@@ -3,8 +3,11 @@
 
 #include "data-types.h"
 
+std::vector<uint8_t> load_binary_file(const char * filename);
+std::vector<char> load_text_file(const char * filename);
+
 image generate_single_color_image(const byte4 & color);
-image load_image(const char * filename);
+image load_image(const char * filename, bool is_linear);
 
 mesh generate_fullscreen_quad();
 mesh generate_box_mesh(const float3 & bmin, const float3 & bmax);

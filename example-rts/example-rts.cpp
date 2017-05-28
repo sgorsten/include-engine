@@ -8,10 +8,13 @@
 #define STB_TRUETYPE_IMPLEMENTATION  // force following include to generate implementation
 #include "../3rdparty/stb/stb_truetype.h"
 
-unsigned char ttf_buffer[1<<20];
-unsigned char temp_bitmap[512*512];
-
-stbtt_bakedchar cdata[96]; // ASCII 32..126 is 95 glyphs
+typedef struct
+{
+   int x0,y0,x1,y1; // coordinates of bbox in bitmap
+   int xoff,yoff;
+   int xadvance;
+} glyph_info;
+glyph_info cdata[96]; // ASCII 32..126 is 95 glyphs
 
 VkAttachmentDescription make_attachment_description(VkFormat format, VkSampleCountFlagBits samples, VkAttachmentLoadOp load_op, VkImageLayout initial_layout=VK_IMAGE_LAYOUT_UNDEFINED, VkAttachmentStoreOp store_op=VK_ATTACHMENT_STORE_OP_DONT_CARE, VkImageLayout final_layout=VK_IMAGE_LAYOUT_UNDEFINED)
 {
@@ -109,6 +112,42 @@ struct gui_context
     }
 };
 
+static image bake_font_bitmap(float pixel_height, int first_char, int num_chars)
+{
+    image im {{512,512}, VK_FORMAT_R8_UNORM};
+    auto data = load_binary_file("C:/windows/fonts/arial.ttf");
+    stbtt_fontinfo f {};
+    if(!stbtt_InitFont(&f, data.data(), 0)) throw std::runtime_error("stbtt_InitFont(...) failed");
+    memset(im.get_pixels(), 0, im.get_width()*im.get_height());
+    const float scale = stbtt_ScaleForPixelHeight(&f, pixel_height);
+    int x=1, y=1, bottom_y=1;
+    for(int i=0; i<num_chars; ++i)
+    {
+        const int g = stbtt_FindGlyphIndex(&f, first_char + i);
+        int advance, lsb, x0,y0,x1,y1;
+        stbtt_GetGlyphHMetrics(&f, g, &advance, &lsb);
+        stbtt_GetGlyphBitmapBox(&f, g, scale,scale, &x0,&y0,&x1,&y1);
+
+        const int gw = x1-x0, gh = y1-y0;
+        if(x + gw + 1 >= im.get_width()) y = bottom_y, x = 1; // advance to next row
+        if(y + gh + 1 >= im.get_height()) throw std::runtime_error("out of space in image");
+        STBTT_assert(x+gw < pw);
+        STBTT_assert(y+gh < ph);
+
+        stbtt_MakeGlyphBitmap(&f, reinterpret_cast<uint8_t *>(im.get_pixels()+x+y*im.get_width()), gw,gh, im.get_width(), scale,scale, g);
+        cdata[i].x0 = x;
+        cdata[i].y0 = y;
+        cdata[i].x1 = x + gw;
+        cdata[i].y1 = y + gh;
+        cdata[i].xoff = x0;
+        cdata[i].yoff = y0;
+        cdata[i].xadvance = static_cast<int>(std::round(scale * advance));
+        x += gw + 1;
+        if(y+gh+1 > bottom_y) bottom_y = y+gh+1;
+    }
+    return im;
+}
+
 int main() try
 {
     constexpr coord_system vk_coords {coord_axis::right, coord_axis::down, coord_axis::forward};
@@ -117,9 +156,7 @@ int main() try
 
     renderer r {[](const char * message) { std::cerr << "validation layer: " << message << std::endl; }};
   
-    fread(ttf_buffer, 1, 1<<20, fopen("c:/windows/fonts/arial.ttf", "rb"));
-    stbtt_BakeFontBitmap(ttf_buffer,0, 32.0, temp_bitmap,512,512, 32,96, cdata); // no guarantee this fits!
-    texture_2d font_tex(r.ctx, 512, 512, VK_FORMAT_R8_UNORM, temp_bitmap);
+    texture_2d font_tex(r.ctx, bake_font_bitmap(32.0, 32, 96));
 
     // Create our sampler
     VkSamplerCreateInfo image_sampler_info {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};

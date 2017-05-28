@@ -15,6 +15,9 @@
 #include "linalg.h"         // For float3, etc...
 using namespace linalg::aliases;
 
+// This provides a subset of the functionality of std::byte
+enum class byte : uint8_t {};
+
 // Abstract over determining the number of elements in a collection
 template<class T, size_t N> constexpr size_t countof(const T (&)[N]) { return N; }
 template<class T, size_t N> constexpr size_t countof(const std::array<T,N> &) { return N; }
@@ -39,20 +42,23 @@ template<class T> const T * begin(const array_view<T> & view) { return view.begi
 template<class T> const T * end(const array_view<T> & view) { return view.end(); }
 
 // A container for storing contiguous 2D bitmaps of pixels
+size_t compute_image_size(int2 dims, VkFormat formats);
 struct std_free_deleter { void operator() (void * p) { std::free(p); } };
 class image
 {
-    int width {}, height {};
-    std::unique_ptr<void, std_free_deleter> pixels;
+    int2 dims;
+    VkFormat format {VK_FORMAT_UNDEFINED};
+    std::unique_ptr<byte, std_free_deleter> pixels;
 public:
     image() {}
-    image(int width, int height);
-    image(int width, int height, std::unique_ptr<void, std_free_deleter> pixels);
+    image(int2 dims, VkFormat format);
+    image(int2 dims, VkFormat format, std::unique_ptr<byte, std_free_deleter> pixels);
 
-    int get_width() const { return width; }
-    int get_height() const { return height; }
-    int get_channels() const { return 4; }
-    const void * get_pixels() const { return pixels.get(); }
+    int get_width() const { return dims.x; }
+    int get_height() const { return dims.y; }
+    VkFormat get_format() const { return format; }
+    const byte * get_pixels() const { return pixels.get(); }
+    byte * get_pixels() { return pixels.get(); }
 };
 
 // A value type representing an abstract direction vector in 3D space, independent of any coordinate system

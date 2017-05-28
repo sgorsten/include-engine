@@ -242,11 +242,11 @@ game::resources::resources(renderer & r, std::shared_ptr<scene_contract> contrac
                                                std::make_unique<static_buffer>(r.ctx, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(particle_indices), particle_indices), 6);
 
     // Load textures
-    terrain_tex = std::make_shared<texture_2d>(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({127,85,60,255}));
-    unit0_tex = std::make_shared<texture_2d>(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, load_image("assets/f44a.jpg"));
-    unit1_tex = std::make_shared<texture_2d>(r.ctx, VK_FORMAT_R8G8B8A8_SRGB, load_image("assets/cf105.jpg"));
-    bullet_tex = std::make_shared<texture_2d>(r.ctx, VK_FORMAT_R8G8B8A8_UNORM, generate_single_color_image({255,255,255,255}));
-    particle_tex = std::make_shared<texture_2d>(r.ctx, VK_FORMAT_R8G8B8A8_SRGB, load_image("assets/particle.png"));
+    terrain_tex = std::make_shared<texture_2d>(r.ctx, generate_single_color_image({127,85,60,255}));
+    unit0_tex = std::make_shared<texture_2d>(r.ctx, load_image("assets/f44a.jpg",true));
+    unit1_tex = std::make_shared<texture_2d>(r.ctx, load_image("assets/cf105.jpg",false));
+    bullet_tex = std::make_shared<texture_2d>(r.ctx, generate_single_color_image({255,255,255,255}));
+    particle_tex = std::make_shared<texture_2d>(r.ctx, load_image("assets/particle.png",false));
 
     // Create sampler
     VkSamplerCreateInfo sampler_info {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};

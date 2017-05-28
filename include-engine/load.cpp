@@ -5,23 +5,46 @@
 #include <sstream>
 #include <algorithm>
 
+std::vector<uint8_t> load_binary_file(const char * filename)
+{
+    FILE * f = fopen(filename, "rb");
+    if(!f) throw std::runtime_error(std::string("failed to open ") + filename);
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    std::vector<uint8_t> buffer(len);
+    buffer.resize(fread(buffer.data(), 1, buffer.size(), f));
+    return buffer;
+}
+
+std::vector<char> load_text_file(const char * filename)
+{
+    FILE * f = fopen(filename, "r");
+    if(!f) throw std::runtime_error(std::string("failed to open ") + filename);
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    std::vector<char> buffer(len);
+    buffer.resize(fread(buffer.data(), 1, buffer.size(), f));
+    return buffer;
+}
+
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
 image generate_single_color_image(const byte4 & color)
 {
-    auto p = std::malloc(sizeof(color));
-    if(!p) throw std::bad_alloc();
-    memcpy(p, &color, sizeof(color));
-    return image{1, 1, std::unique_ptr<void, std_free_deleter>(p)};
+    image im {{1,1}, VK_FORMAT_R8G8B8A8_UNORM};
+    memcpy(im.get_pixels(), &color, sizeof(color));
+    return im;
 }
 
-image load_image(const char * filename) 
+image load_image(const char * filename, bool is_linear) 
 { 
-    int x, y;
-    auto p = stbi_load(filename, &x, &y, nullptr, 4);
+    int2 dims;
+    auto p = stbi_load(filename, &dims.x, &dims.y, nullptr, 4);
     if(!p) throw std::runtime_error(std::string("failed to load ") + filename);
-    return image{x, y, std::unique_ptr<void, std_free_deleter>(p)};
+    return image{dims, is_linear ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_R8G8B8A8_SRGB, std::unique_ptr<byte, std_free_deleter>(reinterpret_cast<byte *>(p))};
 }
 
 mesh compute_tangent_basis(mesh && m)
@@ -356,18 +379,6 @@ shader_info load_shader_info_from_spirv(array_view<uint32_t> words)
 #include "../3rdparty/glslang/glslang/Public/ShaderLang.h"
 #include "../3rdparty/glslang/StandAlone/ResourceLimits.h"
 #include "../3rdparty/glslang/SPIRV/GlslangToSpv.h"
-
-std::vector<char> load_text_file(const char * filename)
-{
-    FILE * f = fopen(filename, "r");
-    if(!f) throw std::runtime_error(std::string("failed to open ") + filename);
-    fseek(f, 0, SEEK_END);
-    long len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    std::vector<char> buffer(len);
-    buffer.resize(fread(buffer.data(), 1, buffer.size(), f));
-    return buffer;
-}
 
 struct shader_compiler_impl : glslang::TShader::Includer
 {

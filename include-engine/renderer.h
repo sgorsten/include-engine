@@ -61,7 +61,7 @@ class texture_2d
     VkDeviceMemory device_memory;
 public:
     texture_2d(std::shared_ptr<context> ctx, uint32_t width, uint32_t height, VkFormat format, const void * initial_data);
-    texture_2d(std::shared_ptr<context> ctx, VkFormat format, const ::image & image) : texture_2d(ctx, image.get_width(), image.get_height(), format, image.get_pixels()) {}
+    texture_2d(std::shared_ptr<context> ctx, const ::image & image) : texture_2d(ctx, image.get_width(), image.get_height(), image.get_format(), image.get_pixels()) {}
     ~texture_2d();
 
     VkImage get_image() { return image; }

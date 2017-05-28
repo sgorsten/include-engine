@@ -487,7 +487,7 @@ texture_2d::texture_2d(std::shared_ptr<context> ctx, uint32_t width, uint32_t he
     image_view_info.subresourceRange.layerCount = 1;
     check(vkCreateImageView(ctx->device, &image_view_info, nullptr, &image_view));
 
-    memcpy(ctx->mapped_staging_memory, initial_data, width*height*4);
+    memcpy(ctx->mapped_staging_memory, initial_data, compute_image_size(int2(width,height), format));
 
     auto cmd = ctx->begin_transient();
     transition_layout(cmd, image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
