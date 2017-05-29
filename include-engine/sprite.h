@@ -74,6 +74,7 @@ struct gui_context
 
     void begin_frame();
 
+    void draw_sprite_sheet(const int2 & p);
     void draw_sprite(const rect & r, float s0, float t0, float s1, float t1, const float4 & color);
 
     void draw_rect(const rect & r, const float4 & color);

@@ -178,6 +178,7 @@ int main() try
         gui_context gui {gs, gui_list, win.get_dims()};
         auto r = rect{0,0,(int)win.get_dims().x,(int)win.get_dims().y};
         gui.begin_frame();
+        //gui.draw_sprite_sheet({10,10});
         r = r.take_y1(250);
         auto r0 = r.take_x0(250); gui.draw_partial_rounded_rect(r0, 32, {0,0,0,0.5f}, false, true, false, false); gui.draw_partial_rounded_rect(r0.adjusted(0,4,-4,0), 28, {0,0,0,0.5f}, false, true, false, false);
         auto r1 = r.take_x1(350); gui.draw_partial_rounded_rect(r1, 32, {0,0,0,0.5f}, true, false, false, false); gui.draw_partial_rounded_rect(r1.adjusted(4,4,0,0), 28, {0,0,0,0.5f}, true, false, false, false);

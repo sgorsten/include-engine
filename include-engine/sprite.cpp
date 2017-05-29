@@ -13,31 +13,50 @@ size_t sprite_sheet::add_sprite(image img, int border)
 
 void sprite_sheet::prepare_sheet()
 {
-    sheet = image{{512,512}, VK_FORMAT_R8_UNORM};
-    memset(sheet.get_pixels(), 0, sheet.get_width()*sheet.get_height());
-    int x=1, y=1, bottom_y=1;
-    for(auto & s : sprites)
+    // Sort glyphs by descending height, then descending width
+    std::vector<sprite *> sorted_sprites;
+    for(auto & g : sprites) sorted_sprites.push_back(&g);
+    std::sort(begin(sorted_sprites), end(sorted_sprites), [](const sprite * a, const sprite * b)
     {
-        if(x + s.img.get_width() > sheet.get_width()) 
+        return std::make_tuple(a->img.get_height(), a->img.get_width()) > std::make_tuple(b->img.get_height(), b->img.get_width());
+    });
+
+    int2 tex_dims = {64, 64};
+    while(true)
+    {
+        sheet = image{tex_dims, VK_FORMAT_R8_UNORM};
+        memset(sheet.get_pixels(), 0, sheet.get_width()*sheet.get_height());
+        bool bad_pack = false;
+        int2 used {0, 0};
+        int next_y = 0;
+        for(auto * s : sorted_sprites)
         {
-            y = bottom_y;
-            x = 1;
+            if(used.x + s->img.get_width() > sheet.get_width()) used = {0, next_y};
+            if(used.x + s->img.get_width() > sheet.get_width() || used.y + s->img.get_height() > sheet.get_height()) 
+            {
+                bad_pack = true;
+                break;
+            }
+
+            s->s0 = static_cast<float>(used.x+s->border)/sheet.get_width();
+            s->t0 = static_cast<float>(used.y+s->border)/sheet.get_height();
+            s->s1 = static_cast<float>(used.x+s->img.get_width()-s->border)/sheet.get_width();
+            s->t1 = static_cast<float>(used.y+s->img.get_height()-s->border)/sheet.get_height();
+
+            for(int i=0; i<s->img.get_height(); ++i)
+            {
+                memcpy(sheet.get_pixels()+sheet.get_width()*(used.y+i)+used.x, s->img.get_pixels()+s->img.get_width()*i, s->img.get_width());
+            }
+
+            used.x += s->img.get_width();
+            next_y = std::max(next_y, used.y + s->img.get_height());
         }
-        if(y + s.img.get_height() > sheet.get_height()) throw std::runtime_error("out of space in image");
-
-        // TODO: Factor border in
-        s.s0 = static_cast<float>(x+s.border)/sheet.get_width();
-        s.t0 = static_cast<float>(y+s.border)/sheet.get_height();
-        s.s1 = static_cast<float>(x+s.img.get_width()-s.border)/sheet.get_width();
-        s.t1 = static_cast<float>(y+s.img.get_height()-s.border)/sheet.get_height();
-
-        for(int i=0; i<s.img.get_height(); ++i)
+        if(bad_pack)
         {
-            memcpy(sheet.get_pixels()+sheet.get_width()*(y+i)+x, s.img.get_pixels()+s.img.get_width()*i, s.img.get_width());
+            if(tex_dims.x == tex_dims.y) tex_dims.x *= 2;
+            else tex_dims.y *= 2;
         }
-
-        x += s.img.get_width();
-        bottom_y = std::max(bottom_y, y + s.img.get_height());
+        else break;
     }
 }
 
@@ -144,6 +163,11 @@ void gui_context::draw_sprite(const rect & r, float s0, float t0, float s1, floa
     list.write_indices(num_quads*4+uint3{0,1,2});
     list.write_indices(num_quads*4+uint3{0,2,3});
     ++num_quads;
+}
+
+void gui_context::draw_sprite_sheet(const int2 & p)
+{
+    draw_sprite({p.x,p.y,p.x+sprites.sheet.sheet.get_width(),p.y+sprites.sheet.sheet.get_height()}, 0, 0, 1, 1, {1,1,1,1});
 }
 
 void gui_context::draw_rect(const rect & r, const float4 & color)
