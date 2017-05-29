@@ -21,24 +21,15 @@ struct fps_camera
     float4x4 get_view_matrix(const coord_system & c) const { return pose_matrix(inverse(get_pose(c))); }
 };
 
-void begin_render_pass(VkCommandBuffer cmd, framebuffer & fb)
+void draw_fullscreen_pass(VkCommandBuffer cmd, framebuffer & fb, const scene_descriptor_set & descriptors, const gfx_mesh & fullscreen_quad, const draw_list * additional_draws=nullptr)
 {
     vkCmdBeginRenderPass(cmd, fb.get_render_pass().get_vk_handle(), fb.get_vk_handle(), fb.get_bounds(), {});
-}
-
-void draw_fullscreen_quad(VkCommandBuffer cmd, const render_pass & pass, const scene_descriptor_set & descriptors, const gfx_mesh & fullscreen_quad)
-{
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, descriptors.get_pipeline_for_render_pass(pass));
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, descriptors.get_pipeline_for_render_pass(fb.get_render_pass()));
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, descriptors.get_pipeline_layout(), descriptors.get_descriptor_set_offset(), {descriptors.get_descriptor_set()}, {});
     vkCmdBindVertexBuffers(cmd, 0, {*fullscreen_quad.vertex_buffer}, {0});
     vkCmdBindIndexBuffer(cmd, *fullscreen_quad.index_buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT32);
     vkCmdDrawIndexed(cmd, fullscreen_quad.index_count, 1, 0, 0, 0);
-}
-
-void draw_fullscreen_pass(VkCommandBuffer cmd, framebuffer & fb, const scene_descriptor_set & descriptors, const gfx_mesh & fullscreen_quad)
-{
-    begin_render_pass(cmd, fb);
-    draw_fullscreen_quad(cmd, fb.get_render_pass(), descriptors, fullscreen_quad);
+    if(additional_draws) additional_draws->write_commands(cmd, fb.get_render_pass(), {});
     vkCmdEndRenderPass(cmd); 
 }
 
@@ -48,9 +39,12 @@ int main() try
 
     game::state g;
 
-    renderer r {[](const char * message) { std::cerr << "validation layer: " << message << std::endl; }};
-  
-    auto sprites = bake_font_bitmap(32.0, 32, 96);
+    sprite_sheet sprites;
+    gui_sprites gs {sprites};
+    const font_face font {sprites, "C:/windows/fonts/arial.ttf", 32.0f};
+    sprites.prepare_sheet();
+
+    renderer r {[](const char * message) { std::cerr << "validation layer: " << message << std::endl; }}; 
     sprites.texture = r.create_texture_2d(sprites.sheet);
 
     // Create our sampler
@@ -181,9 +175,14 @@ int main() try
         game::draw(list, ps, res, g);
 
         draw_list gui_list {pool, *post_contract};
-        gui_context gui {sprites, gui_list, win.get_dims()};
+        gui_context gui {gs, gui_list, win.get_dims()};
+        auto r = rect{0,0,(int)win.get_dims().x,(int)win.get_dims().y};
         gui.begin_frame();
-        gui.draw_shadowed_text({1,1,1,1}, 50, 50, "This is a test of font rendering");
+        r = r.take_y1(250);
+        auto r0 = r.take_x0(250); gui.draw_partial_rounded_rect(r0, 32, {0,0,0,0.5f}, false, true, false, false); gui.draw_partial_rounded_rect(r0.adjusted(0,4,-4,0), 28, {0,0,0,0.5f}, false, true, false, false);
+        auto r1 = r.take_x1(350); gui.draw_partial_rounded_rect(r1, 32, {0,0,0,0.5f}, true, false, false, false); gui.draw_partial_rounded_rect(r1.adjusted(4,4,0,0), 28, {0,0,0,0.5f}, true, false, false, false);
+        auto r2 = r.take_y1(200); gui.draw_rect(r2, {0,0,0,0.5f}); gui.draw_rect(r2.adjusted(-4,4,4,0), {0,0,0,0.5f});
+        gui.draw_shadowed_text(font, {1,1,1,1}, r2.x0+10, r2.y0+40, "This is a test of font rendering");
         gui.end_frame(*image_mtl, image_sampler);
 
         // Set up per-scene and per-view descriptor sets
@@ -225,10 +224,7 @@ int main() try
         add.write_combined_image_sampler(1, 0, image_sampler, color1.get_image_view());
 
         const uint32_t index = win.begin();
-        begin_render_pass(cmd, *swapchain_framebuffers[index]);
-        draw_fullscreen_quad(cmd, swapchain_framebuffers[index]->get_render_pass(), add, quad_mesh);
-        gui_list.write_commands(cmd, swapchain_framebuffers[index]->get_render_pass(), {});
-        vkCmdEndRenderPass(cmd); 
+        draw_fullscreen_pass(cmd, *swapchain_framebuffers[index], add, quad_mesh, &gui_list);
         check(vkEndCommandBuffer(cmd));
         win.end(index, {cmd}, pool.get_fence());
     }
