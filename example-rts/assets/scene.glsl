@@ -18,7 +18,7 @@ layout(set=0, binding=0) uniform PerScene
 	point_light u_point_lights[64];
 	int u_num_point_lights;
 };
-layout(set=0, binding=1) uniform sampler2D u_shadow_map;
+layout(set=0, binding=1) uniform sampler2DShadow u_shadow_map;
 
 ////////////////////////////////////////////////////////////////////////////
 // Per-view uniforms: Used to define the world-to-viewport transformation //

@@ -17,7 +17,7 @@ namespace game
         float2 direction;
         float cooldown;
 
-        float3 get_position() const { return {position,0}; }
+        float3 get_position() const { return {position,0.5f}; }
         float3 get_direction() const { return {direction,0}; }
         float4 get_orientation() const { return rotation_quat(coords.get_axis(coord_axis::north), get_direction()); }
         float_pose get_pose() const { return {get_orientation(), get_position()}; }
@@ -30,7 +30,7 @@ namespace game
         float2 position;
         float2 target;
 
-        float3 get_position() const { return {position,0.25f}; }
+        float3 get_position() const { return {position,0.75f}; }
         float3 get_direction() const { return {normalize(target-position),0}; }
         float4 get_orientation() const { return rotation_quat(coords.get_axis(coord_axis::north), get_direction()); }
         float_pose get_pose() const { return {get_orientation(), get_position()}; }

@@ -60,14 +60,16 @@ int main() try
 
     // Create our sampler
     VkSamplerCreateInfo shadow_sampler_info {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    image_sampler_info.magFilter = VK_FILTER_NEAREST;
-    image_sampler_info.minFilter = VK_FILTER_NEAREST;
-    image_sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    image_sampler_info.minLod = 0;
-    image_sampler_info.maxLod = 1;
-    image_sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-    image_sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-    image_sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    shadow_sampler_info.magFilter = VK_FILTER_LINEAR;
+    shadow_sampler_info.minFilter = VK_FILTER_LINEAR;
+    shadow_sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    shadow_sampler_info.minLod = 0;
+    shadow_sampler_info.maxLod = 0;
+    shadow_sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    shadow_sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    shadow_sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    shadow_sampler_info.compareEnable = VK_TRUE;
+    shadow_sampler_info.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     sampler shadow_sampler {r.ctx, shadow_sampler_info};
 
     // Set up scene contract
@@ -192,7 +194,7 @@ int main() try
         shadow_camera.pitch = -1.57f;
 
         //camera = shadow_camera;
-        
+        const float4x4 shadow_bias_matrix = {{0.5f,0,0,0},{0,0.5f,0,0},{0,0,1,0},{0.5f,0.5f,0,1}};
         const auto shadow_proj_matrix = mul(linalg::perspective_matrix(1.57f, 1.0f, 20.0f, 60.0f, linalg::pos_z, linalg::zero_to_one), make_transform_4x4(game::coords, vk_coords)); 
         game::per_view_uniforms pv_shadow;
         pv_shadow.view_proj_matrix = mul(shadow_proj_matrix, shadow_camera.get_view_matrix(game::coords));
@@ -201,7 +203,7 @@ int main() try
         pv_shadow.eye_y_axis = qrot(shadow_camera.get_orientation(game::coords), game::coords.get_down());
 
         game::per_scene_uniforms ps {};
-        ps.shadow_map_matrix = pv_shadow.view_proj_matrix;
+        ps.shadow_map_matrix = mul(shadow_bias_matrix, pv_shadow.view_proj_matrix);
         ps.shadow_light_pos = pv_shadow.eye_position;
         ps.ambient_light = {0.01f,0.01f,0.01f};
         ps.light_direction = normalize(float3{1,-2,5});
