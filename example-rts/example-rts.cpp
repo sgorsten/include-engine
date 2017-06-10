@@ -52,20 +52,36 @@ int main() try
     image_sampler_info.magFilter = VK_FILTER_LINEAR;
     image_sampler_info.minFilter = VK_FILTER_LINEAR;
     image_sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    image_sampler_info.maxLod = 0;
     image_sampler_info.minLod = 0;
+    image_sampler_info.maxLod = 0;
     image_sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     image_sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sampler image_sampler {r.ctx, image_sampler_info};
 
+    // Create our sampler
+    VkSamplerCreateInfo shadow_sampler_info {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    image_sampler_info.magFilter = VK_FILTER_NEAREST;
+    image_sampler_info.minFilter = VK_FILTER_NEAREST;
+    image_sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    image_sampler_info.minLod = 0;
+    image_sampler_info.maxLod = 1;
+    image_sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    image_sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    image_sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    sampler shadow_sampler {r.ctx, shadow_sampler_info};
+
     // Set up scene contract
-    auto fb_render_pass = r.create_render_pass({make_attachment_description(VK_FORMAT_R16G16B16A16_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)}, make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED));
-    auto shadowmap_render_pass = r.create_render_pass({}, make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+    auto fb_render_pass = r.create_render_pass({make_attachment_description(VK_FORMAT_R16G16B16A16_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)}, 
+        make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED));
+    auto shadowmap_render_pass = r.create_render_pass({}, make_attachment_description(VK_FORMAT_D32_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_CLEAR, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL), true);
     auto post_render_pass = r.create_render_pass({make_attachment_description(VK_FORMAT_R16G16B16A16_SFLOAT, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)}, std::nullopt);
     auto final_render_pass = r.create_render_pass({make_attachment_description(r.get_swapchain_surface_format(), VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_ATTACHMENT_STORE_OP_STORE, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)}, std::nullopt);
 
     auto contract = r.create_contract({fb_render_pass, shadowmap_render_pass}, {
-        {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}}, 
+        {
+            {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT}, // PerScene uniform block
+            {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT} //uniform sampler2D u_shadow_map;
+        }, 
         {{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT}}
     });
     auto post_contract = r.create_contract({post_render_pass, final_render_pass}, {});
@@ -85,13 +101,15 @@ int main() try
     auto hgauss_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/hgauss.frag");
     auto vgauss_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/vgauss.frag");
     auto add_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/add.frag");
+    auto sample_frag_shader = r.create_shader(VK_SHADER_STAGE_FRAGMENT_BIT, "assets/sample.frag");
     
     auto image_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, image_frag_shader}, false, false, VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
     auto hipass_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, hipass_frag_shader}, false, false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
     auto hgauss_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, hgauss_frag_shader}, false, false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
     auto vgauss_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, vgauss_frag_shader}, false, false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
     auto add_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, add_frag_shader}, false, false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
-    
+    auto sample_mtl = r.create_material(post_contract, image_vertex_format, {image_vert_shader, sample_frag_shader}, false, false, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
+
     // Load our game resources
     const game::resources res {r, contract};
 
@@ -101,9 +119,11 @@ int main() try
     render_target color1 {r.ctx, win.get_dims(), VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
     render_target color2 {r.ctx, win.get_dims(), VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT};
     auto depth = make_depth_buffer(r.ctx, win.get_dims());
+    render_target shadowmap {r.ctx, {2048,2048}, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT};
 
     // Create framebuffers
     auto main_framebuffer = r.create_framebuffer(fb_render_pass, {color.get_image_view(), depth.get_image_view()}, win.get_dims());
+    auto shadow_framebuffer = r.create_framebuffer(shadowmap_render_pass, {shadowmap.get_image_view()}, {2048,2048});
     auto aux_framebuffer1 = r.create_framebuffer(post_render_pass, {color1.get_image_view()}, win.get_dims());
     auto aux_framebuffer2 = r.create_framebuffer(post_render_pass, {color2.get_image_view()}, win.get_dims());
     std::vector<std::shared_ptr<framebuffer>> swapchain_framebuffers;
@@ -155,8 +175,7 @@ int main() try
         if(win.get_key(GLFW_KEY_A)) camera.position += qrot(camera.get_orientation(game::coords), game::coords.get_axis(coord_axis::west ) * (timestep * 50));
         if(win.get_key(GLFW_KEY_S)) camera.position += qrot(camera.get_orientation(game::coords), game::coords.get_axis(coord_axis::south) * (timestep * 50));
         if(win.get_key(GLFW_KEY_D)) camera.position += qrot(camera.get_orientation(game::coords), game::coords.get_axis(coord_axis::east ) * (timestep * 50));
-        
-        g.advance(timestep);
+        if(!win.get_key(GLFW_KEY_SPACE)) g.advance(timestep);
 
         // Determine matrices
         const auto proj_matrix = mul(linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one), make_transform_4x4(game::coords, vk_coords));        
@@ -167,7 +186,23 @@ int main() try
         pool.reset();
 
         // Generate a draw list for the scene
+        fps_camera shadow_camera;        
+        shadow_camera.position = {32,32,40};
+        shadow_camera.yaw = 0;
+        shadow_camera.pitch = -1.57f;
+
+        //camera = shadow_camera;
+        
+        const auto shadow_proj_matrix = mul(linalg::perspective_matrix(1.57f, 1.0f, 20.0f, 60.0f, linalg::pos_z, linalg::zero_to_one), make_transform_4x4(game::coords, vk_coords)); 
+        game::per_view_uniforms pv_shadow;
+        pv_shadow.view_proj_matrix = mul(shadow_proj_matrix, shadow_camera.get_view_matrix(game::coords));
+        pv_shadow.eye_position = shadow_camera.position;
+        pv_shadow.eye_x_axis = qrot(shadow_camera.get_orientation(game::coords), game::coords.get_right());
+        pv_shadow.eye_y_axis = qrot(shadow_camera.get_orientation(game::coords), game::coords.get_down());
+
         game::per_scene_uniforms ps {};
+        ps.shadow_map_matrix = pv_shadow.view_proj_matrix;
+        ps.shadow_light_pos = pv_shadow.eye_position;
         ps.ambient_light = {0.01f,0.01f,0.01f};
         ps.light_direction = normalize(float3{1,-2,5});
         ps.light_color = {0.9f,0.9f,0.9f};
@@ -195,14 +230,22 @@ int main() try
 
         auto per_scene = list.shared_descriptor_set(0);
         per_scene.write_uniform_buffer(0, 0, list.upload_uniforms(ps));      
+        per_scene.write_combined_image_sampler(1, 0, shadow_sampler, shadowmap.get_image_view(), VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
 
         auto per_view = list.shared_descriptor_set(1);
         per_view.write_uniform_buffer(0, 0, list.upload_uniforms(pv));
+
+        auto per_view_shadow = list.shared_descriptor_set(1);
+        per_view_shadow.write_uniform_buffer(0, 0, list.upload_uniforms(pv_shadow));
 
         VkCommandBuffer cmd = pool.allocate_command_buffer();
 
         VkCommandBufferBeginInfo begin_info {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
         vkBeginCommandBuffer(cmd, &begin_info);
+
+        vkCmdBeginRenderPass(cmd, shadowmap_render_pass->get_vk_handle(), shadow_framebuffer->get_vk_handle(), shadow_framebuffer->get_bounds(), {{1.0f, 0}});
+        list.write_commands(cmd, *shadowmap_render_pass, {per_scene, per_view_shadow});
+        vkCmdEndRenderPass(cmd); 
 
         vkCmdBeginRenderPass(cmd, fb_render_pass->get_vk_handle(), main_framebuffer->get_vk_handle(), main_framebuffer->get_bounds(), {{0, 0, 0, 1}, {1.0f, 0}});
         list.write_commands(cmd, *fb_render_pass, {per_scene, per_view});
@@ -223,7 +266,7 @@ int main() try
         scene_descriptor_set add {pool, *add_mtl};
         add.write_combined_image_sampler(0, 0, image_sampler, color.get_image_view());
         add.write_combined_image_sampler(1, 0, image_sampler, color1.get_image_view());
-
+        
         const uint32_t index = win.begin();
         draw_fullscreen_pass(cmd, *swapchain_framebuffers[index], add, quad_mesh, &gui_list);
         check(vkEndCommandBuffer(cmd));

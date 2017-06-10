@@ -162,6 +162,7 @@
     <None Include="assets\image.frag" />
     <None Include="assets\image.vert" />
     <None Include="assets\particle.vert" />
+    <None Include="assets\sample.frag" />
     <None Include="assets\scene.glsl" />
     <None Include="assets\shader.frag" />
     <None Include="assets\static.vert" />

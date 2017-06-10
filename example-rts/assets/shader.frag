@@ -29,9 +29,20 @@ void main()
 
 	// directional light
 	{
-		vec3 light_vec = u_light_direction;
-		float diffuse = max(dot(normal_vec, light_vec), 0);
-		light += albedo * u_light_color * diffuse;
+		vec4 r = u_shadow_map_matrix * vec4(position, 1);
+		vec3 rr = r.xyz/r.w;
+		if(rr.x < -1 || rr.y < -1 || rr.x > 1 || rr.y > 1)
+		{
+			f_color = vec4(0,0,0,1);
+			return;
+		}
+		float smd = texture(u_shadow_map, rr.xy*0.5+0.5).r;
+		if(rr.z < smd)
+		{
+			vec3 light_vec = normalize(u_shadow_light_pos - position); //u_light_direction;
+			float diffuse = max(dot(normal_vec, light_vec), 0);
+			light += albedo * u_light_color * diffuse;
+		}
 	}
 
 	for(int i=0; i<u_num_point_lights; ++i)

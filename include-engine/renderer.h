@@ -229,12 +229,14 @@ class render_pass
     VkRenderPass handle;
     size_t color_attachment_count;
     bool has_depth_attachment;
+    bool invert_faces;
 public:
-    render_pass(std::shared_ptr<context> ctx, array_view<VkAttachmentDescription> color_attachments, std::optional<VkAttachmentDescription> depth_attachment);
+    render_pass(std::shared_ptr<context> ctx, array_view<VkAttachmentDescription> color_attachments, std::optional<VkAttachmentDescription> depth_attachment, bool invert_faces);
     ~render_pass();
 
     bool has_color_attachments() const { return color_attachment_count != 0; }
     VkRenderPass get_vk_handle() const { return handle; }
+    bool should_invert_faces() const { return invert_faces; }
 };
 
 class framebuffer
@@ -310,7 +312,7 @@ public:
     std::shared_ptr<texture> create_texture_2d(const image & contents) { return create_texture_2d(contents.get_width(), contents.get_height(), contents.get_format(), contents.get_pixels()); }
     std::shared_ptr<texture> create_texture_cube(const image & posx, const image & negx, const image & posy, const image & negy, const image & posz, const image & negz);
 
-    std::shared_ptr<render_pass> create_render_pass(array_view<VkAttachmentDescription> color_attachments, std::optional<VkAttachmentDescription> depth_attachment);
+    std::shared_ptr<render_pass> create_render_pass(array_view<VkAttachmentDescription> color_attachments, std::optional<VkAttachmentDescription> depth_attachment, bool invert_faces=false);
     std::shared_ptr<framebuffer> create_framebuffer(std::shared_ptr<const render_pass> render_pass, array_view<VkImageView> attachments, uint2 dims);
 
     std::shared_ptr<shader> create_shader(VkShaderStageFlagBits stage, const char * filename);

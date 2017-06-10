@@ -747,7 +747,7 @@ void transition_layout(VkCommandBuffer command_buffer, VkImage image, uint32_t m
 }
 
 
-VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout layout, VkPipelineVertexInputStateCreateInfo vertex_input_state, array_view<VkPipelineShaderStageCreateInfo> stages, bool depth_write, bool depth_test, VkBlendFactor src_factor, VkBlendFactor dst_factor)
+VkPipeline make_pipeline(VkDevice device, const render_pass & render_pass, VkPipelineLayout layout, VkPipelineVertexInputStateCreateInfo vertex_input_state, array_view<VkPipelineShaderStageCreateInfo> stages, bool depth_write, bool depth_test, VkBlendFactor src_factor, VkBlendFactor dst_factor)
 {
     VkPipelineInputAssemblyStateCreateInfo inputAssembly {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -766,7 +766,7 @@ VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLa
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.cullMode = render_pass.should_invert_faces() ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT;
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
     rasterizer.depthBiasConstantFactor = 0.0f; // Optional
@@ -782,20 +782,23 @@ VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLa
     multisampling.alphaToOneEnable = VK_FALSE; // Optional
 
     VkPipelineColorBlendAttachmentState colorBlendAttachment {};
-    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    colorBlendAttachment.blendEnable = src_factor != VK_BLEND_FACTOR_ONE || dst_factor != VK_BLEND_FACTOR_ZERO;
-    colorBlendAttachment.srcColorBlendFactor = src_factor;
-    colorBlendAttachment.dstColorBlendFactor = dst_factor;
-    colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
-    colorBlendAttachment.srcAlphaBlendFactor = src_factor; // Optional
-    colorBlendAttachment.dstAlphaBlendFactor = dst_factor; // Optional
-    colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
-
     VkPipelineColorBlendStateCreateInfo colorBlending {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
     colorBlending.logicOpEnable = VK_FALSE;
     colorBlending.logicOp = VK_LOGIC_OP_COPY; // Optional
-    colorBlending.attachmentCount = 1;
-    colorBlending.pAttachments = &colorBlendAttachment;
+    if(render_pass.has_color_attachments())
+    {
+        colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        colorBlendAttachment.blendEnable = src_factor != VK_BLEND_FACTOR_ONE || dst_factor != VK_BLEND_FACTOR_ZERO;
+        colorBlendAttachment.srcColorBlendFactor = src_factor;
+        colorBlendAttachment.dstColorBlendFactor = dst_factor;
+        colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+        colorBlendAttachment.srcAlphaBlendFactor = src_factor;
+        colorBlendAttachment.dstAlphaBlendFactor = dst_factor;
+        colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+
+        colorBlending.attachmentCount = 1;
+        colorBlending.pAttachments = &colorBlendAttachment;
+    }
     colorBlending.blendConstants[0] = 0.0f; // Optional
     colorBlending.blendConstants[1] = 0.0f; // Optional
     colorBlending.blendConstants[2] = 0.0f; // Optional
@@ -823,7 +826,7 @@ VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLa
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = layout;
-    pipelineInfo.renderPass = render_pass;
+    pipelineInfo.renderPass = render_pass.get_vk_handle();
     pipelineInfo.subpass = 0;
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
     pipelineInfo.basePipelineIndex = -1; // Optional
@@ -934,7 +937,8 @@ sampler::~sampler()
 // render_pass //
 /////////////////
 
-render_pass::render_pass(std::shared_ptr<context> ctx, array_view<VkAttachmentDescription> color_attachments, std::optional<VkAttachmentDescription> depth_attachment) : ctx{ctx}
+render_pass::render_pass(std::shared_ptr<context> ctx, array_view<VkAttachmentDescription> color_attachments, std::optional<VkAttachmentDescription> depth_attachment, bool invert_faces) : 
+    ctx{ctx}, invert_faces{invert_faces}
 {
     std::vector<VkAttachmentDescription> attachments(begin(color_attachments), end(color_attachments));
     std::vector<VkAttachmentReference> attachment_refs;
@@ -1058,7 +1062,7 @@ scene_material::scene_material(std::shared_ptr<context> ctx, std::shared_ptr<sce
     pipeline_layout = ctx->create_pipeline_layout(set_layouts);
     for(auto & p : contract->render_passes)
     {
-        pipelines.push_back(make_pipeline(ctx->device, p->get_vk_handle(), pipeline_layout, format->get_vertex_input_state(), p->has_color_attachments() ? shader_stages : shader_stages_no_frag, depth_write, depth_test, src_factor, dst_factor));
+        pipelines.push_back(make_pipeline(ctx->device, *p, pipeline_layout, format->get_vertex_input_state(), p->has_color_attachments() ? shader_stages : shader_stages_no_frag, depth_write, depth_test, src_factor, dst_factor));
     }
 }
     
@@ -1211,9 +1215,9 @@ std::shared_ptr<texture> renderer::create_texture_cube(const image & posx, const
     return std::make_shared<texture>(ctx, format, VkExtent3D{side_length,side_length,1}, array_view<const void *>{posx.get_pixels(), negx.get_pixels(), posy.get_pixels(), negy.get_pixels(), posz.get_pixels(), negz.get_pixels()}, VK_IMAGE_VIEW_TYPE_CUBE);
 }
 
-std::shared_ptr<render_pass> renderer::create_render_pass(array_view<VkAttachmentDescription> color_attachments, std::optional<VkAttachmentDescription> depth_attachment)
+std::shared_ptr<render_pass> renderer::create_render_pass(array_view<VkAttachmentDescription> color_attachments, std::optional<VkAttachmentDescription> depth_attachment, bool invert_faces)
 {
-    return std::make_shared<render_pass>(ctx, color_attachments, depth_attachment);
+    return std::make_shared<render_pass>(ctx, color_attachments, depth_attachment, invert_faces);
 }
 
 std::shared_ptr<framebuffer> renderer::create_framebuffer(std::shared_ptr<const render_pass> pass, array_view<VkImageView> attachments, uint2 dims)

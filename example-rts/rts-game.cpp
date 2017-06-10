@@ -232,7 +232,7 @@ std::ostream & print_type(std::ostream & out, const shader_info::type & type, in
 game::resources::resources(renderer & r, std::shared_ptr<scene_contract> contract)
 {
     // Load meshes
-    terrain_mesh = std::make_shared<gfx_mesh>(r.ctx, generate_box_mesh({0,0,-1}, {64,64,0}));
+    terrain_mesh = std::make_shared<gfx_mesh>(r.ctx, generate_box_mesh({0,0,-20}, {64,64,0}));
     unit0_mesh = std::make_shared<gfx_mesh>(r.ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game::coords, "assets/f44a.obj")));
     unit1_mesh = std::make_shared<gfx_mesh>(r.ctx, transform(scaling_matrix(float3{0.1f}), load_mesh_from_obj(game::coords, "assets/cf105.obj")));
     bullet_mesh = std::make_shared<gfx_mesh>(r.ctx, apply_vertex_color(generate_box_mesh({-0.05f,-0.1f,-0.05f},{+0.05f,+0.1f,0.05f}), {2,2,2}));

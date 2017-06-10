@@ -48,6 +48,9 @@
     <None Include="assets\image.frag">
       <Filter>shaders\post</Filter>
     </None>
+    <None Include="assets\sample.frag">
+      <Filter>shaders\post</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="example-rts.cpp" />

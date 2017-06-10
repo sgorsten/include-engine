@@ -92,6 +92,8 @@ namespace game
 
     struct per_scene_uniforms
     {
+        alignas(16) float4x4 shadow_map_matrix;
+        alignas(16) float3 shadow_light_pos;
 	    alignas(16) float3 ambient_light;
 	    alignas(16) float3 light_direction;
 	    alignas(16) float3 light_color;
