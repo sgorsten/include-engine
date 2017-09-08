@@ -32,6 +32,9 @@
     <ProjectReference Include="..\3rdparty\glfw\glfw.vcxproj">
       <Project>{7952ff0b-0e21-4315-80bb-c408014c1f09}</Project>
     </ProjectReference>
+    <ProjectReference Include="..\include-engine\include-engine.vcxproj">
+      <Project>{a1d32bc3-739e-4370-9598-e8bb33bfcb27}</Project>
+    </ProjectReference>
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>15.0</VCProjectVersion>
@@ -113,7 +116,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)include-engine;$(SolutionDir)3rdparty\stb;$(SolutionDir)3rdparty\glfw\include;$(SolutionDir)3rdparty\glew\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(Vulkan_SDK)\include;$(SolutionDir)include-engine;$(SolutionDir)3rdparty\stb;$(SolutionDir)3rdparty\glfw\include;$(SolutionDir)3rdparty\glew\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -128,7 +131,7 @@
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)include-engine;$(SolutionDir)3rdparty\stb;$(SolutionDir)3rdparty\glfw\include;$(SolutionDir)3rdparty\glew\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(Vulkan_SDK)\include;$(SolutionDir)include-engine;$(SolutionDir)3rdparty\stb;$(SolutionDir)3rdparty\glfw\include;$(SolutionDir)3rdparty\glew\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -141,7 +144,7 @@
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)include-engine;$(SolutionDir)3rdparty\stb;$(SolutionDir)3rdparty\glfw\include;$(SolutionDir)3rdparty\glew\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(Vulkan_SDK)\include;$(SolutionDir)include-engine;$(SolutionDir)3rdparty\stb;$(SolutionDir)3rdparty\glfw\include;$(SolutionDir)3rdparty\glew\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -156,7 +159,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)include-engine;$(SolutionDir)3rdparty\stb;$(SolutionDir)3rdparty\glfw\include;$(SolutionDir)3rdparty\glew\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(Vulkan_SDK)\include;$(SolutionDir)include-engine;$(SolutionDir)3rdparty\stb;$(SolutionDir)3rdparty\glfw\include;$(SolutionDir)3rdparty\glew\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>

@@ -12,12 +12,21 @@ uniform mat4 u_view_proj_matrix;
 uniform mat4 u_model_matrix;
 layout(location=0) in vec3 v_position;
 layout(location=1) in vec3 v_normal;
+layout(location=2) in vec2 v_texcoord;
+layout(location=3) in vec3 v_tangent;
+layout(location=4) in vec3 v_bitangent;
 layout(location=0) out vec3 position;
 layout(location=1) out vec3 normal;
+layout(location=2) out vec2 texcoord;
+layout(location=3) out vec3 tangent;
+layout(location=4) out vec3 bitangent;
 void main()
 {
     position    = (u_model_matrix * vec4(v_position,1)).xyz;
-    normal      = (u_model_matrix * vec4(v_normal,0)).xyz;
+    normal      = normalize((u_model_matrix * vec4(v_normal,0)).xyz);
+    texcoord    = v_texcoord;
+    tangent     = normalize((u_model_matrix * vec4(v_tangent,0)).xyz);
+    bitangent   = normalize((u_model_matrix * vec4(v_bitangent,0)).xyz);
     gl_Position = u_view_proj_matrix * vec4(position,1);
 })";
 
@@ -34,6 +43,30 @@ void main()
 { 
     // Compute our PBR lighting
     vec3 light = compute_lighting(position, normal, u_albedo, u_roughness, u_metalness, u_ambient_occlusion);
+
+    // Apply simple tone mapping and write to fragment
+    f_color = vec4(light / (light + 1), 1);
+})";
+
+constexpr char textured_frag_shader_source[] = R"(
+// Fragment shader for untextured PBR surface
+layout(binding=3) uniform sampler2D u_albedo_tex;
+layout(binding=4) uniform sampler2D u_normal_tex;
+layout(binding=5) uniform sampler2D u_roughness_tex;
+layout(binding=6) uniform sampler2D u_metalness_tex;
+uniform float u_ambient_occlusion;
+layout(location=0) in vec3 position;
+layout(location=1) in vec3 normal;
+layout(location=2) in vec2 texcoord;
+layout(location=3) in vec3 tangent;
+layout(location=4) in vec3 bitangent;
+layout(location=0) out vec4 f_color;
+void main() 
+{ 
+    // Compute our PBR lighting
+    vec3 ts_normal = texture(u_normal_tex, texcoord).xyz * 2 - 1;
+    vec3 ws_normal = normalize(tangent) * ts_normal.x + normalize(bitangent) * ts_normal.y + normalize(normal) * ts_normal.z;
+    vec3 light = compute_lighting(position, ws_normal, texture(u_albedo_tex, texcoord).rgb, texture(u_roughness_tex, texcoord).r, texture(u_metalness_tex, texcoord).g, u_ambient_occlusion);
 
     // Apply simple tone mapping and write to fragment
     f_color = vec4(light / (light + 1), 1);
@@ -75,7 +108,6 @@ std::vector<vertex> make_sphere(int slices, int stacks, float radius)
     return vertices;
 }
 
-#define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
 struct environment { GLuint environment_cubemap, irradiance_cubemap, reflectance_cubemap; };
@@ -103,6 +135,26 @@ environment load_enviroment(const pbr_tools & tools, const char * filename)
     return {environment_cubemap, irradiance_cubemap, reflectance_cubemap};
 }
 
+GLuint load_gl_texture(const char * filename)
+{
+    int width, height;
+    auto * pixels = stbi_load(filename, &width, &height, nullptr, 3);
+    std::cout << "Loaded " << filename << " (" << width << "x" << height << ")" << std::endl;
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    stbi_image_free(pixels);
+    return tex;
+}
+
+#include "load.h"
+
 int main() try
 {
     auto sphere_verts = make_sphere(32,16,0.4f);
@@ -128,6 +180,8 @@ int main() try
     pbr_tools tools;
     gl_program prog {compile_shader(GL_VERTEX_SHADER, {preamble, vert_shader_source}), 
                      compile_shader(GL_FRAGMENT_SHADER, {preamble, pbr_lighting, frag_shader_source})};
+    gl_program texprog {compile_shader(GL_VERTEX_SHADER, {preamble, vert_shader_source}), 
+                        compile_shader(GL_FRAGMENT_SHADER, {preamble, pbr_lighting, textured_frag_shader_source})};
 
     // Set up a right-handed, x-right, y-down, z-forward coordinate system with a 0-to-1 depth buffer
     glClipControl(GL_UPPER_LEFT, GL_ZERO_TO_ONE);
@@ -158,6 +212,13 @@ int main() try
         load_enviroment(tools, "assets/shiodome-stairs.hdr"),
     };
     int env_index = 0;
+
+    constexpr coord_system coords {coord_axis::right, coord_axis::down, coord_axis::forward};
+    const auto helmet_fbx = load_meshes_from_fbx(coords, "../example-game/assets/helmet-mesh.fbx");
+    GLuint tex_albedo = load_gl_texture("../example-game/assets/helmet-albedo.jpg");
+    GLuint tex_normal = load_gl_texture("../example-game/assets/helmet-normal.jpg");
+    GLuint tex_metallic = load_gl_texture("../example-game/assets/helmet-metallic.jpg");
+    GLuint tex_roughness = load_gl_texture("../example-game/assets/helmet-roughness.jpg");
 
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
     glEnable(GL_FRAMEBUFFER_SRGB);
@@ -208,22 +269,42 @@ int main() try
         // Render skybox
         tools.draw_skybox(env[env_index].environment_cubemap, mul(proj_matrix, cam.get_skybox_view_matrix()));
 
+        // Set up lighting
+        texprog.bind_texture("u_brdf_integration_map", brdf_integration_map);
+        texprog.bind_texture("u_irradiance_map", env[env_index].irradiance_cubemap);
+        texprog.bind_texture("u_reflectance_map", env[env_index].reflectance_cubemap);
+
+
         // Render spheres
-        for(int i : {0,1}) glEnableVertexAttribArray(i);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), &sphere_verts.front().position[0]);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), &sphere_verts.front().normal[0]);
+        for(int i : {0,1,2,3,4}) glEnableVertexAttribArray(i);
+        //glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), &sphere_verts.front().position[0]);
+        //glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), &sphere_verts.front().normal[0]);
 
-        prog.bind_texture("u_brdf_integration_map", brdf_integration_map);
-        prog.bind_texture("u_irradiance_map", env[env_index].irradiance_cubemap);
-        prog.bind_texture("u_reflectance_map", env[env_index].reflectance_cubemap);
 
-        prog.use();
-        prog.uniform("u_view_proj_matrix", mul(proj_matrix, view_matrix));
-        prog.uniform("u_eye_position", cam.position);
 
-        prog.uniform("u_ambient_occlusion", 1.0f);
+        texprog.use();
+        texprog.uniform("u_view_proj_matrix", mul(proj_matrix, view_matrix));
+        texprog.uniform("u_eye_position", cam.position);
+
+        texprog.uniform("u_ambient_occlusion", 1.0f);
         const float3 albedos[] {{1,1,1}, {1,0,0}, {1,1,0}, {0,1,0}, {0,1,1}, {0,0,1}, {1,0,1}};
-        for(int i=0; i<7; ++i)
+        
+        texprog.bind_texture("u_albedo_tex", tex_albedo);
+        texprog.bind_texture("u_normal_tex", tex_normal);
+        texprog.bind_texture("u_roughness_tex", tex_roughness);
+        texprog.bind_texture("u_metalness_tex", tex_metallic);
+        for(auto & mesh : helmet_fbx)
+        {
+            texprog.uniform("u_model_matrix", mul(mesh.bones[0].initial_pose.get_local_transform(), mesh.bones[0].model_to_bone_matrix));
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(mesh::vertex), &mesh.vertices[0].position);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(mesh::vertex), &mesh.vertices[0].normal);
+            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(mesh::vertex), &mesh.vertices[0].texcoord);
+            glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(mesh::vertex), &mesh.vertices[0].tangent);
+            glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(mesh::vertex), &mesh.vertices[0].bitangent);
+            glDrawElements(GL_TRIANGLES, mesh.triangles.size()*3, GL_UNSIGNED_INT, mesh.triangles.data());
+        }
+
+        /*for(int i=0; i<7; ++i)
         {
             for(int j=0; j<7; ++j)
             {
@@ -236,8 +317,8 @@ int main() try
                     glDrawArrays(GL_QUADS, 0, sphere_verts.size());
                 }
             }
-        }
-        for(int i : {0,1}) glDisableVertexAttribArray(i);
+        }*/
+        for(int i : {0,1,2,3,4}) glDisableVertexAttribArray(i);
 
         glfwSwapBuffers(win);
     }
