@@ -1,5 +1,6 @@
 #include "pbr.h"
 #include <sstream>
+#include <algorithm>
 
 GLuint compile_shader(GLenum type, std::initializer_list<std::string_view> sources)
 {

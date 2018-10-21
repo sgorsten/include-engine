@@ -1,4 +1,5 @@
 #include "sprite.h"
+#include <algorithm>
 
 //////////////////
 // sprite_sheet //

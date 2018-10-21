@@ -100,7 +100,7 @@ mesh apply_vertex_color(mesh m, const float3 & color)
 
 mesh invert_faces(mesh m)
 {
-    for(auto & tri : m.triangles) std::swap(tri.y, tri.z);
+    for(auto & tri : m.triangles) std::swap(tri[1], tri[2]);
     return m;
 }
 

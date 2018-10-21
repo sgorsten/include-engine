@@ -1,6 +1,7 @@
 #include "renderer.h"
 #include "utility.h"
 #include <stdexcept>
+#include <algorithm>
 
 struct physical_device_selection
 {

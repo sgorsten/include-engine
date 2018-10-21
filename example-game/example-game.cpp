@@ -3,6 +3,7 @@
 #include "fbx.h"
 #include <iostream>
 #include <chrono>
+#include <algorithm>
 
 struct per_scene_uniforms
 {
@@ -41,7 +42,7 @@ struct fps_camera
     float3 position;
     float yaw {}, pitch {};
 
-    float4 get_orientation(const coord_system & c) const { return qmul(rotation_quat(c.get_up(), yaw), rotation_quat(c.get_right(), pitch)); }
+    quatf get_orientation(const coord_system & c) const { return rotation_quat(c.get_up(), yaw) * rotation_quat(c.get_right(), pitch); }
     float_pose get_pose(const coord_system & c) const { return {get_orientation(c), position}; }
     float4x4 get_view_matrix(const coord_system & c) const { return pose_matrix(inverse(get_pose(c))); }
 
@@ -189,7 +190,7 @@ int main() try
         if(win.get_key(GLFW_KEY_D)) camera.position += camera.get_right(game_coords) * (timestep * 50);
         
         // Determine matrices
-        const auto proj_matrix = mul(linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one), make_transform_4x4(game_coords, vk_coords));        
+        const auto proj_matrix = linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one) * make_transform_4x4(game_coords, vk_coords);        
 
         // Render a frame
         auto & pool = pools[frame_index];
@@ -203,7 +204,7 @@ int main() try
             list.draw(skybox_descriptors, skybox_mesh);
 
             scene_descriptor_set helmet_descriptors {pool, *helmet_pipeline};
-            helmet_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{30, 0, 20}), helmet_mesh.m.bones[0].initial_pose.get_local_transform(), helmet_mesh.m.bones[0].model_to_bone_matrix)}));
+            helmet_descriptors.write_uniform_buffer(0, 0, pool.write_data(per_static_object{translation_matrix(float3{30, 0, 20}) * helmet_mesh.m.bones[0].initial_pose.get_local_transform() * helmet_mesh.m.bones[0].model_to_bone_matrix}));
             helmet_descriptors.write_combined_image_sampler(1, 0, sampler, *helmet_albedo);
             helmet_descriptors.write_combined_image_sampler(2, 0, sampler, *helmet_normal);
             helmet_descriptors.write_combined_image_sampler(3, 0, sampler, *helmet_metallic);
@@ -213,7 +214,7 @@ int main() try
             auto & kf = mutant_mesh.m.animations[0].keyframes[anim_frame];
 
             per_skinned_object po {};
-            for(size_t i=0; i<mutant_mesh.m.bones.size(); ++i) po.bone_matrices[i] = mul(mutant_mesh.m.get_bone_pose(kf.local_transforms, i), mutant_mesh.m.bones[i].model_to_bone_matrix);
+            for(size_t i=0; i<mutant_mesh.m.bones.size(); ++i) po.bone_matrices[i] = mutant_mesh.m.get_bone_pose(kf.local_transforms, i) * mutant_mesh.m.bones[i].model_to_bone_matrix;
             auto podata = pool.write_data(po);
 
             auto mutant = list.descriptor_set(*skinned_pipeline);
@@ -231,7 +232,7 @@ int main() try
             list.draw(akai, mutant_mesh, {2});
        
             auto box = list.descriptor_set(*static_pipeline);
-            box.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{-30,0,20}), scaling_matrix(float3{4,4,4}))}));
+            box.write_uniform_buffer(0, 0, pool.write_data(per_static_object{translation_matrix(float3{-30,0,20}) * scaling_matrix(float3{4,4,4})}));
             box.write_combined_image_sampler(1, 0, sampler, *gray_tex);
             box.write_combined_image_sampler(2, 0, sampler, *flat_tex);
             box.write_combined_image_sampler(3, 0, sampler, *black_tex);
@@ -240,7 +241,7 @@ int main() try
             for(size_t i=0; i<sands_mesh.m.materials.size(); ++i)
             {
                 auto sands = list.descriptor_set(*static_pipeline);
-                sands.write_uniform_buffer(0, 0, pool.write_data(per_static_object{mul(translation_matrix(float3{0,27,-64}), scaling_matrix(float3{10,10,10}))}));
+                sands.write_uniform_buffer(0, 0, pool.write_data(per_static_object{translation_matrix(float3{0,27,-64}) * scaling_matrix(float3{10,10,10})}));
                 if(sands_mesh.m.materials[i].name == "map_2_island1") sands.write_combined_image_sampler(1, 0, sampler, *map_2_island);
                 else if(sands_mesh.m.materials[i].name == "map_2_object1") sands.write_combined_image_sampler(1, 0, sampler, *map_2_objects);
                 else if(sands_mesh.m.materials[i].name == "map_2_terrain1") sands.write_combined_image_sampler(1, 0, sampler, *map_2_terrain);
@@ -259,8 +260,8 @@ int main() try
         ps.light_color = {0.8f,0.7f,0.5f};
 
         per_view_uniforms pv;
-        pv.view_proj_matrix = mul(proj_matrix, camera.get_view_matrix(game_coords));
-        pv.rotation_only_view_proj_matrix = mul(proj_matrix, inverse(pose_matrix(camera.get_orientation(game_coords), float3{0,0,0})));
+        pv.view_proj_matrix = proj_matrix * camera.get_view_matrix(game_coords);
+        pv.rotation_only_view_proj_matrix = proj_matrix * inverse(pose_matrix(camera.get_orientation(game_coords), float3{0,0,0}));
         pv.eye_position = camera.position;
 
         auto per_scene = list.shared_descriptor_set(0);

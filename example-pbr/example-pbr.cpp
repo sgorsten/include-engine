@@ -77,9 +77,9 @@ struct camera
     float3 position;
     float pitch=0, yaw=0;
 
-    float4 get_orientation() const { return qmul(rotation_quat(float3{0,1,0}, yaw), rotation_quat(float3{1,0,0}, pitch)); }
+    quatf get_orientation() const { return rotation_quat(float3{0,1,0}, yaw) * rotation_quat(float3{1,0,0}, pitch); }
     float4x4 get_view_matrix() const { return inverse(pose_matrix(get_orientation(), position)); }
-    float4x4 get_skybox_view_matrix() const { return rotation_matrix(qconj(get_orientation())); }
+    float4x4 get_skybox_view_matrix() const { return rotation_matrix(conjugate(get_orientation())); }
 
     void move_local(const float3 & displacement) { position += qrot(get_orientation(), displacement); }
 };
@@ -267,7 +267,7 @@ int main() try
         const float4x4 proj_matrix = linalg::perspective_matrix(1.0f, (float)width/height, 0.1f, 32.0f, linalg::pos_z, linalg::zero_to_one);
 
         // Render skybox
-        tools.draw_skybox(env[env_index].environment_cubemap, mul(proj_matrix, cam.get_skybox_view_matrix()));
+        tools.draw_skybox(env[env_index].environment_cubemap, proj_matrix * cam.get_skybox_view_matrix());
 
         // Set up lighting
         texprog.bind_texture("u_brdf_integration_map", brdf_integration_map);
@@ -283,7 +283,7 @@ int main() try
 
 
         texprog.use();
-        texprog.uniform("u_view_proj_matrix", mul(proj_matrix, view_matrix));
+        texprog.uniform("u_view_proj_matrix", proj_matrix * view_matrix);
         texprog.uniform("u_eye_position", cam.position);
 
         texprog.uniform("u_ambient_occlusion", 1.0f);
@@ -295,7 +295,7 @@ int main() try
         texprog.bind_texture("u_metalness_tex", tex_metallic);
         for(auto & mesh : helmet_fbx)
         {
-            texprog.uniform("u_model_matrix", mul(mesh.bones[0].initial_pose.get_local_transform(), mesh.bones[0].model_to_bone_matrix));
+            texprog.uniform("u_model_matrix", mesh.bones[0].initial_pose.get_local_transform() * mesh.bones[0].model_to_bone_matrix);
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(mesh::vertex), &mesh.vertices[0].position);
             glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(mesh::vertex), &mesh.vertices[0].normal);
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(mesh::vertex), &mesh.vertices[0].texcoord);

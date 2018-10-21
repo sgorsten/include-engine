@@ -455,18 +455,18 @@ namespace fbx
             }
         }
 
-        float4 quat_from_euler(float3 angles) const
+        quatf quat_from_euler(float3 angles) const
         {
             angles *= deg_to_rad<float>;
-            const float4 x = rotation_quat(float3{1,0,0}, angles.x), y = rotation_quat(float3{0,1,0}, angles.y), z = rotation_quat(float3{0,0,1}, angles.z);
+            const quatf x = rotation_quat(float3{1,0,0}, angles.x()), y = rotation_quat(float3{0,1,0}, angles.y()), z = rotation_quat(float3{0,0,1}, angles.z());
             switch(rot_order)
             {
-            case rotation_order::xyz: return qmul(z, y, x);
-            case rotation_order::xzy: return qmul(y, z, x);
-            case rotation_order::yzx: return qmul(x, z, y);
-            case rotation_order::yxz: return qmul(z, x, y);
-            case rotation_order::zxy: return qmul(y, x, z);
-            case rotation_order::zyx: return qmul(x, y, z);
+            case rotation_order::xyz: return z*y*x;
+            case rotation_order::xzy: return y*z*x;
+            case rotation_order::yzx: return x*z*y;
+            case rotation_order::yxz: return z*x*y;
+            case rotation_order::zxy: return y*x*z;
+            case rotation_order::zyx: return x*y*z;
             case rotation_order::spheric_xyz: throw std::runtime_error("spheric_xyz rotation order not yet supported");
             default: throw std::runtime_error("bad rotation_order");
             }
@@ -479,7 +479,7 @@ namespace fbx
             const float3 translation_before_scaling = -scaling_pivot;
             const float3 translation_after_scaling_and_before_rotation = -rotation_pivot + scaling_offset + scaling_pivot;
             const float3 translation_after_rotation = translation + rotation_offset + rotation_pivot;
-            const float4 total_rotation = qmul(quat_from_euler(pre_rotation), quat_from_euler(rotation), qconj(quat_from_euler(post_rotation)));
+            const quatf total_rotation = quat_from_euler(pre_rotation) * quat_from_euler(rotation) * conjugate(quat_from_euler(post_rotation));
             const float3 total_translation = translation_after_rotation + qrot(total_rotation, translation_after_scaling_and_before_rotation + scaling * translation_before_scaling);
             return {total_translation, total_rotation, scaling};
         }

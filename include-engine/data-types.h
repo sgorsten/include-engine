@@ -84,15 +84,64 @@ struct coord_system
 inline float3x3 make_transform(const coord_system & from, const coord_system & to) { return {to.get_axis(from.x_axis), to.get_axis(from.y_axis), to.get_axis(from.z_axis)}; }
 inline float4x4 make_transform_4x4(const coord_system & from, const coord_system & to) { return {{to.get_axis(from.x_axis),0}, {to.get_axis(from.y_axis),0}, {to.get_axis(from.z_axis),0}, {0,0,0,1}}; }
 
+namespace linalg
+{
+    // Support for rigid poses in three dimensions, defined by a rotation quaternion and a translation vector
+    template<class T> struct pose { quat<T> orientation {0,0,0,1}; vec<T,3> position {0,0,0}; };
+    template<class T> pose<T> mul            (const pose<T> & a, const pose<T> & b)  { return {a.orientation*b.orientation, a.position + qrot(a.orientation, b.position)}; }
+    template<class T, class... R> pose<T> mul(const pose<T> & a, R... r)             { return mul(a, mul(r...)); }
+    template<class T> pose<T> inverse(const pose<T> & p)                             { auto q = conjugate(p.orientation); return {q, qrot(q,-p.position)}; }
+    template<class T> pose<T> nlerp  (const pose<T> & a, const pose<T> & b, float t) { return {nlerp(a.orientation, b.orientation, t), lerp(a.position, b.position, t)}; }
+    template<class T> pose<T> slerp  (const pose<T> & a, const pose<T> & b, float t) { return {slerp(a.orientation, b.orientation, t), lerp(a.position, b.position, t)}; }
+    template<class T> mat<T,4,4> pose_matrix(const pose<T> & a) { return pose_matrix(a.orientation, a.position); }
+
+    // A vector is the difference between two points in 3D space, possessing both direction and magnitude
+    template<class T> vec<T,3> transform_vector  (const mat<T,4,4> & m, const vec<T,3> & vector)   { return (m*vec<T,4>{vector,0}).xyz(); }
+    template<class T> vec<T,3> transform_vector  (const mat<T,3,3> & m, const vec<T,3> & vector)   { return m * vector; }
+    template<class T> vec<T,3> transform_vector  (const pose<T>    & p, const vec<T,3> & vector)   { return qrot(p.orientation, vector); }
+
+    // A point is a specific location within a 3D space
+    template<class T> vec<T,3> transform_point   (const mat<T,4,4> & m, const vec<T,3> & point)    { auto r=m * vec<T,4>{point,1}; return r.xyz()/r.w; }
+    template<class T> vec<T,3> transform_point   (const mat<T,3,3> & m, const vec<T,3> & point)    { return transform_vector(m, point); }
+    template<class T> vec<T,3> transform_point   (const pose<T>    & p, const vec<T,3> & point)    { return p.position + transform_vector(p, point); }
+
+    // A tangent is a unit-length vector which is parallel to a piece of geometry, such as a surface or a curve
+    template<class T> vec<T,3> transform_tangent (const mat<T,4,4> & m, const vec<T,3> & tangent)  { return normalize(transform_vector(m, tangent)); }
+    template<class T> vec<T,3> transform_tangent (const mat<T,3,3> & m, const vec<T,3> & tangent)  { return normalize(transform_vector(m, tangent)); }
+    template<class T> vec<T,3> transform_tangent (const pose<T>    & p, const vec<T,3> & tangent)  { return transform_vector(p, tangent); }
+
+    // A normal is a unit-length bivector which is perpendicular to a piece of geometry, such as a surface or a curve
+    template<class T> vec<T,3> transform_normal  (const mat<T,4,4> & m, const vec<T,3> & normal)   { return normalize(transform_vector(inverse(transpose(m)), normal)) * (determinant(m) < 0 ? -1.0f : 1.0f); }
+    template<class T> vec<T,3> transform_normal  (const mat<T,3,3> & m, const vec<T,3> & normal)   { return normalize(transform_vector(inverse(transpose(m)), normal)) * (determinant(m) < 0 ? -1.0f : 1.0f); }
+    template<class T> vec<T,3> transform_normal  (const pose<T>    & p, const vec<T,3> & normal)   { return transform_vector(p, normal); }
+
+    // A quaternion can describe both a rotation and a uniform scaling in 3D space
+    template<class T> quat<T> transform_quat     (const mat<T,4,4> & m, const quat<T> & quat)      { return {transform_vector(m, quat.xyz()) * (determinant(m) < 0 ? -1.0f : 1.0f), quat.w}; }
+    template<class T> quat<T> transform_quat     (const mat<T,3,3> & m, const quat<T> & quat)      { return {transform_vector(m, quat.xyz()) * (determinant(m) < 0 ? -1.0f : 1.0f), quat.w}; }
+    template<class T> quat<T> transform_quat     (const pose<T>    & p, const quat<T> & quat)      { return {transform_vector(p, quat.xyz()), quat.w}; }
+
+    // A matrix can describe a general transformation of homogeneous coordinates in projective space
+    template<class T> mat<T,4,4> transform_matrix(const mat<T,4,4> & m, const mat<T,4,4> & matrix) { return m * matrix * inverse(m); }
+    template<class T> mat<T,4,4> transform_matrix(const mat<T,3,3> & m, const mat<T,4,4> & matrix) { return transform_matrix({{m[0],0},{m[1],0},{m[2],0},{0,0,0,1}}, matrix); }
+    template<class T> mat<T,4,4> transform_matrix(const pose<T>    & p, const mat<T,4,4> & matrix) { return transform_matrix(pose_matrix(p), matrix); }
+
+    // Scaling factors are not a vector, they are a compact representation of a scaling matrix
+    template<class T> vec<T,3> transform_scaling (const mat<T,4,4> & m, const vec<T,3> & scaling)  { return diagonal(transform_matrix(m, scaling_matrix(scaling))).xyz(); }
+    template<class T> vec<T,3> transform_scaling (const mat<T,3,3> & m, const vec<T,3> & scaling)  { return diagonal(transform_matrix(m, scaling_matrix(scaling))).xyz(); }
+    template<class T> vec<T,3> transform_scaling (const pose<T>    & p, const vec<T,3> & scaling)  { return transform_scaling(pose_matrix(p), scaling); }
+}
+
+using float_pose = linalg::pose<float>;
+
 // Value type which holds mesh information
 struct mesh
 {
     struct bone_keyframe
     {
         float3 translation;
-        float4 rotation;
+        quatf rotation;
         float3 scaling;
-        float4x4 get_local_transform() const { return mul(translation_matrix(translation), rotation_matrix(rotation), scaling_matrix(scaling)); }
+        float4x4 get_local_transform() const { return translation_matrix(translation) * rotation_matrix(rotation) * scaling_matrix(scaling); }
     };
     struct bone
     {
@@ -133,13 +182,13 @@ struct mesh
     float4x4 get_bone_pose(const std::vector<bone_keyframe> & bone_keyframes, size_t index) const
     {
         auto & b = bones[index];
-        return b.parent_index ? mul(get_bone_pose(bone_keyframes, *b.parent_index), bone_keyframes[index].get_local_transform()) : bone_keyframes[index].get_local_transform();
+        return b.parent_index ? get_bone_pose(bone_keyframes, *b.parent_index) * bone_keyframes[index].get_local_transform() : bone_keyframes[index].get_local_transform();
     }
 
     float4x4 get_bone_pose(size_t index) const
     {
         auto & b = bones[index];
-        return b.parent_index ? mul(get_bone_pose(*b.parent_index), b.initial_pose.get_local_transform()) : b.initial_pose.get_local_transform();
+        return b.parent_index ? get_bone_pose(*b.parent_index) * b.initial_pose.get_local_transform() : b.initial_pose.get_local_transform();
     }
 };
 

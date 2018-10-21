@@ -16,7 +16,7 @@ struct fps_camera
     float3 position;
     float yaw {}, pitch {};
 
-    float4 get_orientation(const coord_system & c) const { return qmul(rotation_quat(c.get_up(), yaw), rotation_quat(c.get_right(), pitch)); }
+    quatf get_orientation(const coord_system & c) const { return rotation_quat(c.get_up(), yaw) * rotation_quat(c.get_right(), pitch); }
     float_pose get_pose(const coord_system & c) const { return {get_orientation(c), position}; }
     float4x4 get_view_matrix(const coord_system & c) const { return pose_matrix(inverse(get_pose(c))); }
 };
@@ -180,7 +180,7 @@ int main() try
         if(!win.get_key(GLFW_KEY_SPACE)) g.advance(timestep);
 
         // Determine matrices
-        const auto proj_matrix = mul(linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one), make_transform_4x4(game::coords, vk_coords));        
+        const auto proj_matrix = linalg::perspective_matrix(1.0f, win.get_aspect(), 1.0f, 1000.0f, linalg::pos_z, linalg::zero_to_one) * make_transform_4x4(game::coords, vk_coords);        
 
         // Render a frame
         auto & pool = pools[frame_index];
@@ -195,15 +195,15 @@ int main() try
 
         //camera = shadow_camera;
         const float4x4 shadow_bias_matrix = {{0.5f,0,0,0},{0,0.5f,0,0},{0,0,1,0},{0.5f,0.5f,0,1}};
-        const auto shadow_proj_matrix = mul(linalg::perspective_matrix(1.57f, 1.0f, 20.0f, 60.0f, linalg::pos_z, linalg::zero_to_one), make_transform_4x4(game::coords, vk_coords)); 
+        const auto shadow_proj_matrix = linalg::perspective_matrix(1.57f, 1.0f, 20.0f, 60.0f, linalg::pos_z, linalg::zero_to_one) * make_transform_4x4(game::coords, vk_coords); 
         game::per_view_uniforms pv_shadow;
-        pv_shadow.view_proj_matrix = mul(shadow_proj_matrix, shadow_camera.get_view_matrix(game::coords));
+        pv_shadow.view_proj_matrix = shadow_proj_matrix * shadow_camera.get_view_matrix(game::coords);
         pv_shadow.eye_position = shadow_camera.position;
         pv_shadow.eye_x_axis = qrot(shadow_camera.get_orientation(game::coords), game::coords.get_right());
         pv_shadow.eye_y_axis = qrot(shadow_camera.get_orientation(game::coords), game::coords.get_down());
 
         game::per_scene_uniforms ps {};
-        ps.shadow_map_matrix = mul(shadow_bias_matrix, pv_shadow.view_proj_matrix);
+        ps.shadow_map_matrix = shadow_bias_matrix * pv_shadow.view_proj_matrix;
         ps.shadow_light_pos = pv_shadow.eye_position;
         ps.ambient_light = {0.01f,0.01f,0.01f};
         ps.light_direction = normalize(float3{1,-2,5});
@@ -225,7 +225,7 @@ int main() try
 
         // Set up per-scene and per-view descriptor sets
         game::per_view_uniforms pv;
-        pv.view_proj_matrix = mul(proj_matrix, camera.get_view_matrix(game::coords));
+        pv.view_proj_matrix = proj_matrix * camera.get_view_matrix(game::coords);
         pv.eye_position = camera.position;
         pv.eye_x_axis = qrot(camera.get_orientation(game::coords), game::coords.get_right());
         pv.eye_y_axis = qrot(camera.get_orientation(game::coords), game::coords.get_down());
